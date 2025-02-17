@@ -1,0 +1,13 @@
+[package]
+description = "draco"
+name = "draco"
+authors = ["Re:Earth Contributors"]
+edition = "2021"
+exclude = ["benches/", "test-data/", "testdata/"]
+homepage = "https://github.com/reearth/draco-rs"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/reearth/draco-rs"
+rust-version = "1.84"
+version = "0.0.1"
+
+[dependencies]
