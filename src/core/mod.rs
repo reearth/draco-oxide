@@ -1,6 +1,7 @@
-pub mod point_cloud;
-pub mod point_cloud_builder;
+pub mod attribute;
+pub mod buffer;
 pub mod mesh;
 pub mod mesh_builder;
-pub mod buffer;
-pub mod type_traits;
+pub mod point_cloud;
+pub mod point_cloud_builder;
+pub mod shared;

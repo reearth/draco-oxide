@@ -31,7 +31,7 @@ impl Into<Buffer> for Writer {
 impl Writer {
 	/// write the 'size' bits of data at the current offset.
 	/// the input will be taken to be the first 'size' bits of 'value'.
-	pub fn next(&mut self, size: usize, value: usize) {
+	pub fn next(&mut self, (size, value): (usize, usize)) {
 		// this not an unsafe condition, but it is a good practice to avoid weird inputs.
 		assert!(size <= 64 && size > 0, "Invalid size: {}", size);
 
@@ -47,14 +47,14 @@ impl Writer {
 			self.ptr = self.buffer.as_ptr().add(self.num_elements >> 3);
 		}
 
-		unsafe{ self.next_unchecked(size, value) }
+		unsafe{ self.next_unchecked((size, value)) }
 	}
 
 	/// write the 'size' bits of data at the current offset without checking the bounds.
 	/// the first 'size' bits will be taken from 'value' as an input.
 	/// Safety:  The caller must ensure that 'buffer' has allocated enough memory to store the data; 
 	/// i.e. 'buffer.cap' is greater than or equal to 'num_elements'+'size'.
-	pub unsafe fn next_unchecked(&mut self, size: usize, value: usize) {
+	pub unsafe fn next_unchecked(&mut self, (size, value): (usize, usize)) {
 		self.num_elements = self.num_elements.unchecked_add(size);
 		
 		let mut offset = 0;

@@ -61,7 +61,6 @@ impl Reader {
 		}
 
 		// 'size'-'offset' is the number of bits remaining to be read.
-		println!("size, offset: {}, {}", size, offset);
 		value |= (unsafe{ ptr::read(self.ptr) as usize } & ((1<<size.unchecked_sub(offset))-1)) << offset;
 		self.pos_in_curr_byte = (size-offset) & 7;
 

@@ -95,12 +95,12 @@ mod tests {
     #[test]
     fn test_writer_reader() {
         let mut writer = writer::Writer::new();
-        writer.next(9, 0b10101010<<1);
-        writer.next(8, 0b10101010);
-        writer.next(7, 0b0101010);
-        writer.next(6, 0b111100);
-        writer.next(5, 0b00001);
-        writer.next(4, 0b1100);
+        writer.next((9, 0b10101010<<1));
+        writer.next((8, 0b10101010));
+        writer.next((7, 0b0101010));
+        writer.next((6, 0b111100));
+        writer.next((5, 0b00001));
+        writer.next((4, 0b1100));
         let buffer: Buffer = writer.into();
         let mut reader = buffer.into_reader();
         assert_eq!(reader.next(9), 0b10101010<<1);
@@ -115,12 +115,12 @@ mod tests {
     fn test_writer_reader_unchecked() {
         let mut writer = writer::Writer::with_len(9+8+7+6+5+4);
         unsafe{
-            writer.next_unchecked(9, 0b10101010<<1);
-            writer.next_unchecked(8, 0b10101010);
-            writer.next_unchecked(7, 0b0101010);
-            writer.next_unchecked(6, 0b111100);
-            writer.next_unchecked(5, 0b00001);
-            writer.next_unchecked(4, 0b1100);
+            writer.next_unchecked((9, 0b10101010<<1));
+            writer.next_unchecked((8, 0b10101010));
+            writer.next_unchecked((7, 0b0101010));
+            writer.next_unchecked((6, 0b111100));
+            writer.next_unchecked((5, 0b00001));
+            writer.next_unchecked((4, 0b1100));
             let buffer: Buffer = writer.into();
             let mut reader = buffer.into_reader();
             assert_eq!(reader.next_unchecked(9), 0b10101010<<1);
