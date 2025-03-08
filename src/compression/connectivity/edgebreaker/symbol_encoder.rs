@@ -1,4 +1,4 @@
-use crate::core::shared::ConfigType;
+use crate::core::{buffer::{reader::Reader, writer::Writer}, shared::ConfigType};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Symbol {
@@ -41,8 +41,29 @@ impl ConfigType for SymbolEncodingConf {
     }
 }
 
+impl SymbolEncodingConf {
+    pub(crate) fn write_symbol_encoding(writer: &mut Writer, conf: SymbolEncodingConf) {
+        let id = match conf {
+            SymbolEncodingConf::CrLight => 0,
+            SymbolEncodingConf::Balanced => 1,
+            SymbolEncodingConf::Rans => 2,
+        };
+        writer.next((2, id));
+    }
+
+    pub(crate) fn get_symbol_encoding(reader: &mut Reader) -> SymbolEncodingConf {
+        match reader.next(2) {
+            0 => SymbolEncodingConf::CrLight,
+            1 => SymbolEncodingConf::Balanced,
+            2 => SymbolEncodingConf::Rans,
+            _ => panic!("Intenal Error: Invalid symbol encoding configuration")
+        }
+    }
+}
+
 pub(super) trait SymbolEncoder {
     fn encode_symbol(symbol: Symbol) -> (usize, usize);
+    fn decode_symbol(reader: &mut Reader) -> Symbol;
 }
 
 pub(crate) struct CrLight;
@@ -50,11 +71,29 @@ impl SymbolEncoder for CrLight {
     fn encode_symbol(symbol: Symbol) -> (usize, usize) {
         match symbol {
             Symbol::C => (1, 0),
-            Symbol::R => (2, 0b10),
-            Symbol::L => (4, 0b1100),
-            Symbol::E => (4, 0b1101),
-            Symbol::S => (4, 0b1110),
+            Symbol::R => (2, 0b01),
+            Symbol::L => (4, 0b0011),
+            Symbol::E => (4, 0b1011),
+            Symbol::S => (4, 0b0111),
             Symbol::M => (4, 0b1111)
+        }
+    }
+
+    fn decode_symbol(reader: &mut Reader) -> Symbol {
+        if reader.next(1) == 0 {
+            return Symbol::C;
+        }
+
+        if reader.next(1) == 0 {
+            return Symbol::R;
+        }
+
+        return match reader.next(2) {
+            0b00 => Symbol::L,
+            0b01 => Symbol::S,
+            0b10 => Symbol::E,
+            0b11 => Symbol::M,
+            _ => Symbol::M
         }
     }
 }
@@ -72,6 +111,10 @@ impl SymbolEncoder for Balanced {
             Symbol::M => (4, 0b1111)
         }
     }
+
+    fn decode_symbol(reader: &mut Reader) -> Symbol {
+        Symbol::C
+    }
 }
 
 pub(super) struct Rans {
@@ -83,11 +126,16 @@ impl SymbolEncoder for Rans {
     fn encode_symbol(symbol: Symbol) -> (usize, usize) {
         match symbol {
             Symbol::C => (1, 0),
-            Symbol::R => (2, 0b10),
-            Symbol::L => (4, 0b1100),
-            Symbol::E => (4, 0b1101),
-            Symbol::S => (4, 0b1110),
+            Symbol::R => (2, 0b01),
+            Symbol::L => (4, 0b0011),
+            Symbol::E => (4, 0b1011),
+            Symbol::S => (4, 0b0111),
             Symbol::M => (4, 0b1111)
         }
     }
+
+    fn decode_symbol(reader: &mut Reader) -> Symbol {
+        Symbol::C
+    }
 }
+

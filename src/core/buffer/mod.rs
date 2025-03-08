@@ -109,6 +109,14 @@ mod tests {
         assert_eq!(reader.next(6), 0b111100);
         assert_eq!(reader.next(5), 0b00001);
         assert_eq!(reader.next(4), 0b1100);
+
+        let mut writer = writer::Writer::new();
+        writer.next((10, 0b1010101010));
+        let buffer: Buffer = writer.into();
+        let mut reader = buffer.into_reader();
+        for _ in 0..5 {
+            assert_eq!(reader.next(2), 0b10);
+        }
     }
 
     #[test]

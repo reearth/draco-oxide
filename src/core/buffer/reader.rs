@@ -42,7 +42,7 @@ impl Reader {
 			value = (unsafe{ ptr::read(self.ptr) } >> self.pos_in_curr_byte) as usize;
 			if size < num_remaining_in_curr_byte { 
 				self.pos_in_curr_byte = self.pos_in_curr_byte.unchecked_add(size);
-				return value;
+				return value&((1<<size)-1);
 			} 
 			
 			self.ptr = unsafe{ self.ptr.add(1) };

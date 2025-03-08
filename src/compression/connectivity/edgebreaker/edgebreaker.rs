@@ -474,7 +474,6 @@ impl ConnectivityEncoder for EdgeBreaker {
 
 #[cfg(test)]
 mod tests {
-    use core::panic;
     use std::vec;
 
     use crate::core::buffer;
@@ -611,7 +610,7 @@ mod tests {
         assert!(edgebreaker.check_orientability(&faces).is_err());
     }
 
-    // #[test]
+    #[test]
     fn test_symbols() {
         // positions do not matter
         let mut points = vec![[0_f32; 3]; 12];
@@ -648,7 +647,6 @@ mod tests {
                 i += 1;
                 if first==0 {
                     out.push(C);
-                    i += 1;
                 } else {
                     let second = reader.next(1);
                     i += 1;
@@ -660,9 +658,9 @@ mod tests {
                         if third==0 {
                             out.push(L);
                         } else if third==1 {
-                            out.push(E);
-                        } else if third==2 {
                             out.push(S);
+                        } else if third==2 {
+                            out.push(E);
                         } else {
                             out.push(M);
                         }
@@ -672,7 +670,7 @@ mod tests {
             out
         };
 
-        let answer = vec![C];
+        let answer = vec![E,E,S,L,R,L,L,C,C,L,L,L,C,C];
 
         assert_eq!(answer, read_symbols());
 
