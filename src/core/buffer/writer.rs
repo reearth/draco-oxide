@@ -1,11 +1,10 @@
 use super::{
-	RawBuffer,
-	Buffer,
+	Buffer, OrderConfig, RawBuffer
 };
 
 /// Writes the data to the buffer by borrowing it mutably.
 /// Mostly used by the encoder.
-pub struct Writer {
+pub struct Writer<Order: OrderConfig> {
 	ptr: *mut u8,
 
 	/// the number of bits written to the buffer.
@@ -17,18 +16,21 @@ pub struct Writer {
 	/// raw buffer to write to.
 	/// we return it back to the buffer at the end.
 	buffer: RawBuffer,
+
+	_phantom: std::marker::PhantomData<Order>,
 }
 
-impl Into<Buffer> for Writer {
-	fn into(self) -> Buffer {
-		Buffer {
+impl<Order: OrderConfig> Into<Buffer<Order>> for Writer<Order> {
+	fn into(self) -> Buffer<Order> {
+		Buffer::<Order> {
 			data: self.buffer,
 			len: self.num_elements,
+			_phantom: std::marker::PhantomData,
 		}
 	}
 }
 
-impl Writer {
+impl<Order: OrderConfig> Writer<Order> {
 	/// write the 'size' bits of data at the current offset.
 	/// the input will be taken to be the first 'size' bits of 'value'.
 	pub fn next(&mut self, (size, value): (usize, usize)) {
@@ -57,41 +59,58 @@ impl Writer {
 	pub unsafe fn next_unchecked(&mut self, (size, value): (usize, usize)) {
 		self.num_elements = self.num_elements.unchecked_add(size);
 		
-		let mut offset = 0;
+		let mut offset = if Order::IS_MSB_FIRST{ size } else { 0 };
 		
 		if self.pos_in_curr_byte != 0 {
 			let num_remaining_in_curr_byte = 8_usize.unchecked_sub(self.pos_in_curr_byte);
+			if size <= num_remaining_in_curr_byte {
+				unsafe {
+					// Safety: dereferencing the pointer is safe because the condition implies that 
+					// the data pointed to by it has been initialized.
+					*self.ptr |= if Order::IS_MSB_FIRST {
+						(value & ((1<<num_remaining_in_curr_byte)-1)) << num_remaining_in_curr_byte.unchecked_sub(size)
+					} else {
+						value << self.pos_in_curr_byte
+					} as u8;
+				}
+				self.pos_in_curr_byte = if size == num_remaining_in_curr_byte {
+					self.ptr = unsafe{ self.ptr.add(1) };
+					0
+				} else {
+					self.pos_in_curr_byte.unchecked_add(size)
+				};
+				return;
+			}
 			unsafe {
 				// Safety: dereferencing the pointer is safe because the condition implies that 
 				// the data pointed to by it has been initialized.
-				*self.ptr |= (value << self.pos_in_curr_byte) as u8;
+				*self.ptr |= if Order::IS_MSB_FIRST {
+					(value >> size.unchecked_sub(num_remaining_in_curr_byte)) & ((1<<num_remaining_in_curr_byte)-1)
+				} else {
+					value << self.pos_in_curr_byte
+				} as u8;
 			}
-			if size < num_remaining_in_curr_byte {
-				self.pos_in_curr_byte = self.pos_in_curr_byte.unchecked_add(size);
-				return;
-			}
-			
 			self.ptr = self.ptr.add(1);
-			if size == num_remaining_in_curr_byte {
-				self.pos_in_curr_byte = 0;
-				return;
+			offset = if Order::IS_MSB_FIRST {
+				size.unchecked_sub(num_remaining_in_curr_byte)
+			} else {
+				num_remaining_in_curr_byte
 			}
-			offset = num_remaining_in_curr_byte;
 		}
 		
 		
-		for _ in 0..size.unchecked_sub(offset) >> 3 {
+		for _ in 0.. if Order::IS_MSB_FIRST{ offset } else { size.unchecked_sub(offset) } >> 3 {
+			if Order::IS_MSB_FIRST{ offset = offset.unchecked_sub(8) };
 			unsafe {
 				self.ptr.write((value >> offset) as u8);
 			}
-			offset = offset.unchecked_add(8);
+			if !Order::IS_MSB_FIRST{ offset = offset.unchecked_add(8) };
 			self.ptr = self.ptr.add(1);
 		}
 		unsafe {
-			self.ptr.write((value >> offset) as u8);
+			self.ptr.write(if Order::IS_MSB_FIRST {(value & ((1<<offset)-1))<<(8_usize.unchecked_sub(offset))} else {value >> offset} as u8);
 		}
-		self.pos_in_curr_byte = size.unchecked_sub(offset) & 7;
-		
+		self.pos_in_curr_byte = if Order::IS_MSB_FIRST {offset} else {size.unchecked_sub(offset) & 7};
 	}
 
 	pub fn new() -> Self {
@@ -101,6 +120,7 @@ impl Writer {
 			num_elements: 0,
 			pos_in_curr_byte: 0,
 			buffer,
+			_phantom: std::marker::PhantomData,
 		}
 	}
 
@@ -113,6 +133,7 @@ impl Writer {
 			num_elements: 0,
 			pos_in_curr_byte: 0,
 			buffer,
+			_phantom: std::marker::PhantomData,
 		}
 	}
 }

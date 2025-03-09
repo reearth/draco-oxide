@@ -1,4 +1,4 @@
-use crate::core::{buffer::{reader::Reader, writer::Writer}, shared::ConfigType};
+use crate::core::{buffer::{reader::Reader, writer::Writer, MSB_FIRST}, shared::ConfigType};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Symbol {
@@ -42,7 +42,7 @@ impl ConfigType for SymbolEncodingConf {
 }
 
 impl SymbolEncodingConf {
-    pub(crate) fn write_symbol_encoding(writer: &mut Writer, conf: SymbolEncodingConf) {
+    pub(crate) fn write_symbol_encoding(writer: &mut Writer<MSB_FIRST>, conf: SymbolEncodingConf) {
         let id = match conf {
             SymbolEncodingConf::CrLight => 0,
             SymbolEncodingConf::Balanced => 1,
@@ -71,10 +71,10 @@ impl SymbolEncoder for CrLight {
     fn encode_symbol(symbol: Symbol) -> (usize, usize) {
         match symbol {
             Symbol::C => (1, 0),
-            Symbol::R => (2, 0b01),
-            Symbol::L => (4, 0b0011),
-            Symbol::E => (4, 0b1011),
-            Symbol::S => (4, 0b0111),
+            Symbol::R => (2, 0b10),
+            Symbol::L => (4, 0b1100),
+            Symbol::E => (4, 0b1101),
+            Symbol::S => (4, 0b1110),
             Symbol::M => (4, 0b1111)
         }
     }
@@ -90,8 +90,8 @@ impl SymbolEncoder for CrLight {
 
         return match reader.next(2) {
             0b00 => Symbol::L,
-            0b01 => Symbol::S,
-            0b10 => Symbol::E,
+            0b01 => Symbol::E,
+            0b10 => Symbol::S,
             0b11 => Symbol::M,
             _ => Symbol::M
         }

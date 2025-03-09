@@ -17,6 +17,7 @@ use crate::compression::connectivity::{
     }
 };
 
+use crate::core::buffer::MSB_FIRST;
 use crate::core::shared::{
     FaceIdx, VertexIdx, EdgeIdx, ConfigType
 };
@@ -310,7 +311,7 @@ impl EdgeBreaker {
     }
 
 
-    fn encode_symbols(&mut self, writer: &mut Writer, config: &Config) {
+    fn encode_symbols(&mut self, writer: &mut Writer<MSB_FIRST>, config: &Config) {
         let encoder = config.symbol_encoding;
         match encoder {
             SymbolEncodingConf::CrLight => {
@@ -443,7 +444,7 @@ impl ConnectivityEncoder for EdgeBreaker {
     type Config = Config;
 	type Err = Err;
 	/// The main encoding paradigm for edgebreaker.
-	fn encode_connectivity<CoordValType>(&mut self, faces: &[[VertexIdx; 3]], config: &Config, points: &mut[[CoordValType;3]], buffer: &mut Writer) -> Result<(), Self::Err> {
+	fn encode_connectivity<CoordValType>(&mut self, faces: &[[VertexIdx; 3]], config: &Config, points: &mut[[CoordValType;3]], buffer: &mut Writer<MSB_FIRST>) -> Result<(), Self::Err> {
         self.init(points, faces, config)?;
 
 		// Run Edgebreaker once for each connected component.
@@ -658,9 +659,9 @@ mod tests {
                         if third==0 {
                             out.push(L);
                         } else if third==1 {
-                            out.push(S);
-                        } else if third==2 {
                             out.push(E);
+                        } else if third==2 {
+                            out.push(S);
                         } else {
                             out.push(M);
                         }
