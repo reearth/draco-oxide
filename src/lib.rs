@@ -4,7 +4,7 @@
 pub mod io;
 
 /// Contains compression techniques used by the encoder and the decoder.
-pub mod compression;
+pub mod shared;
 
 /// Defines the encoders.
 pub mod encode;

@@ -1,4 +1,4 @@
-mod header;
-mod metadata;
-mod connectivity;
-mod attribute;
+pub(crate) mod header;
+pub(crate) mod metadata;
+pub(crate) mod connectivity;
+pub(crate) mod attribute;

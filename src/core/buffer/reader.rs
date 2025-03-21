@@ -1,9 +1,9 @@
-use super::{OrderConfig, RawBuffer, MSB_FIRST};
+use super::{OrderConfig, RawBuffer, MsbFirst};
 use std::ptr;
 
 /// Reads the data of the buffer by consuming the buffer.
 /// Mostly used by the decoder.
-pub struct Reader<Order: OrderConfig = MSB_FIRST> {
+pub struct Reader<Order: OrderConfig = MsbFirst> {
 	ptr: *const u8,
 
 	/// the number of bits remaining in the buffer.
