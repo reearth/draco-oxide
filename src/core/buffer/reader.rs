@@ -7,7 +7,7 @@ pub struct Reader<Order: OrderConfig = MsbFirst> {
 	ptr: *const u8,
 
 	/// the number of bits remaining in the buffer.
-	num_remaining_elements: usize,
+	num_remaining_bits: usize,
 
 	/// the position in the current byte being read. It is always less than 8.
 	pos_in_curr_byte: usize,
@@ -24,17 +24,17 @@ impl<Order: OrderConfig> Reader<Order> {
 	/// the output data is stored in the first 'size' bits.
 	pub fn next(&mut self, size: usize) -> usize {
 		assert!(size <= 64 && size > 0, "Invalid size: {}", size);
-		assert!(size <= self.num_remaining_elements, "Attempt to read beyond buffer bounds");
+		assert!(size <= self.num_remaining_bits, "Attempt to read beyond buffer bounds");
 			unsafe{ self.next_unchecked(size) }
 	}
 
 	/// read the 'size' bits of data at the current offset without checking the bounds.
 	/// the output data is stored in the first 'size' bits.
 	/// Safety:  The caller must ensure that 
-	///  (1) 'size' is less than or equal to 'self.num_remaining_elements'.
+	///  (1) 'size' is less than or equal to 'self.num_remaining_bits'.
 	///  (2) 'size' is less than or equal to 64.
 	pub unsafe fn next_unchecked(&mut self, size: usize) -> usize {
-		self.num_remaining_elements = self.num_remaining_elements.unchecked_sub(size);
+		self.num_remaining_bits = self.num_remaining_bits.unchecked_sub(size);
 		
 		let mut offset = if Order::IS_MSB_FIRST{ size } else { 0 };
 		let mut value = 0;
@@ -105,7 +105,7 @@ impl<Order: OrderConfig> Reader<Order> {
 		let ptr = buffer.data.as_ptr();
 		Self {
 			ptr,
-			num_remaining_elements: buffer.cap << 3,
+			num_remaining_bits: buffer.cap << 3,
 			pos_in_curr_byte: 0,
 			_buffer: buffer,
 			_phantom: std::marker::PhantomData,
