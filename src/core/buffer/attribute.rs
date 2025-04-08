@@ -117,4 +117,9 @@ impl AttributeBuffer {
             ptr::write(self.last as *mut Data, value);
         }
     }
+
+	#[inline(always)]
+    pub fn len(&self) -> usize {
+        self.len
+    }
 }

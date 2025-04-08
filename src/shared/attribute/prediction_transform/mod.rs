@@ -1,12 +1,12 @@
-use crate::shared::attribute::Portable;
-use crate::core::shared::Vector;
+pub mod difference;
+use crate::core::shared::{ConfigType, Vector};
 
 pub(crate) trait PredictionTransform {
 	const ID: usize = 0;
-	/// The data type that needs to store.
+
 	type Data: Vector;
-	type Correction: Portable;
-	type Metadata: Portable;
+	type Correction: Vector + Copy; // examine if Copy is needed and remove it if not
+	type Metadata;
 	
 	/// transforms the data (the correction value) with the given metadata.
 	fn map(orig: Self::Data, pred: Self::Data, metadata: Self::Metadata);
@@ -16,10 +16,10 @@ pub(crate) trait PredictionTransform {
 	/// but it needs to be returned. The output of the transform might get later on 
 	/// fixed by the metadata universal to the attribute after all the transforms are
 	/// done once for each attribute value.
-	fn map_with_tentative_metadata(orig: Self::Data, pred: Self::Data);
+	fn map_with_tentative_metadata(&mut self, orig: Self::Data, pred: Self::Data);
 
 	/// The inverse transform revertes 'map()'.
-	fn inverse(pred: Self::Data, crr: Self::Correction, metadata: Self::Metadata);
+	fn inverse(&mut self, pred: Self::Data, crr: Self::Correction, metadata: Self::Metadata);
 	
 	/// squeezes the transform results having computed the entire attribute and
 	/// gives up the final data.
@@ -27,7 +27,7 @@ pub(crate) trait PredictionTransform {
 	/// and the transformed data, or doing some trade-off's between the tentative
 	/// metadata and the transformed data to decide the global metadata that will 
 	/// be encoded to buffer.
-	fn squeeze(self) -> impl Iterator<Item = Self::Correction>;
+	fn squeeze(&mut self) -> Vec<Self::Correction>;
 }
 
 /// Trait limiting the selections of the encoding methods for vertex coordinates.
@@ -38,3 +38,48 @@ trait TransformForTexCoords: PredictionTransform {}
 
 /// Trait limiting the selections of the encoding methods for normals.
 trait TansformForNormals: PredictionTransform {}
+
+#[derive(Clone, Copy)]
+pub enum PredictionTransformType {
+	Difference
+}
+
+#[derive(Clone, Copy)]
+pub struct Config {
+	pub prediction_transform: PredictionTransformType,
+}
+
+impl ConfigType for Config {
+	fn default()-> Self {
+		Config {
+			prediction_transform: PredictionTransformType::Difference,
+		}
+	}
+}
+
+
+pub struct NoPredictionTransform<Data> {
+	_marker: std::marker::PhantomData<Data>,
+}
+
+impl<Data> PredictionTransform for NoPredictionTransform<Data> 
+	where 
+		Data: Vector,
+{
+	const ID: usize = 0;
+	type Data = Data;
+	type Correction = Data;
+	type Metadata = ();
+	fn map(_orig: Self::Data, _pred: Self::Data, _metadata: Self::Metadata) {
+		unreachable!()
+	}
+	fn map_with_tentative_metadata(&mut self, _orig: Self::Data, _pred: Self::Data) {
+		unreachable!()
+	}
+	fn inverse(&mut self, _pred: Self::Data, _crr: Self::Correction, _metadata: Self::Metadata) {
+		unreachable!()
+	}
+	fn squeeze(&mut self) -> Vec<Self::Correction> {
+		unreachable!()
+	}
+}

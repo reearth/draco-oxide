@@ -27,6 +27,11 @@ impl Attribute {
 	pub fn get_num_components(&self) -> usize {
 		self.buffer.get_num_components()
 	}
+
+	#[inline(always)]
+	pub fn len(&self) -> usize {
+		self.buffer.len()
+	}
 }
 
 

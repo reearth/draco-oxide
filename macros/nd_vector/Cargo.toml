@@ -9,3 +9,4 @@ proc-macro = true
 [dependencies]
 syn = "2.0"
 quote = "1.0"
+seq-macro = "0.3.6"

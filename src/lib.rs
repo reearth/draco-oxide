@@ -15,5 +15,5 @@ pub mod decode;
 /// Contains the shared definitions, native objects, and the buffer.
 pub mod core;
 
-mod utils;
+pub mod utils;
 mod tests;

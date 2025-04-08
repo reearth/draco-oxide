@@ -550,7 +550,6 @@ mod tests {
     #[test]
     fn test_handle() {
         // create torus in order to test the handle symbol.
-        // create torus in order to test the handle symbol.
         let mut faces = [
             [9,12,13], [8,9,13], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
             [8,13,14], [7,8,14], [1,7,8], [0,1,7], [0,1,2], [0,2,3], [2,3,13], [3,13,14],

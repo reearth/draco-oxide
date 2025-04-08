@@ -1,8 +1,11 @@
 use nd_vector::impl_ndvector_ops;
-use lazy_static::lazy_static;
 
 use super::attribute::ComponentDataType;
-use std::ops;
+
+use std::{
+    ops,
+    cmp
+};
 
 pub type VertexIdx = usize;
 pub type EdgeIdx = usize;
@@ -13,8 +16,6 @@ pub trait Float: DataValue + ops::Div<Output=Self> {
     type Bits: DataValue;
     fn from_bits(bits: Self::Bits)-> Self;
     fn to_bits(self)-> Self::Bits;
-    fn from_u64(bits: u64) -> Self;
-    fn to_u64(self) -> u64;
 }
 
 impl Float for f32 {
@@ -25,12 +26,6 @@ impl Float for f32 {
     fn to_bits(self)-> Self::Bits {
         self.to_bits()
     }
-    fn from_u64(bits: u64) -> Self {
-        bits as f32
-    }
-    fn to_u64(self) -> u64 {
-        self as u64
-    }
 }
 
 impl Float for f64 {
@@ -40,12 +35,6 @@ impl Float for f64 {
     }
     fn to_bits(self)-> Self::Bits {
         self.to_bits()
-    }
-    fn from_u64(bits: u64) -> Self {
-        bits as Self
-    }
-    fn to_u64(self) -> u64 {
-        self as u64
     }
 }
 
@@ -93,6 +82,8 @@ pub trait DataValue:
     fn get_dyn() -> ComponentDataType;
     fn zero() -> Self;
     fn one() -> Self;
+    fn from_u64(data: u64) -> Self;
+    fn to_u64(self) -> u64;
 }
 
 macro_rules! impl_data_value {
@@ -109,6 +100,14 @@ macro_rules! impl_data_value {
                 fn one() -> Self {
                     1 as $t
                 }
+
+                fn from_u64(data: u64) -> Self {
+                    data as $t
+                }
+
+                fn to_u64(self) -> u64 {
+                    self as u64
+                }
             }
         )*
     };
@@ -124,17 +123,26 @@ impl_data_value!(
 );
 
 
+#[derive(Clone, Copy)]
 pub struct NdVector<const N: usize, T> {
     data: [T; N],
 }
 
-include!(concat!(env!("OUT_DIR"), "/repeat_count.rs"));
+
+use std::ops::Index;
+use std::ops::IndexMut;
 impl_ndvector_ops!();
 
 
-pub trait Vector {
-	type Component;
+pub trait Vector:
+    Clone + Copy + PartialEq
+    + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Self::Component, Output=Self> + ops::Div<Self::Component, Output=Self> 
+    + ops::AddAssign + ops::SubAssign + ops::Mul<Self::Component, Output=Self> + ops::Div<Self::Component, Output=Self>
+    + ElementWiseMul<Output = Self> + ElementWiseDiv<Output = Self>
+{
+	type Component: DataValue;
 	const NUM_COMPONENTS: usize;
+    fn zero() -> Self;
 	fn get(&self, index: usize) -> &Self::Component;
 	fn get_mut(&mut self, index: usize) -> &mut Self::Component;
 	fn get_static<const INDEX: usize>(&self) -> &Self::Component;
@@ -145,51 +153,10 @@ pub trait Vector {
 	unsafe fn get_unchecked_mut_static<const INDEX: usize>(&mut self) -> &mut Self::Component;
 }
 
-use std::ops::Index;
-use std::ops::IndexMut;
 
-impl<const N: usize, T> Vector for NdVector<N, T> 
-    where T: DataValue + Copy + Clone
-{
-	type Component = T;
-	const NUM_COMPONENTS: usize = N;
-	fn get(&self, index: usize) -> &Self::Component {
-		self.data.index(index)
-	}
-	
-	fn get_mut(&mut self, index: usize) -> &mut Self::Component {
-		self.data.index_mut(index)
-	}
-	
-	fn get_static<const INDEX: usize>(&self) -> &Self::Component {
-		self.data.index(INDEX)
-	}
-
-	fn get_mut_static<const INDEX: usize>(&mut self) -> &mut Self::Component {
-		self.data.index_mut(INDEX)
-	}
-	
-	unsafe fn get_unchecked(&self, index: usize) -> &Self::Component {
-		self.data.as_slice().get_unchecked(index)
-	}
-	
-	unsafe fn get_unchecked_static<const INDEX: usize>(&self) -> &Self::Component {
-		self.data.as_slice().get_unchecked(INDEX)
-	}
-
-	unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut Self::Component {
-		self.data.as_mut_slice().get_unchecked_mut(index)
-	}
-
-	unsafe fn get_unchecked_mut_static<const INDEX: usize>(&mut self) -> &mut Self::Component {
-		self.data.as_mut_slice().get_unchecked_mut(INDEX)
-	}
-}
-
-
-pub trait Cast {
-    type Output;
-    fn cast(self) -> Self::Output;
+pub trait Dot {
+    type Product;
+    fn dot(self, other: Self) -> Self::Product;
 }
 
 pub trait ElementWiseMul<Rhs=Self> {
@@ -200,4 +167,58 @@ pub trait ElementWiseMul<Rhs=Self> {
 pub trait ElementWiseDiv<Rhs=Self> {
     type Output;
     fn elem_div(self, other: Rhs) -> Self::Output;
+}
+
+
+#[derive(Debug)]
+pub struct ImplDivErr {
+    pub from: ComponentDataType,
+}
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ndvector_add() {
+        let vector1 = NdVector { data: [1.0, 2.0, 3.0] };
+        let vector2 = NdVector { data: [4.0, 5.0, 6.0] };
+        let result: NdVector<3, f32> = vector1 + vector2;
+        assert_eq!(result.data, [5.0, 7.0, 9.0]);
+    }
+
+    #[test]
+    fn test_ndvector_sub() {
+        let vector1 = NdVector { data: [4.0, 5.0, 6.0] };
+        let vector2 = NdVector { data: [1.0, 2.0, 3.0] };
+        let result: NdVector<3, f32> = vector1 - vector2;
+        assert_eq!(result.data, [3.0, 3.0, 3.0]);
+    }
+
+    #[test]
+    fn test_ndvector_dot() {
+        let vector1 = NdVector { data: [1_f64, 2.0, 3.0] };
+        let vector2 = NdVector { data: [4.0, 5.0, 6.0] };
+        let result = vector1.dot(vector2);
+        assert_eq!(result, 32.0);
+    }
+
+    #[test]
+    fn test_ndvector_elem_mul() {
+        let vector1 = NdVector { data: [1.0, 2.0, 3.0] };
+        let vector2 = NdVector { data: [4.0, 5.0, 6.0] };
+        let result = vector1.elem_mul(vector2);
+        assert_eq!(result.data, [4.0, 10.0, 18.0]);
+    }
+
+    #[test]
+    fn test_ndvector_elem_div() {
+        let vector1 = NdVector { data: [4.0, 10.0, 18.0, 2.0] };
+        let vector2 = NdVector { data: [2.0, 5.0, 3.0, 4.0] };
+        let result = vector1.elem_div(vector2);
+        assert_eq!(result.data, [2.0, 2.0, 6.0, 0.5]);
+    }
 }
