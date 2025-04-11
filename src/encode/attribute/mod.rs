@@ -171,7 +171,7 @@ impl<S, T, P, Data> GroupTrait<Data> for Group <S, T, P>
         Data::Component: DataValue,
 {
     fn split_unpredicted_values(&mut self, values_indeces: &mut Vec<std::ops::Range<usize>>, faces: &[[usize;3]]) -> Vec<std::ops::Range<usize>> {
-        let mut impossible_to_predict = self.prediction
+        let impossible_to_predict = self.prediction
             .as_mut()
             .unwrap()
             .0
@@ -195,12 +195,12 @@ impl<S, T, P, Data> GroupTrait<Data> for Group <S, T, P>
     }
 
     fn squeeze_transformed_data(&mut self) {
-        self.prediction_correction = self.prediction
+        let (metadata, prediction_correction) = self.prediction
             .as_mut()
             .unwrap()
             .1
-            .squeeze()
-            .into_iter();
+            .squeeze();
+        self.prediction_correction = prediction_correction.into_iter();
     }
 
     fn skim(&mut self) {

@@ -74,16 +74,73 @@ macro_rules! impl_to_usize_float {
 
 impl_to_usize_float!(u8, u16, u32, u64);
 
+pub trait Abs {
+    fn abs(self) -> Self;
+}
+macro_rules! impl_abs {
+    (negatable: $($t:ty),*) => {
+        $(
+            impl Abs for $t {
+                fn abs(self) -> Self {
+                    self.abs()
+                }
+            }
+        )*
+    };
+    (non_negatable: $($t:ty),*) => {
+        $(
+            impl Abs for $t {
+                fn abs(self) -> Self {
+                    self
+                }
+            }
+        )*
+    };
+}
+
+impl_abs!(negatable: f32, f64);
+impl_abs!(non_negatable: u8, u16, u32, u64);
+
+pub trait Acos {
+    fn acos(self) -> Self;
+}
+
+macro_rules! impl_acos {
+    (float: $($t:ty),*) => {
+        $(
+            impl Acos for $t {
+                fn acos(self) -> Self {
+                    self.acos()
+                }
+            }
+        )*
+    };
+    (non_float: $($t:ty),*) => {
+        $(
+            impl Acos for $t {
+                fn acos(self) -> Self {
+                    panic!("Acos is not defined for non-float types")
+                }
+            }
+        )*
+    };
+}
+impl_acos!(float: f32, f64);
+impl_acos!(non_float: u8, u16, u32, u64);
+
 pub trait DataValue: 
     Clone + Copy + PartialEq + PartialOrd
-    + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Output=Self> 
-    + ops::AddAssign + ops::SubAssign + ops::MulAssign
+    + Abs + Acos
+    + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Output=Self> + ops::Div<Output=Self>
+    + ops::AddAssign + ops::SubAssign + ops::MulAssign + ops::DivAssign
 {
     fn get_dyn() -> ComponentDataType;
     fn zero() -> Self;
     fn one() -> Self;
     fn from_u64(data: u64) -> Self;
     fn to_u64(self) -> u64;
+    fn from_f64(data: f64) -> Self;
+    fn to_f64(self) -> f64;
 }
 
 macro_rules! impl_data_value {
@@ -108,6 +165,14 @@ macro_rules! impl_data_value {
                 fn to_u64(self) -> u64 {
                     self as u64
                 }
+
+                fn from_f64(data: f64) -> Self {
+                    data as $t
+                }
+
+                fn to_f64(self) -> f64 {
+                    self as f64
+                }
             }
         )*
     };
@@ -128,6 +193,12 @@ pub struct NdVector<const N: usize, T> {
     data: [T; N],
 }
 
+impl<const N: usize, T> From<[T;N]> for NdVector<N, T> {
+    fn from(data: [T;N]) -> Self {
+        NdVector { data }
+    }
+}
+
 
 use std::ops::Index;
 use std::ops::IndexMut;
@@ -139,6 +210,7 @@ pub trait Vector:
     + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Self::Component, Output=Self> + ops::Div<Self::Component, Output=Self> 
     + ops::AddAssign + ops::SubAssign + ops::Mul<Self::Component, Output=Self> + ops::Div<Self::Component, Output=Self>
     + ElementWiseMul<Output = Self> + ElementWiseDiv<Output = Self>
+    + Dot<Product=Self::Component> + Cross
 {
 	type Component: DataValue;
 	const NUM_COMPONENTS: usize;
@@ -159,6 +231,10 @@ pub trait Dot {
     fn dot(self, other: Self) -> Self::Product;
 }
 
+pub trait Cross {
+    fn cross(self, other: Self) -> Self;
+}
+
 pub trait ElementWiseMul<Rhs=Self> {
     type Output;
     fn elem_mul(self, other: Rhs) -> Self::Output;
@@ -176,6 +252,26 @@ pub struct ImplDivErr {
 }
 
 
+
+impl<const N: usize, T> Cross for NdVector<N, T> 
+    where T: DataValue
+{
+    fn cross(self, other: Self) -> Self {
+        if N == 3 {
+            unsafe {
+                let mut out = [T::zero(); N];
+                *out.get_unchecked_mut(1) = *self.data.get_unchecked(1) * *other.data.get_unchecked(2) - *self.data.get_unchecked(2) * *other.data.get_unchecked(1);
+                *out.get_unchecked_mut(1) = *self.data.get_unchecked(2) * *other.data.get_unchecked(0) - *self.data.get_unchecked(0) * *other.data.get_unchecked(2);
+                *out.get_unchecked_mut(1) = *self.data.get_unchecked(0) * *other.data.get_unchecked(1) - *self.data.get_unchecked(1) * *other.data.get_unchecked(0);
+                NdVector {
+                    data: out
+                }
+            }
+        } else {
+            unreachable!("Cross product is only defined for 3D vectors")
+        }
+    }
+}
 
 
 #[cfg(test)]

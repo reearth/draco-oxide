@@ -1,5 +1,11 @@
 pub mod difference;
-use crate::core::shared::{ConfigType, Vector};
+mod geom;
+pub mod orthogonal;
+pub mod oct_orthogonal;
+pub mod oct_reflection;
+pub mod oct_difference;
+
+use crate::core::shared::{ConfigType, DataValue, NdVector, Vector};
 
 pub(crate) trait PredictionTransform {
 	const ID: usize = 0;
@@ -9,7 +15,7 @@ pub(crate) trait PredictionTransform {
 	type Metadata;
 	
 	/// transforms the data (the correction value) with the given metadata.
-	fn map(orig: Self::Data, pred: Self::Data, metadata: Self::Metadata);
+	fn map(orig: Self::Data, pred: Self::Data, metadata: Self::Metadata) -> Self::Correction;
 
 	/// transforms the data (the correction value) with the tentative metadata value.
 	/// The tentative metadata can be determined by the function without any restriction,
@@ -19,7 +25,7 @@ pub(crate) trait PredictionTransform {
 	fn map_with_tentative_metadata(&mut self, orig: Self::Data, pred: Self::Data);
 
 	/// The inverse transform revertes 'map()'.
-	fn inverse(&mut self, pred: Self::Data, crr: Self::Correction, metadata: Self::Metadata);
+	fn inverse(&mut self, pred: Self::Data, crr: Self::Correction, metadata: Self::Metadata) -> Self::Data;
 	
 	/// squeezes the transform results having computed the entire attribute and
 	/// gives up the final data.
@@ -27,7 +33,12 @@ pub(crate) trait PredictionTransform {
 	/// and the transformed data, or doing some trade-off's between the tentative
 	/// metadata and the transformed data to decide the global metadata that will 
 	/// be encoded to buffer.
-	fn squeeze(&mut self) -> Vec<Self::Correction>;
+	fn squeeze(&mut self) -> (FinalMetadata<Self::Metadata>, Vec<Self::Correction>);
+}
+
+pub(crate) enum FinalMetadata<T> {
+	Local(Vec<T>),
+	Global(T)
 }
 
 /// Trait limiting the selections of the encoding methods for vertex coordinates.
@@ -41,7 +52,12 @@ trait TansformForNormals: PredictionTransform {}
 
 #[derive(Clone, Copy)]
 pub enum PredictionTransformType {
-	Difference
+	Difference,
+	OctahedralDifference,
+	OctahedralReflection,
+	OctahedralOrthogonal,
+	Orthogonal,
+	NoTransform,
 }
 
 #[derive(Clone, Copy)]
@@ -70,16 +86,16 @@ impl<Data> PredictionTransform for NoPredictionTransform<Data>
 	type Data = Data;
 	type Correction = Data;
 	type Metadata = ();
-	fn map(_orig: Self::Data, _pred: Self::Data, _metadata: Self::Metadata) {
+	fn map(_orig: Self::Data, _pred: Self::Data, _metadata: Self::Metadata) -> Self::Correction{
 		unreachable!()
 	}
 	fn map_with_tentative_metadata(&mut self, _orig: Self::Data, _pred: Self::Data) {
 		unreachable!()
 	}
-	fn inverse(&mut self, _pred: Self::Data, _crr: Self::Correction, _metadata: Self::Metadata) {
+	fn inverse(&mut self, _pred: Self::Data, _crr: Self::Correction, _metadata: Self::Metadata) -> Self::Data {
 		unreachable!()
 	}
-	fn squeeze(&mut self) -> Vec<Self::Correction> {
+	fn squeeze(&mut self) -> (FinalMetadata<Self::Metadata>, Vec<Self::Correction>) {
 		unreachable!()
 	}
 }

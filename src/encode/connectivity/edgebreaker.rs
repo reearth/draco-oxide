@@ -535,7 +535,6 @@ impl Edgebreaker {
                     self.mark_vertices_as_visited_in_cutting_path_containing(coboundary_edge)?;
                 }
             }
-            
         }
         // if 'self.coboundary_map_one[e_idx].len() == 2', then we do not need to do anything, since it is neither a boundary nor a cutting path.
 

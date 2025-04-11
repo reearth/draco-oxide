@@ -1,4 +1,3 @@
-mod connectivity_encoder;
 pub mod config;
 pub mod err;
 pub(crate) mod edgebreaker;
