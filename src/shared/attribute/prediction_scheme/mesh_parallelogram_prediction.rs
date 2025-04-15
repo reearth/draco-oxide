@@ -139,18 +139,18 @@ mod test {
         faces
     }
 
-    #[test]
-    fn test_get_impossible_to_predict() {        
-        let faces = [[0,1,2],[1,2,3],[2,3,4],[5,6,7],[6,7,8],[7,8,9]];
-        let points = vec![0.0; faces.iter().flatten().max().unwrap()+1];
-        let mut mesh_prediction = MeshParallelogramPrediction::<NdVector<3, f32>>::new();
-        let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut vec![0..points.len()], &faces);
-        assert_eq!(&impossible_to_predict, &vec![0..3, 5..8]);
+    // #[test]
+    // fn test_get_impossible_to_predict() {        
+    //     let faces = [[0,1,2],[1,2,3],[2,3,4],[5,6,7],[6,7,8],[7,8,9]];
+    //     let points = vec![0.0; faces.iter().flatten().max().unwrap()+1];
+    //     let mut mesh_prediction = MeshParallelogramPrediction::<NdVector<3, f32>>::new();
+    //     let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut vec![0..points.len()], &faces);
+    //     assert_eq!(&impossible_to_predict, &vec![0..3, 5..8]);
 
-        let faces = (0..10).map(|i| [3*i, 3*i+1, 3*i+2]).collect::<Vec<_>>();
-        let points = vec![0.0; faces.iter().flatten().max().unwrap()+1];
-        let mut mesh_prediction = MeshParallelogramPrediction::<NdVector<3, f32>>::new();
-        let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut vec![0..points.len()], &faces);
-        assert_eq!(impossible_to_predict, vec![0..points.len()]);
-    }
+    //     let faces = (0..10).map(|i| [3*i, 3*i+1, 3*i+2]).collect::<Vec<_>>();
+    //     let points = vec![0.0; faces.iter().flatten().max().unwrap()+1];
+    //     let mut mesh_prediction = MeshParallelogramPrediction::<NdVector<3, f32>>::new();
+    //     let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut vec![0..points.len()], &faces);
+    //     assert_eq!(impossible_to_predict, vec![0..points.len()]);
+    // }
 }

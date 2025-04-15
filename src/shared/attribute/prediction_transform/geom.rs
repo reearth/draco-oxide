@@ -45,32 +45,28 @@ pub(super) unsafe fn octahedral_transform<Data>(v: Data) -> NdVector<2, f64>
 	let y = v.get_unchecked(1);
 	let z = v.get_unchecked(2);
 
-	let mut abs_sum = x.abs() + y.abs() + z.abs();
-	if abs_sum == Data::Component::zero() {
-		abs_sum = Data::Component::one();
-	}
+	let abs_sum = x.abs() + y.abs() + z.abs();
 
 	let mut u = *x / abs_sum;
 	let mut v = *y / abs_sum;
 
-	let lies_in_upper_half = *z > Data::Component::zero();
-	if !lies_in_upper_half {
+	if *z < Data::Component::zero() {
 		let one = Data::Component::one();
 		let minus_one = Data::Component::zero() - one;
-		let temp_u = u;
-		let temp_u_sign = if temp_u > Data::Component::zero() {
+		let u_sign = if u > Data::Component::zero() {
 			one
 		} else {
 			minus_one
 		};
-		let temp_v = v;
-		let temp_v_sign = if temp_v > Data::Component::zero() {
+		let v_sign = if v > Data::Component::zero() {
 			one
 		} else {
 			minus_one
 		};
-		u = (Data::Component::one() - temp_v.abs()) * temp_u_sign;
-		v = (Data::Component::one() - temp_u.abs()) * temp_v_sign;
+		(u, v) = (
+			(Data::Component::one() - v.abs()) * u_sign,
+			(Data::Component::one() - u.abs()) * v_sign
+		);
 	}
 
 	let mut out = NdVector::<2, _>::zero();
@@ -94,38 +90,74 @@ pub(super) unsafe fn octahedral_inverse_transform<Data>(v: NdVector<2, f64>) -> 
 	let u = v.get_unchecked(0);
 	let v = v.get_unchecked(1);
 
-	let mut abs_sum = u.abs() + v.abs();
-	if abs_sum == 0.0 {
-		abs_sum = 1.0;
-	}
+	let mut x = *u;
+	let mut y = *v;
+	let z = 1.0 - u.abs() - v.abs();
 
-	let mut x = *u / abs_sum;
-	let mut y = *v / abs_sum;
-	let mut z = 0.0;
-
-	if u+v > 1.0 {
-		let temp_x = x;
-		let temp_x_sign = if temp_x > 0.0 {
+	if u.abs()+v.abs() > 1.0 {
+		let x_sign = if x > 0.0 {
 			1.0
 		} else {
 			-1.0
 		};
-		let temp_y = y;
-		let temp_y_sign = if temp_y > 0.0 {
+		let y_sign = if y > 0.0 {
 			1.0
 		} else {
 			-1.0
 		};
-		x = (1.0 - temp_y.abs()) * temp_x_sign;
-		y = (1.0 - temp_x.abs()) * temp_y_sign;
-		z = (1.0 - u.abs() - v.abs()) * if u+v<=1.0 { 1.0 } else { -1.0 };
+		x = (1.0 - v.abs()) * x_sign;
+		y = (1.0 - u.abs()) * y_sign;
 	}
+
+	// normalize the vector
+	let norm = (x*x + y*y + z*z).sqrt();
 
 	let mut out = Data::zero();
 	// safety condition is upheld
-	*out.get_unchecked_mut(0) = Data::Component::from_f64(x);
-	*out.get_unchecked_mut(1) = Data::Component::from_f64(y);
-	*out.get_unchecked_mut(2) = Data::Component::from_f64(z);
+	*out.get_unchecked_mut(0) = Data::Component::from_f64(x/norm);
+	*out.get_unchecked_mut(1) = Data::Component::from_f64(y/norm);
+	*out.get_unchecked_mut(2) = Data::Component::from_f64(z/norm);
 
 	out
+}
+
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::core::shared::NdVector;
+	use crate::core::shared::Dot;
+
+	#[test]
+	fn test_octahedral_transform() {
+		let vs = {
+			vec![
+				NdVector::from([1_f64, 0.0, 0.0]),
+				NdVector::from([0.0, 1.0, 0.0]),
+				NdVector::from([0.0, 0.0, 1.0]),
+				NdVector::from([-1.0, 0.0, 0.0]),
+				NdVector::from([0.0, -1.0, 0.0]),
+				NdVector::from([0.0, 0.0, -1.0]),
+				NdVector::from([1.0, 1.0, 1.0]),
+				NdVector::from([-1.0, -1.0, -1.0]),
+				NdVector::from([1.0, -1.0, 1.0]),
+				NdVector::from([-1.0, 1.0, -1.0]),
+				NdVector::from([1.0, 1.0, -1.0]),
+				NdVector::from([-1.0, -1.0, 1.0]),
+				NdVector::from([1.0, -1.0, -1.0]),
+			]
+		};
+		for v in vs {
+			// normalize the vector
+			let n = v / v.dot(v).sqrt();
+			// Safety:
+			// inputs are three dimensional
+			let transformed = unsafe { octahedral_transform(n) };
+			println!("transformed: {:?}", transformed);
+			let recovered = unsafe { octahedral_inverse_transform(transformed) };
+			let diff = n - recovered;
+			let diff_norm_squared = diff.dot(diff);
+			assert!(diff_norm_squared < 1e-10, "Difference is too large: {}, v={:?}, recovered={:?}", diff_norm_squared, v, recovered);
+		}
+	}
 }

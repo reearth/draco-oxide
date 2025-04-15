@@ -94,7 +94,7 @@ impl<Data> PredictionTransform for OctahedronOrthogonalTransform<Data>
         );
         
         let mut reflected = false;
-        let mut quadrant = 0;
+        let quadrant;
         unsafe {
             if *pred.get_unchecked(2) < Data::Component::zero() {
                 reflected = true;

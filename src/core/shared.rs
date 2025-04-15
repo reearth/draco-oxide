@@ -2,6 +2,7 @@ use nd_vector::impl_ndvector_ops;
 
 use super::attribute::ComponentDataType;
 
+use core::fmt;
 use std::{
     ops,
     cmp
@@ -16,6 +17,7 @@ pub trait Float: DataValue + ops::Div<Output=Self> {
     type Bits: DataValue;
     fn from_bits(bits: Self::Bits)-> Self;
     fn to_bits(self)-> Self::Bits;
+    fn sqrt(self)-> Self;
 }
 
 impl Float for f32 {
@@ -26,6 +28,9 @@ impl Float for f32 {
     fn to_bits(self)-> Self::Bits {
         self.to_bits()
     }
+    fn sqrt(self)-> Self {
+        self.sqrt()
+    }
 }
 
 impl Float for f64 {
@@ -35,6 +40,9 @@ impl Float for f64 {
     }
     fn to_bits(self)-> Self::Bits {
         self.to_bits()
+    }
+    fn sqrt(self)-> Self {
+        self.sqrt()
     }
 }
 
@@ -128,9 +136,27 @@ macro_rules! impl_acos {
 impl_acos!(float: f32, f64);
 impl_acos!(non_float: u8, u16, u32, u64);
 
+
+pub trait Max {
+    const MAX_VALUE: Self;
+}
+
+macro_rules! impl_max {
+    ($($t:ty),*) => {
+        $(
+            impl Max for $t {
+                const MAX_VALUE: Self = Self::MAX;
+            }
+        )*
+    };
+}
+impl_max!(f32, f64);
+impl_max!(u8, u16, u32, u64);
+
+
 pub trait DataValue: 
     Clone + Copy + PartialEq + PartialOrd
-    + Abs + Acos
+    + Abs + Max
     + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Output=Self> + ops::Div<Output=Self>
     + ops::AddAssign + ops::SubAssign + ops::MulAssign + ops::DivAssign
 {
@@ -193,9 +219,40 @@ pub struct NdVector<const N: usize, T> {
     data: [T; N],
 }
 
+impl<const N: usize, T: Float> NdVector<N, T> {
+    pub fn normalize(self) -> Self {
+        let mut out = self;
+        let norm_inverse = T::one() / self.norm();
+        for i in 0..N {
+            unsafe {
+                *out.data.get_unchecked_mut(i) *= norm_inverse;
+            }
+        }
+        out
+    }
+
+    pub fn norm(self) -> T {
+        let mut norm = T::zero();
+        for i in 0..N {
+            unsafe {
+                norm += *self.data.get_unchecked(i) * *self.data.get_unchecked(i);
+            }
+        }
+        norm.sqrt()
+    }
+}
+
 impl<const N: usize, T> From<[T;N]> for NdVector<N, T> {
     fn from(data: [T;N]) -> Self {
         NdVector { data }
+    }
+}
+
+impl<const N: usize, T> fmt::Debug for NdVector<N, T> 
+    where T: fmt::Debug
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.data)
     }
 }
 

@@ -5,7 +5,10 @@ pub mod oct_orthogonal;
 pub mod oct_reflection;
 pub mod oct_difference;
 
-use crate::core::shared::{ConfigType, DataValue, NdVector, Vector};
+use core::fmt;
+use std::cmp;
+
+use crate::core::shared::{ConfigType, Vector};
 
 pub(crate) trait PredictionTransform {
 	const ID: usize = 0;
@@ -36,9 +39,37 @@ pub(crate) trait PredictionTransform {
 	fn squeeze(&mut self) -> (FinalMetadata<Self::Metadata>, Vec<Self::Correction>);
 }
 
+
+#[derive(Clone)]
+/// The final metadata is either local or global. Local metadata
+/// is stored for each attribute value, while global metadata is stored
+/// once for the entire attribute.
 pub(crate) enum FinalMetadata<T> {
 	Local(Vec<T>),
 	Global(T)
+}
+
+impl<T> fmt::Debug for FinalMetadata<T> 
+	where T: fmt::Debug
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			FinalMetadata::Local(x) => write!(f, "Local({:?})", x),
+			FinalMetadata::Global(x) => write!(f, "Global({:?})", x),
+		}
+	}
+}
+
+impl<T> cmp::PartialEq for FinalMetadata<T> 
+	where T: cmp::PartialEq
+{
+	fn eq(&self, other: &Self) -> bool {
+		match (self, other) {
+			(FinalMetadata::Local(x), FinalMetadata::Local(y)) => x == y,
+			(FinalMetadata::Global(x), FinalMetadata::Global(y)) => x == y,
+			_ => false,
+		}
+	}
 }
 
 /// Trait limiting the selections of the encoding methods for vertex coordinates.

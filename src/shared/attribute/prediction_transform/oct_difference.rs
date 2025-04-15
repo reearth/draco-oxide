@@ -77,3 +77,29 @@ impl<Data> PredictionTransform for OctahedronDifferenceTransform<Data>
         )
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::shared::NdVector;
+    use crate::core::shared::Abs;
+
+    #[test]
+    fn test_transform() {
+        let mut transform = OctahedronDifferenceTransform::<NdVector<3, f64>>::new();
+        let orig1 = NdVector::<3, f64>::from([1.0, 2.0, 3.0]).normalize();
+        let pred1 = NdVector::<3, f64>::from([1.0, 1.0, 1.0]).normalize();
+        let orig2 = NdVector::<3, f64>::from([4.0, 5.0, 6.0]).normalize();
+        let pred2 = NdVector::<3, f64>::from([5.0, 5.0, 5.0]).normalize();
+        
+        transform.map_with_tentative_metadata(orig1.clone(), pred1.clone());
+        transform.map_with_tentative_metadata(orig2.clone(), pred2.clone());
+
+        let (_, corrections) = transform.squeeze();
+        let recovered1 = transform.inverse(pred1.clone(), corrections[0], ());
+        let recovered2 = transform.inverse(pred2.clone(), corrections[1], ());
+        assert!((recovered1 - orig1).norm() < 0.000_000_1);
+        assert!((recovered2 - orig2).norm() < 0.000_000_1);
+    }
+}

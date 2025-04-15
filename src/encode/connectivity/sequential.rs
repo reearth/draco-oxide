@@ -16,7 +16,8 @@ impl ConnectivityEncoder for Sequential {
     type Config = Config;
 
     fn encode_connectivity<CoordValType>(
-        &mut self, faces: &[[VertexIdx; 3]], 
+        &mut self, 
+        faces: &mut [[VertexIdx; 3]], 
         _: &Self::Config, 
         points: &mut [[CoordValType; 3]], 
         buffer: &mut Writer<MsbFirst>

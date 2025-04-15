@@ -11,7 +11,8 @@ pub trait ConnectivityEncoder {
     type Err;
     type Config;
     fn encode_connectivity<CoordValType>(
-        &mut self, faces: &[[VertexIdx; 3]], 
+        &mut self, 
+        faces: &mut [[VertexIdx; 3]], 
         config: &Self::Config, 
         points: &mut [[CoordValType; 3]], 
         buffer: &mut Writer<MsbFirst>

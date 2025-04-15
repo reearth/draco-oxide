@@ -3,7 +3,7 @@ Rust crate for the Google Draco mesh compression library (WIP)
 
 ## Contact
 
-Re:Earth core comitters: [community@reearth.io](mailto:community@reearth.io)
+Re:Earth core committers: [community@reearth.io](mailto:community@reearth.io)
 
 ## License
 
