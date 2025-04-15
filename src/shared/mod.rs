@@ -1,5 +1,5 @@
-pub(crate) mod connectivity;
+pub mod connectivity;
 
-pub(crate) mod attribute;
+pub mod attribute;
 
-pub(crate) mod entropy;
+pub mod entropy;

@@ -1,6 +1,7 @@
 use std::{
     fmt,
-    cmp
+    cmp,
+    mem
 };
 
 use crate::shared::connectivity::edgebreaker::symbol_encoder::{
@@ -73,6 +74,16 @@ pub(crate) struct Edgebreaker {
 	face_orientation: Vec<bool>,
 
     handle_edges: Vec<(usize, [VertexIdx;2])>,
+
+    /// Stores the face corresponding to each symbol in the resulting string.
+    /// This will be used in the case of reverse decoding.
+    symbol_idx_to_face_idx: Vec<usize>,
+
+    vertex_decode_order: Vec<usize>,
+
+    face_decode_order: Vec<usize>,
+
+    num_decoded_vertices: usize,
 	
 	/// configurations for the encoder
 	config: Config
@@ -130,6 +141,10 @@ impl Edgebreaker {
             cutting_paths: Vec::new(),
             symbols: Vec::new(),
             handle_edges: Vec::new(),
+            symbol_idx_to_face_idx: Vec::new(),
+            vertex_decode_order: Vec::new(),
+            face_decode_order: Vec::new(),
+            num_decoded_vertices: 0,
             config: Config::default(),
         }
     }
@@ -154,6 +169,9 @@ impl Edgebreaker {
         self.compute_edges(faces);
 
         self.check_orientability(faces)?;
+        self.vertex_decode_order = vec![usize::MAX; points.len()];
+        self.face_decode_order = vec![usize::MAX; faces.len()];
+        self.num_decoded_vertices = 0;
         Ok(())
 	}
 
@@ -282,7 +300,7 @@ impl Edgebreaker {
 	/// When this function returns, all the CLERS symbols are written in the
 	/// buffer in the reverse order. Since the time complexity of 'find_vertices_pinching()' 
 	/// is O(1), the complexity of this function (single recursive step) is also O(1).
-	fn edgebreaker_recc<const REVERSE_DECODE: bool>(&mut self, faces: &[[VertexIdx; 3]]) -> Result<(), Err>{
+	fn edgebreaker_recc<const REVERSE_DECODE: bool>(&mut self, faces: &[[VertexIdx; 3]]) -> Result<(), Err> {
         let active_edge_idx = self.active_edge_idx_stack.pop().unwrap();
         let active_edge = self.edges[active_edge_idx];
         let active_edge_coboundary = &self.coboundary_map_one[active_edge_idx];
@@ -433,6 +451,11 @@ impl Edgebreaker {
             Symbol::C
         };
         self.symbols.push(symbol);
+        // if we are reverse-decoding, we need to store the face corresponding to the symbol in order
+        // to compute the order of the vertices when decoding.
+        if REVERSE_DECODE {
+            self.symbol_idx_to_face_idx.push(f_idx);
+        }
 
         self.visited_vertices[next_vertex] = true;
         self.visited_faces[f_idx] = true;
@@ -535,7 +558,6 @@ impl Edgebreaker {
                     self.mark_vertices_as_visited_in_cutting_path_containing(coboundary_edge)?;
                 }
             }
-            
         }
         // if 'self.coboundary_map_one[e_idx].len() == 2', then we do not need to do anything, since it is neither a boundary nor a cutting path.
 
@@ -700,13 +722,172 @@ impl Edgebreaker {
 
         vertex_counter
     }
+
+
+    fn compute_decode_order(&mut self, faces: &mut [[VertexIdx; 3]]) {
+        debug_assert!(
+            self.symbol_idx_to_face_idx.len() == self.symbols.len(), 
+            "symbol_idx_to_face_idx.len(): {}, symbols.len(): {}", 
+            self.symbol_idx_to_face_idx.len(), self.symbols.len()
+        );
+
+        // fill 'face_decode_order'.
+        for (i, face_idx) in self.symbol_idx_to_face_idx.iter().rev().enumerate() {
+            self.face_decode_order[*face_idx] = i;
+        }
+
+        // fill 'vertex_decode_order'.
+        for i in (0..self.symbols.len()).rev() {
+            let symbol = self.symbols[i];
+            let face = faces[self.symbol_idx_to_face_idx[i]];
+            match symbol {
+                Symbol::E => {
+                    if self.symbols.len() == 1 {
+                        for v  in face {
+                            self.vertex_decode_order[v] = self.num_decoded_vertices;
+                            self.num_decoded_vertices += 1;
+                        }
+                        return;
+                    }
+                    let j = if self.symbols[i-1] == Symbol::E {
+                        let mut idx = i-1;
+                        let mut count = 2;
+                        // find 'S' that matches the two 'E's.
+                        while count > 0 {
+                            idx -= 1;
+                            match self.symbols[idx] {
+                                Symbol::E => count+=1,
+                                Symbol::S => count-=2,
+                                _ => {}
+                            }
+                        }
+                        idx
+                    } else {
+                        i-1
+                    };
+                    let adjacent_face = faces[self.symbol_idx_to_face_idx[j]];
+                    debug_assert!(
+                        face.iter().filter(|v| adjacent_face.contains(v)).count() == 2, 
+                        "face: {:?}, adjacent_face: {:?}", 
+                        face, adjacent_face
+                    );  
+
+                    // find the edge shared by the two faces,
+                    // and sort the face such that the shared edge comes first.
+
+                    // ToDo: change symbol_idx_to_face_idx to record the index of the faces
+                    // instead of the face itself, so that the following binary search will be 
+                    // unnecessary.
+                    let i_face = faces.binary_search(&face).unwrap();
+                    let sorted_face = if !adjacent_face.contains(&face[0]) {
+                        let edge = [face[1], face[2]];
+                        let [right, left] = if (edge[0] < face[0] && face[0] < edge[1]) ^ self.face_orientation[i_face] {
+                            edge
+                        } else {
+                            [edge[1], edge[0]]
+                        };
+                        [right, left, face[0]]
+                    } else if !adjacent_face.contains(&face[1]) {
+                        let edge = [face[0], face[2]];
+                        let [right, left] = if (edge[0] < face[1] && face[1] < edge[1]) ^ self.face_orientation[i_face] {
+                            edge
+                        } else {
+                            [edge[1], edge[0]]
+                        };
+                        [right, left, face[1]]
+                    } else {
+                        let edge = [face[0], face[1]];
+                        let [right, left] = if (edge[0] < face[2] && face[2] < edge[1]) ^ self.face_orientation[i_face] {
+                            edge
+                        } else {
+                            [edge[1], edge[0]]
+                        };
+                        [right, left, face[2]]
+                    };
+                    for v in sorted_face {
+                        if self.vertex_decode_order[v] == usize::MAX {
+                            self.vertex_decode_order[v] = self.num_decoded_vertices;
+                            self.num_decoded_vertices += 1;
+                        }
+                    }
+                },
+                Symbol::L => {
+                    for v in face {
+                        if self.vertex_decode_order[v] == usize::MAX {
+                            self.vertex_decode_order[v] = self.num_decoded_vertices;
+                            self.num_decoded_vertices += 1;
+                        }
+                    }
+                },
+                Symbol::R => {
+                    for v in face {
+                        if self.vertex_decode_order[v] == usize::MAX {
+                            self.vertex_decode_order[v] = self.num_decoded_vertices;
+                            self.num_decoded_vertices += 1;
+                        }
+                    }
+                },
+                Symbol::H(_metadata) => {
+                    for v in face {
+                        if self.vertex_decode_order[v] == usize::MAX {
+                            self.vertex_decode_order[v] = self.num_decoded_vertices;
+                            self.num_decoded_vertices += 1;
+                        }
+                    }
+                },
+                Symbol::M(_hole_size) => {
+                    for v in face {
+                        if self.vertex_decode_order[v] == usize::MAX {
+                            self.vertex_decode_order[v] = self.num_decoded_vertices;
+                            self.num_decoded_vertices += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn reflect_decode_order(&self, faces: &mut [[VertexIdx; 3]]) {
+        println!("faces: {:?}", faces);
+        debug_assert!(
+            self.vertex_decode_order.iter().all(|&v| v!= usize::MAX), 
+            "Not all vertices are computed. Vertices not computed are: \n{:?}", 
+            self.vertex_decode_order.iter()
+                .enumerate()
+                .filter(|(_, &v)| v == usize::MAX)
+                .map(|x|x.0)
+                .collect::<Vec<_>>()
+        );
+        for f in &mut *faces {
+            for v in f {
+                *v = self.vertex_decode_order[*v];
+            }
+        }
+        // sort each face.
+        for f in &mut *faces {
+            f.sort();
+        }
+
+        println!("faces: {:?}", faces);
+        
+        // sort the faces.
+        println!("face_decode_order: {:?}", self.face_decode_order);
+        let mut new_faces = vec![[0;3]; faces.len()];
+        for (i, &f_idx) in self.face_decode_order.iter().enumerate() {
+            new_faces[f_idx] = faces[i];
+        }
+        for (a,b) in faces.iter_mut().zip(new_faces.into_iter()) {   
+            *a = b;
+        }
+    }
 }	
 
 impl ConnectivityEncoder for Edgebreaker {
     type Config = Config;
 	type Err = Err;
 	/// The main encoding paradigm for Edgebreaker.
-	fn encode_connectivity<CoordValType>(&mut self, faces: &[[VertexIdx; 3]], config: &Config, points: &mut[[CoordValType;3]], buffer: &mut Writer<MsbFirst>) -> Result<(), Self::Err> {
+	fn encode_connectivity<CoordValType>(&mut self, faces: &mut [[VertexIdx; 3]], config: &Config, points: &mut[[CoordValType;3]], buffer: &mut Writer<MsbFirst>) -> Result<(), Self::Err> {
         // encode encoding configuration
         config.symbol_encoding.write_symbol_encoding(buffer);
         
@@ -738,8 +919,12 @@ impl ConnectivityEncoder for Edgebreaker {
 
             self.encode_symbols(buffer, config)?;
 
+            self.compute_decode_order(faces);
             self.symbols.clear();
+            self.symbol_idx_to_face_idx.clear();
 		}
+
+        self.reflect_decode_order(faces);
         Ok(())
 	}
 }
@@ -860,7 +1045,6 @@ mod tests {
         ];
         let mut edgebreaker = Edgebreaker::new();
         edgebreaker.lies_on_boundary_or_cutting_path = vec![false; 12];
-        
         edgebreaker.face_orientation = vec!(false; faces.len());
         edgebreaker.visited_faces = vec!(false; faces.len());
         edgebreaker.compute_edges(&faces);
@@ -884,6 +1068,42 @@ mod tests {
         edgebreaker.visited_faces = vec!(false; faces.len());
         edgebreaker.compute_edges(&faces);
         assert!(edgebreaker.check_orientability(&faces).is_err());
+
+        let faces = [
+            [9,12,13], [8,9,13], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
+            [8,13,14], [7,8,14], [1,7,8], [0,1,7], [0,1,2], [0,2,3], [2,3,13], [3,13,14],
+            [7,14,15], [6,7,15], [0,6,7], [0,5,6], [0,3,5], [3,4,5], [3,4,14], [4,14,15],
+            [6,12,15], [6,9,12], [5,6,9], [5,9,10], [4,5,10], [4,10,11], [4,11,15], [11,12,15]
+        ];
+        let orientation = vec![
+            false, false, true, true, true, false, true, true,
+            false, false, true, false, true, true, false, true,
+            false, false, true, true, true, true, false, true,
+            true, true, false, false, false, false, false, false
+        ];
+        // sort faces while taping orientation
+        let (faces, orientation) = {
+            let mut zipped = faces.iter().zip(orientation.iter()).collect::<Vec<_>>();
+            zipped.sort_by_key(|f| f.0);
+            let faces = zipped.iter().map(|&(&f, _)| f).collect::<Vec<_>>();
+            let orientation = zipped.iter().map(|&(_, &o)| o).collect::<Vec<_>>();
+            (faces, orientation)
+        };
+        let mut edgebreaker = Edgebreaker::new();
+        edgebreaker.lies_on_boundary_or_cutting_path = vec![false; 12];
+        edgebreaker.face_orientation = vec!(false; faces.len());
+        edgebreaker.visited_faces = vec!(false; faces.len());
+        edgebreaker.compute_edges(&faces);
+        assert!(edgebreaker.check_orientability(&faces).is_ok());
+        assert_eq!(edgebreaker.face_orientation, orientation,
+            "orientation is wrong at: {:?}",
+            edgebreaker.face_orientation.iter()
+                .zip(orientation.iter())
+                .enumerate()
+                .filter(|(_, (a,b))| a!=b)
+                .map(|(i,_)| faces[i])
+                .collect::<Vec<_>>()  
+        );
     }
 
 
@@ -900,11 +1120,11 @@ mod tests {
 
     #[test]
     fn too_many_connected_components() {
-        let faces = (0..255).map(|a|[3*a, 3*a+1, 3*a+2]).collect::<Vec<_>>();
+        let mut faces = (0..255).map(|a|[3*a, 3*a+1, 3*a+2]).collect::<Vec<_>>();
         let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
 
         let mut writer = buffer::writer::Writer::new();
-        Edgebreaker::new().encode_connectivity(&faces, &Config::default(), &mut points, &mut writer).unwrap();
+        Edgebreaker::new().encode_connectivity(&mut faces, &Config::default(), &mut points, &mut writer).unwrap();
 
         let buffer: buffer::Buffer = writer.into();
         let mut reader = buffer.into_reader();
@@ -917,18 +1137,18 @@ mod tests {
         }
 
         // too many components
-        let faces = (0..256).map(|a|[3*a, 3*a+1, 3*a+2]).collect::<Vec<_>>();
+        let mut faces = (0..256).map(|a|[3*a, 3*a+1, 3*a+2]).collect::<Vec<_>>();
         let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
 
         let mut writer = buffer::writer::Writer::new();
-        let err= Edgebreaker::new().encode_connectivity(&faces, &Config::default(), &mut points, &mut writer).unwrap_err();
+        let err= Edgebreaker::new().encode_connectivity(&mut faces, &Config::default(), &mut points, &mut writer).unwrap_err();
 
         assert_eq!(err, Err::TooManyConnectedComponents);
     }
 
     #[test]
     fn edgebreaker_disc() {
-        let faces = vec![
+        let mut faces = vec![
             [0,1,4],
             [0,3,4],
             [1,2,5],
@@ -948,7 +1168,7 @@ mod tests {
         let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
 
         let mut writer = buffer::writer::Writer::new();
-        Edgebreaker::new().encode_connectivity(&faces, &Config::default(), &mut points, &mut writer).unwrap();
+        Edgebreaker::new().encode_connectivity(&mut faces, &Config::default(), &mut points, &mut writer).unwrap();
 
         let buffer: buffer::Buffer = writer.into();
         let mut reader = buffer.into_reader();
@@ -958,13 +1178,30 @@ mod tests {
         assert_eq!(reader.next(NUM_FACES_SLOT), faces.len());
 
         let answer = vec![E,E,S,R,L,R,R,C,C,R,R,R,C,C];
-
         assert_eq!(answer, read_symbols(reader, faces.len()));
+
+        let faces_decode = [
+            [0,1,2],
+            [1,3,4],
+            [0,1,3],
+            [0,3,5],
+            [0,5,6],
+            [5,6,7],
+            [6,7,8],
+            [0,6,8],
+            [0,2,8],
+            [2,8,9],
+            [2,9,10],
+            [2,10,11],
+            [1,2,11],
+            [1,4,11]
+        ];
+        assert_eq!(faces, faces_decode);
     }
 
     #[test]
     fn edgebreaker_split() {
-        let faces = vec![
+        let mut faces = vec![
             [0,1,2],
             [0,2,4],
             [0,4,5],
@@ -974,7 +1211,7 @@ mod tests {
         let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
 
         let mut writer = buffer::writer::Writer::new();
-        Edgebreaker::new().encode_connectivity(&faces, &Config::default(), &mut points, &mut writer).unwrap();
+        Edgebreaker::new().encode_connectivity(&mut faces, &Config::default(), &mut points, &mut writer).unwrap();
 
         let buffer: buffer::Buffer = writer.into();
         let mut reader = buffer.into_reader();
@@ -986,6 +1223,10 @@ mod tests {
         let answer = vec![E,E,S,R];
 
         assert_eq!(answer, read_symbols(reader, faces.len()));
+
+        assert_eq!(faces, vec![
+            [0,1,2], [1,3,4], [0,1,3], [0,3,5]
+        ]);
     }
 
     #[test]
@@ -1002,7 +1243,7 @@ mod tests {
         let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
 
         let mut writer = buffer::writer::Writer::new();
-        Edgebreaker::new().encode_connectivity(&faces, &Config::default(), &mut points, &mut writer).unwrap();
+        Edgebreaker::new().encode_connectivity(&mut faces, &Config::default(), &mut points, &mut writer).unwrap();
 
         let buffer: buffer::Buffer = writer.into();
         let mut reader = buffer.into_reader();
@@ -1030,7 +1271,7 @@ mod tests {
         let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
 
         let mut writer = buffer::writer::Writer::new();
-        Edgebreaker::new().encode_connectivity(&faces, &Config::default(), &mut points, &mut writer).unwrap();
+        Edgebreaker::new().encode_connectivity(&mut faces, &Config::default(), &mut points, &mut writer).unwrap();
 
         let buffer: buffer::Buffer = writer.into();
 

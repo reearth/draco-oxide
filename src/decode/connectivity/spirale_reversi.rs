@@ -65,7 +65,6 @@ impl SpiraleReversi {
             for _ in 0..num_faces {
                 self.spirale_reversi_recc::<SE>(reader);
             }
-        
         }
     }
 
@@ -469,7 +468,7 @@ mod tests {
 
     #[test]
     fn simplest() {
-        let faces = vec![
+        let mut faces = vec![
             [0,1,2],
             [1,2,3]
         ];
@@ -477,21 +476,22 @@ mod tests {
         let mut edgebreaker = edgebreaker::Edgebreaker::new();
         assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
         let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
+        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
         let buffer: Buffer = writer.into();
         let reader = buffer.into_reader();
         let mut spirale_reversi = SpiraleReversi::new();
-        let faces = spirale_reversi.decode_connectivity(reader);
+        let decoded_faces = spirale_reversi.decode_connectivity(reader);
 
-        assert_eq!(faces, vec![
+        assert_eq!(decoded_faces, vec![
             [0,1,2],
             [0,1,3]
         ]);
+        assert_eq!(faces, &*decoded_faces);
     }
 
     #[test]
     fn test_split() {
-        let faces = vec![
+        let mut faces = vec![
             [0,1,2],
             [0,2,4],
             [0,4,5],
@@ -503,20 +503,100 @@ mod tests {
         let mut edgebreaker = edgebreaker::Edgebreaker::new();
         assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
         let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
+        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
         let buffer: Buffer = writer.into();
         let reader = buffer.into_reader();
         let mut spirale_reversi = SpiraleReversi::new();
-        let faces = spirale_reversi.decode_connectivity(reader);
+        let decoded_faces = spirale_reversi.decode_connectivity(reader);
 
-        assert_eq!(faces, vec![
-            [0, 1, 2], [1, 3, 4], [0, 1, 3], [0, 3, 5]
+        assert_eq!(decoded_faces, vec![
+            [0,1,2], [1,3,4], [0,1,3], [0,3,5]
         ]);
+        assert_eq!(faces, &*decoded_faces);
+    }
+
+    #[test]
+    fn test_disc() {
+        let mut faces = vec![
+            [0,1,4],
+            [0,3,4],
+            [1,2,5],
+            [1,4,5],
+            [2,5,6],
+            [3,4,7],
+            [3,7,10],
+            [4,5,7],
+            [5,6,8],
+            [5,7,8],
+            [7,8,9],
+            [7,9,10],
+            [8,9,11],
+            [9,10,11]
+        ];
+        // positions do not matter
+        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+
+        let mut edgebreaker = edgebreaker::Edgebreaker::new();
+        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
+        let mut writer = writer::Writer::new();
+        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
+        let buffer: Buffer = writer.into();
+        let reader = buffer.into_reader();
+        let mut spirale_reversi = SpiraleReversi::new();
+        let decoded_faces = spirale_reversi.decode_connectivity(reader);
+
+        assert_eq!(decoded_faces, vec![
+            [0,1,2],
+            [1,3,4],
+            [0,1,3],
+            [0,3,5],
+            [0,5,6],
+            [5,6,7],
+            [6,7,8],
+            [0,6,8],
+            [0,2,8],
+            [2,8,9],
+            [2,9,10],
+            [2,10,11],
+            [1,2,11],
+            [1,4,11]
+        ]);
+        assert_eq!(faces, &*decoded_faces);
+    }
+
+    #[test]
+    fn test_long_split() {
+        let mut faces = vec![
+            [0,1,2],
+            [0,2,3],
+            [0,3,4],
+            [1,2,6],
+            [1,5,6]
+        ];
+        // positions do not matter
+        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+
+        let mut edgebreaker = edgebreaker::Edgebreaker::new();
+        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
+        let mut writer = writer::Writer::new();
+        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
+        let buffer: Buffer = writer.into();
+        let reader = buffer.into_reader();
+        let mut spirale_reversi = SpiraleReversi::new();
+        let decoded_faces = spirale_reversi.decode_connectivity(reader);
+
+        assert_eq!(decoded_faces, vec![
+            [0,1,2], 
+            [0,1,3], 
+            [4,5,6], 
+            [3,4,5], 
+            [0,3,5]
+        ]);
+        assert_eq!(faces, &*decoded_faces);
     }
 
     #[test]
     fn test_hole() {
-        // create torus in order to test the handle symbol.
         let mut faces = [
             [9,23,24], [8,9,23], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
             [8,22,23], [7,8,22], [1,7,8], [0,1,7], [0,1,2], [0,2,3], [2,3,13], [3,13,14],
@@ -531,13 +611,13 @@ mod tests {
         let mut edgebreaker = edgebreaker::Edgebreaker::new();
         assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
         let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
+        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
         let buffer: Buffer = writer.into();
         let reader = buffer.into_reader();
         let mut spirale_reversi = SpiraleReversi::new();
-        let faces = spirale_reversi.decode_connectivity(reader);
+        let decoded_faces = spirale_reversi.decode_connectivity(reader);
 
-        assert_eq!(faces, 
+        assert_eq!(decoded_faces, 
             vec![
                 [0,1,2], [3,4,5], [4,6,7], [3,4,6], [3,6,8], [3,8,9], [8,9,10], [9,10,11], 
                 [10,11,12], [11,12,13], [1,11,13], [1,13,14], [0,1,14], [0,14,15], [15,16,17], [0,15,16], 
@@ -545,11 +625,11 @@ mod tests {
                 [1,11,23], [9,11,23], [9,23,24], [3,9,24], [3,5,24], [5,24,22], [24,22,41], [21,23,24]
             ]
         );
+        // assert_eq!(faces, &*decoded_faces);
     }
 
     #[test]
     fn test_handle() {
-        // create torus in order to test the handle symbol.
         // create torus in order to test the handle symbol.
         let mut faces = [
             [9,12,13], [8,9,13], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
@@ -565,17 +645,19 @@ mod tests {
         let mut edgebreaker = edgebreaker::Edgebreaker::new();
         assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
         let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
+        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
         let buffer: Buffer = writer.into();
         let reader = buffer.into_reader();
         let mut spirale_reversi = SpiraleReversi::new();
-        let faces = spirale_reversi.decode_connectivity(reader);
+        let decoded_faces = spirale_reversi.decode_connectivity(reader);
 
-        assert_eq!(faces, vec![
+        assert_eq!(decoded_faces, vec![
+
             [0,1,2], [1,3,4], [0,1,3], [0,3,5], [2,6,7], [4,7,8], [6,7,8], [5,6,8], 
             [5,8,9], [0,5,9], [0,9,10], [0,2,10], [2,7,10], [7,10,11], [4,7,11], [3,4,11], 
             [3,11,12], [3,5,12], [5,6,12], [6,12,13], [2,6,13], [1,2,13], [1,13,14], [1,4,14], 
             [4,8,14], [8,9,14], [9,14,15], [9,10,15], [10,11,15], [11,12,15], [12,13,15], [13,14,15]
         ]);
+        assert_eq!(faces, &*decoded_faces);
     }
 }

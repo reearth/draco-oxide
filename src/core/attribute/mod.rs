@@ -1,28 +1,41 @@
-use super::buffer;
+use crate::core::shared::Vector;
+
+use super::{buffer, shared::DataValue};
 pub struct Attribute {
-	buffer: buffer::Buffer,
+	buffer: buffer::attribute::AttributeBuffer,
 	
-	/// id of the parent, if any
+	/// id of the parents, if any
 	parent_id: Option<usize>,
-	
-	/// component_data_type
-	component_data_type: ComponentDataType,
 	
 	/// attribute type
 	type_: AttributeType,
-	
-	/// number of components e.g. 3 for 3D vector
-	num_components: usize,
-	
-	/// number of values e.g. number of points for the position attributes of 
-	/// a point cloud.
-	len: usize,
-	
-	/// the byte stride for one attribute value given by 
-	/// 'self.component_data_type.size()' * 'self.num_components'
-	stride: usize,
 }
 
+impl Attribute {
+	pub fn get<Data>(&self, idx: usize) -> Data 
+		where 
+			Data: Vector,
+			Data::Component: DataValue
+	{
+		self.buffer.get(idx)
+	}
+
+	pub fn get_component_type(&self) -> ComponentDataType {
+		self.buffer.get_component_type()
+	}
+
+	pub fn get_num_components(&self) -> usize {
+		self.buffer.get_num_components()
+	}
+
+	#[inline(always)]
+	pub fn len(&self) -> usize {
+		self.buffer.len()
+	}
+}
+
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentDataType {
 	F32,
 	F64,
