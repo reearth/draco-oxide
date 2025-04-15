@@ -12,7 +12,7 @@ pub trait ConnectivityEncoder {
     type Config;
     fn encode_connectivity<CoordValType>(
         &mut self, 
-        faces: &mut [[VertexIdx; 3]], 
+        faces: &mut [[VertexIdx; 3]],
         config: &Self::Config, 
         points: &mut [[CoordValType; 3]], 
         buffer: &mut Writer<MsbFirst>

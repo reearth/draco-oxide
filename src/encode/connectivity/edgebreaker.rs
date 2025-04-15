@@ -169,7 +169,6 @@ impl Edgebreaker {
         self.compute_edges(faces);
 
         self.check_orientability(faces)?;
-
         self.vertex_decode_order = vec![usize::MAX; points.len()];
         self.face_decode_order = vec![usize::MAX; faces.len()];
         self.num_decoded_vertices = 0;
@@ -1070,7 +1069,6 @@ mod tests {
         edgebreaker.compute_edges(&faces);
         assert!(edgebreaker.check_orientability(&faces).is_err());
 
-
         let faces = [
             [9,12,13], [8,9,13], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
             [8,13,14], [7,8,14], [1,7,8], [0,1,7], [0,1,2], [0,2,3], [2,3,13], [3,13,14],
@@ -1199,7 +1197,6 @@ mod tests {
             [1,4,11]
         ];
         assert_eq!(faces, faces_decode);
-
     }
 
     #[test]

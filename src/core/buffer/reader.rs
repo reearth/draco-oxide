@@ -31,6 +31,7 @@ impl<Order: OrderConfig> Reader<Order> {
 	/// read the 'size' bits of data at the current offset without checking the bounds.
 	/// the output data is stored in the first 'size' bits.
 	/// Safety:  The caller must ensure that 
+
 	///  (1) 'size' is less than or equal to 'self.num_remaining_bits'.
 	///  (2) 'size' is less than or equal to 64.
 	pub unsafe fn next_unchecked(&mut self, size: usize) -> usize {

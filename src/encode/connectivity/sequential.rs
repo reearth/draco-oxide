@@ -17,7 +17,7 @@ impl ConnectivityEncoder for Sequential {
 
     fn encode_connectivity<CoordValType>(
         &mut self, 
-        faces: &mut [[VertexIdx; 3]], 
+        faces: &mut [[VertexIdx; 3]],
         _: &Self::Config, 
         points: &mut [[CoordValType; 3]], 
         buffer: &mut Writer<MsbFirst>

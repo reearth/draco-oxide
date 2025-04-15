@@ -32,7 +32,7 @@ pub struct Buffer<Order: OrderConfig = MsbFirst> {
 	data: RawBuffer,
 
 	/// length of the buffer, i.e. the number of bits stored in the buffer.
-    /// The minimum number of bytes allocated for the buffer is 'len' / 8 + 1.
+  /// The minimum number of bytes allocated for the buffer is 'len' / 8 + 1.
 	len: usize,
 
     _phantom: std::marker::PhantomData<Order>,
