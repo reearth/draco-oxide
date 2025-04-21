@@ -35,15 +35,41 @@ impl AttributeBuffer {
         self.data.as_ptr()
     }
 
+
     pub(crate) fn get<Data>(&self, idx: usize) -> Data 
         where 
             Data: Vector,
             Data::Component: DataValue
     {
+        assert!(
+            size_of::<Data>() == self.component_type.size() * self.num_components, 
+            "Cannot read from buffer: Trying to read {}, but the buffer stores the elements of type {} with {} components", 
+            size_of::<Data>(), self.component_type.size(), self.num_components
+        );
         assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
+        // just checked the condition
+        unsafe{ self.get_unchecked::<Data>(idx) }
+    }
+
+    /// # Safety:
+    /// Two checks are ignored in this function:
+    /// (1) 'std::mem::size_of::<Data>()==component.size() * num_components', and
+    /// (2) idx < self.len
+    pub(crate) unsafe fn get_unchecked<Data>(&self, idx: usize) -> Data 
+        where 
+            Data: Vector,
+            Data::Component: DataValue
+    {
+        debug_assert!(
+            size_of::<Data>() == self.component_type.size() * self.num_components, 
+            "Cannot read from buffer: Trying to read {}, but the buffer stores the elements of type {} with {} components", 
+            size_of::<Data>(), self.component_type.size(), self.num_components
+        );
+        debug_assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
         let size = mem::size_of::<Data>();
         let ptr = unsafe{ self.as_ptr().add(size * idx) };
-        unsafe{ ptr::read(ptr as *const Data) }
+        // Safety: upheld
+        ptr::read(ptr as *const Data)
     }
 
     pub(crate) fn get_component_type(&self) -> ComponentDataType {
@@ -74,9 +100,9 @@ impl AttributeBuffer {
         }
     }
 
-    /// pushes a value into the buffer without checking the type and number.
+    /// pushes a value into the buffer without checking the type and the number of components.
     /// # Safety
-    /// This function is unsafe because it does not check the type and number of components of the data.
+    /// This function is unsafe because it does not check the type and the number of components of the data.
     pub(crate) unsafe fn push_type_unchecked<Data>(&mut self, data: Data) 
         where 
             Data: Vector,
@@ -102,24 +128,73 @@ impl AttributeBuffer {
         ptr::write(self.last as *mut Data, data);
     }
 
-    fn push_value<Data>(&mut self, value: Data) 
+    fn push_value_unchecked<Data>(&mut self, value: Data) 
         where Data: DataValue
     {
         let size = mem::size_of::<Data>();
 
-        if self.last.is_null() {
-            self.last = self.data.as_ptr();
-        } else {
-            self.last = unsafe { self.last.add(size) };
-        }
+        debug_assert!(!self.last.is_null());
+        debug_assert_eq!(self.last, unsafe{ self.data.as_ptr().add(self.len * size) });
+        debug_assert!(self.len * size <= isize::MAX as usize);
 
         unsafe {
             ptr::write(self.last as *mut Data, value);
         }
+
+        self.last = unsafe { self.last.add(size) };
     }
 
 	#[inline(always)]
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    /// Returns a slice of all the values in the buffer casted to the static type `Data`.
+    /// # Safety
+    /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
+    pub(crate) unsafe fn as_slice<Data>(&self) -> &[Data]
+    where
+        Data: Vector,
+        Data::Component: DataValue,
+    {
+        debug_assert!(
+            mem::size_of::<Data>() == self.component_type.size() * self.num_components,
+            "Cannot create slice: Trying to cast to {}, but the buffer stores elements of type {}D vector of {:?}, which has size {}",
+            mem::size_of::<Data>(),
+            self.num_components,
+            self.component_type,
+            self.component_type.size(),
+        );
+
+        
+        std::slice::from_raw_parts(
+            self.as_ptr() as *const Data,
+            self.len,
+        )
+    }
+}
+
+
+impl<Data> From<Vec<Data>> for AttributeBuffer 
+    where 
+        Data: Vector,
+        Data::Component: DataValue
+{
+    fn from(data: Vec<Data>) -> Self {
+        let component_type = Data::Component::get_dyn();
+        let num_components = Data::NUM_COMPONENTS;
+        let len = data.len();
+        let buffer = RawBuffer::from_vec(data);
+        let last = unsafe {
+            buffer.as_ptr().add(len * mem::size_of::<Data>())
+        };
+
+        Self {
+            data: buffer,
+            len,
+            last,
+            component_type,
+            num_components,
+        }
     }
 }

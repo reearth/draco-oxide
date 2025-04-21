@@ -38,7 +38,7 @@ impl<Data> PredictionTransform for OctahedronDifferenceTransform<Data>
         unimplemented!()
     }
 
-    fn map_with_tentative_metadata(&mut self, mut orig: Self::Data, mut pred: Self::Data) {
+    fn map_with_tentative_metadata(&mut self, orig: Self::Data, pred: Self::Data) {
         // Safety:
         // We made sure that the data is three dimensional.
         debug_assert!(
@@ -50,7 +50,7 @@ impl<Data> PredictionTransform for OctahedronDifferenceTransform<Data>
         self._out.push( orig - pred );
     }
 
-    fn inverse(&mut self, mut pred: Self::Data, crr: Self::Correction, _: Self::Metadata) -> Self::Data {
+    fn inverse(&mut self, pred: Self::Data, crr: Self::Correction, _: Self::Metadata) -> Self::Data {
         // Safety:
         // We made sure that the data is three dimensional.
         debug_assert!(
@@ -83,7 +83,6 @@ impl<Data> PredictionTransform for OctahedronDifferenceTransform<Data>
 mod tests {
     use super::*;
     use crate::core::shared::NdVector;
-    use crate::core::shared::Abs;
 
     #[test]
     fn test_transform() {

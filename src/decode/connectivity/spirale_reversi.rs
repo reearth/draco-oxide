@@ -205,15 +205,6 @@ impl SpiraleReversi {
                 }
             },
             Symbol::M(n_vertices) => {
-                let mut new_face = [
-                    self.active_edge[0],
-                    self.active_edge[1],
-                    self.num_decoded_vertices
-                ];
-                // ToDo: This sort can be omitted by constructing a face in a proper order.
-                new_face.sort();
-                self.faces.push(new_face);
-
                 // a hole starting and ending at 'self.active_edge[0]' must get created.
                 let coboundary_map_zero_with_multiplicity = {
                     let mut coboundary_map_zero = vec![Vec::new(); self.num_decoded_vertices+1];
@@ -268,14 +259,28 @@ impl SpiraleReversi {
                         .find(|&&(v,_)| v!=prev_vertex)
                         .unwrap().0;
                 for face in &mut self.faces {
-                    for vertex in face {
+                    let mut is_face_updated = false;
+                    for vertex in &mut *face {
                         if *vertex == self.active_edge[0] {
                             *vertex = curr_vertex;
+                            is_face_updated = true;
                         } else if *vertex > self.active_edge[0] {
-                            *vertex += n_vertices-1;
+                            *vertex -= 1;
                         }
                     }
+                    if is_face_updated {
+                        face.sort();
+                    }
                 }
+
+                let mut new_face = [
+                    curr_vertex,
+                    self.active_edge[1],
+                    next_vertex
+                ];
+                // ToDo: This sort can be omitted by constructing a face in a proper order.
+                new_face.sort();
+                self.faces.push(new_face);
 
                 self.num_decoded_vertices -= 1;
                 self.active_edge = [self.active_edge[1], next_vertex];
@@ -462,7 +467,11 @@ impl ConnectivityDecoder for SpiraleReversi {
 mod tests {
     use crate::core::buffer::{writer, Buffer};
     use crate::encode::connectivity::{edgebreaker, ConnectivityEncoder};
-    use crate::core::shared::ConfigType;
+    use crate::core::shared::{
+        ConfigType,
+        NdVector,
+        Vector
+    };
     use super::*;
     use crate::decode::connectivity::ConnectivityDecoder;
 
@@ -472,7 +481,7 @@ mod tests {
             [0,1,2],
             [1,2,3]
         ];
-        let  mut points = vec![[0;3]; 4];
+        let  mut points = vec![NdVector::<3,f32>::zero(); 4];
         let mut edgebreaker = edgebreaker::Edgebreaker::new();
         assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
         let mut writer = writer::Writer::new();
@@ -498,7 +507,7 @@ mod tests {
             [2,3,4]
         ];
         // positions do not matter
-        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
         let mut edgebreaker = edgebreaker::Edgebreaker::new();
         assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
@@ -534,7 +543,7 @@ mod tests {
             [9,10,11]
         ];
         // positions do not matter
-        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
         let mut edgebreaker = edgebreaker::Edgebreaker::new();
         assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
@@ -574,7 +583,7 @@ mod tests {
             [1,5,6]
         ];
         // positions do not matter
-        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
         let mut edgebreaker = edgebreaker::Edgebreaker::new();
         assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
@@ -606,7 +615,7 @@ mod tests {
         faces.sort();
 
         // positions do not matter
-        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
         let mut edgebreaker = edgebreaker::Edgebreaker::new();
         assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
@@ -622,7 +631,7 @@ mod tests {
                 [0,1,2], [3,4,5], [4,6,7], [3,4,6], [3,6,8], [3,8,9], [8,9,10], [9,10,11], 
                 [10,11,12], [11,12,13], [1,11,13], [1,13,14], [0,1,14], [0,14,15], [15,16,17], [0,15,16], 
                 [0,16,18], [0,2,18], [2,18,19], [20,21,22], [19,20,21], [2,19,21], [2,21,23], [1,2,23],
-                [1,11,23], [9,11,23], [9,23,24], [3,9,24], [3,5,24], [5,24,22], [24,22,41], [21,23,24]
+                [1,11,23], [9,11,23], [9,23,24], [3,9,24], [3,5,24], [5,22,24], [21,22,24], [21,23,24]
             ]
         );
         // assert_eq!(faces, &*decoded_faces);
@@ -640,7 +649,7 @@ mod tests {
         faces.sort();
 
         // positions do not matter
-        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
         let mut edgebreaker = edgebreaker::Edgebreaker::new();
         assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
@@ -652,7 +661,6 @@ mod tests {
         let decoded_faces = spirale_reversi.decode_connectivity(reader);
 
         assert_eq!(decoded_faces, vec![
-
             [0,1,2], [1,3,4], [0,1,3], [0,3,5], [2,6,7], [4,7,8], [6,7,8], [5,6,8], 
             [5,8,9], [0,5,9], [0,9,10], [0,2,10], [2,7,10], [7,10,11], [4,7,11], [3,4,11], 
             [3,11,12], [3,5,12], [5,6,12], [6,12,13], [2,6,13], [1,2,13], [1,13,14], [1,4,14], 

@@ -8,6 +8,7 @@ use crate::shared::connectivity::sequential::{
     NUM_POINTS_SLOT,
     NUM_FACES_SLOT
 };
+use crate::core::shared::NdVector;
 
 pub(crate) struct Sequential;
 
@@ -19,7 +20,7 @@ impl ConnectivityEncoder for Sequential {
         &mut self, 
         faces: &mut [[VertexIdx; 3]],
         _: &Self::Config, 
-        points: &mut [[CoordValType; 3]], 
+        points: &mut [NdVector<3, CoordValType>], 
         buffer: &mut Writer<MsbFirst>
     ) -> Result<(), Err> {
         let index_size = match index_size_from_vertex_count(points.len()) {

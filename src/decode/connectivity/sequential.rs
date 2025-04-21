@@ -35,7 +35,11 @@ mod tests {
     use crate::encode::connectivity::ConnectivityEncoder;
     use crate::encode;
     use crate::encode::connectivity::sequential::Config;
-    use crate::core::shared::ConfigType;
+    use crate::core::shared::{
+        ConfigType,
+        NdVector,
+        Vector
+    };
 
 
     #[test]
@@ -48,7 +52,7 @@ mod tests {
             [7,14,15], [6,7,15], [0,6,7], [0,5,6], [0,3,5], [3,4,5], [3,4,14], [4,14,15],
             [6,12,15], [6,9,12], [5,6,9], [5,9,10], [4,5,10], [4,10,11], [4,11,15], [11,12,15]
         ];
-        let mut points = [[0.0, 0.0, 0.0]; 9];
+        let mut points = [NdVector::<3,f32>::zero(); 9];
         let result = encoder.encode_connectivity(&mut faces, &Config::default(), &mut points, &mut buffer);
         assert!(result.is_ok());
         let buffer: buffer::Buffer = buffer.into();

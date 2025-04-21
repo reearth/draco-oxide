@@ -13,7 +13,7 @@ pub type EdgeIdx = usize;
 pub type FaceIdx = usize;
 
 
-pub trait Float: DataValue + ops::Div<Output=Self> {
+pub trait Float: DataValue + ops::Div<Output=Self> + ops::Neg<Output=Self> {
     type Bits: DataValue;
     fn from_bits(bits: Self::Bits)-> Self;
     fn to_bits(self)-> Self::Bits;
@@ -155,7 +155,7 @@ impl_max!(u8, u16, u32, u64);
 
 
 pub trait DataValue: 
-    Clone + Copy + PartialEq + PartialOrd
+    Clone + Copy + fmt::Debug + PartialEq + PartialOrd
     + Abs + Max
     + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Output=Self> + ops::Div<Output=Self>
     + ops::AddAssign + ops::SubAssign + ops::MulAssign + ops::DivAssign
@@ -317,9 +317,9 @@ impl<const N: usize, T> Cross for NdVector<N, T>
         if N == 3 {
             unsafe {
                 let mut out = [T::zero(); N];
-                *out.get_unchecked_mut(1) = *self.data.get_unchecked(1) * *other.data.get_unchecked(2) - *self.data.get_unchecked(2) * *other.data.get_unchecked(1);
+                *out.get_unchecked_mut(0) = *self.data.get_unchecked(1) * *other.data.get_unchecked(2) - *self.data.get_unchecked(2) * *other.data.get_unchecked(1);
                 *out.get_unchecked_mut(1) = *self.data.get_unchecked(2) * *other.data.get_unchecked(0) - *self.data.get_unchecked(0) * *other.data.get_unchecked(2);
-                *out.get_unchecked_mut(1) = *self.data.get_unchecked(0) * *other.data.get_unchecked(1) - *self.data.get_unchecked(1) * *other.data.get_unchecked(0);
+                *out.get_unchecked_mut(2) = *self.data.get_unchecked(0) * *other.data.get_unchecked(1) - *self.data.get_unchecked(1) * *other.data.get_unchecked(0);
                 NdVector {
                     data: out
                 }

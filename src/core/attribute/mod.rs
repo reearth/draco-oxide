@@ -8,10 +8,22 @@ pub struct Attribute {
 	parent_id: Option<usize>,
 	
 	/// attribute type
-	type_: AttributeType,
+	att_type: AttributeType,
 }
 
 impl Attribute {
+	pub fn from<Data>(data: Vec<Data>, att_type: AttributeType) -> Self 
+		where 
+			Data: Vector,
+	{
+		let buffer = buffer::attribute::AttributeBuffer::from(data);
+		Self {
+			buffer,
+			parent_id: None,
+			att_type
+		}
+	}
+
 	pub fn get<Data>(&self, idx: usize) -> Data 
 		where 
 			Data: Vector,
@@ -28,9 +40,26 @@ impl Attribute {
 		self.buffer.get_num_components()
 	}
 
+	pub fn get_attribute_type(&self) -> AttributeType {
+		self.att_type
+	}
+
 	#[inline(always)]
 	pub fn len(&self) -> usize {
 		self.buffer.len()
+	}
+
+	#[inline]
+	/// returns the data values as a slice of casted values to the given type.
+	/// # Safety:
+    /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
+	pub unsafe fn as_slice_unchecked<Data>(&self) -> &[Data] 
+		where 
+			Data: Vector,
+			Data::Component: DataValue
+	{
+		// Safety: upheld
+		self.buffer.as_slice::<Data>()
 	}
 }
 
@@ -46,15 +75,15 @@ pub enum ComponentDataType {
 }
 
 impl ComponentDataType {
-	/// returns the size of the data type e.g. 32 for F32
+	/// returns the size of the data type in bytes e.g. 4 for F32
 	pub fn size(self) -> usize {
         match self {
-            ComponentDataType::F32 => 32,
-            ComponentDataType::F64 => 64,
-            ComponentDataType::U8 => 8,
-            ComponentDataType::U16 => 16,
-            ComponentDataType::U32 => 32,
-            ComponentDataType::U64 => 64,
+            ComponentDataType::F32 => 4,
+            ComponentDataType::F64 => 8,
+            ComponentDataType::U8 => 1,
+            ComponentDataType::U16 => 2,
+            ComponentDataType::U32 => 4,
+            ComponentDataType::U64 => 8,
         }
     }
 	/// returns unique id for the data type.
@@ -70,6 +99,7 @@ impl ComponentDataType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttributeType {
 	Position,
 	Normal,
@@ -81,4 +111,30 @@ pub enum AttributeType {
 	Weight,
 	Connectivity,
 	Custom
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::core::shared::NdVector;
+
+    use super::*;
+
+
+	#[test]
+	fn test_attribute() {
+		let data = vec![
+			NdVector::from([1.0f32, 2.0, 3.0]), 
+			NdVector::from([4.0f32, 5.0, 6.0]), 
+			NdVector::from([7.0f32, 8.0, 9.0])
+		];
+		println!("size of NdVector<3,f32> = {}", std::mem::size_of::<NdVector<3,f32>>());
+		let att = super::Attribute::from(data.clone(), super::AttributeType::Position);
+		assert_eq!(att.len(), data.len());
+		assert_eq!(att.get::<NdVector<3,f32>>(0), data[0], "{:b}!={:b}", att.get::<NdVector<3,f32>>(0).get(0).to_bits(), data[0].get(0).to_bits());
+		assert_eq!(att.get_component_type(), super::ComponentDataType::F32);
+		assert_eq!(att.get_num_components(), 3);
+		assert_eq!(att.get_attribute_type(), super::AttributeType::Position);
+		assert_eq!(unsafe{ att.as_slice_unchecked::<NdVector<3,f32>>() }, &data[..]);
+	}
 }

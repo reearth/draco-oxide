@@ -66,7 +66,7 @@ impl<Order: OrderConfig> Buffer <Order> {
 struct RawBuffer {
     data: ptr::NonNull<u8>,
 
-    /// the size of the allocation.
+    /// the size of the allocation in bytes.
     /// The number of bits that can be stored in the buffer is 'cap' * 8.
     cap: usize,
 }
@@ -103,6 +103,14 @@ impl RawBuffer {
 
     fn as_ptr(&self) -> *mut u8 {
         self.data.as_ptr()
+    }
+
+    fn from_vec<Data>(v: Vec<Data>) -> Self {
+        let cap = v.len() * std::mem::size_of::<Data>();
+        let data = v.as_ptr() as *mut u8;
+        // forget the value to prevent double free
+        std::mem::forget(v);
+        Self { data: ptr::NonNull::new(data).unwrap(), cap }
     }
 }
 

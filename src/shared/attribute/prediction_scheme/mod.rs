@@ -1,6 +1,7 @@
 pub mod delta_prediction;
 pub mod mesh_parallelogram_prediction;
 pub mod mesh_multi_parallelogram_prediction;
+pub mod derivative_prediction;
 
 use crate::core::{attribute::Attribute, shared::ConfigType};
 
