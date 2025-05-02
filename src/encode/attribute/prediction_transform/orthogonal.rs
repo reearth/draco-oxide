@@ -1,38 +1,51 @@
-use std::marker::PhantomData;
 use std::mem;
+use std::marker::PhantomData;
 
 use crate::core::shared::{Abs, DataValue, NdVector, Vector};
+use crate::encode::attribute::portabilization::{self, Portabilization};
+use crate::encode::attribute::WritableFormat;
+use crate::shared::attribute::Portable;
 
-use super::{FinalMetadata, PredictionTransform};
-use super::geom::*;
+use super::{FinalMetadata, PredictionTransformImpl};
 
-pub struct OrthogonalTransform<Data> {
+pub struct OrthogonalTransform<Data> 
+    where 
+        Data: Vector + Portable,
+        Data::Component: DataValue
+{
     out: Vec<NdVector<2,f64>>,
     
     /// This metadata records whether the prediction uses 
     /// (1,0,0) or (0,1,0) as the reference vector.
     metadata: Vec<bool>,
+
+    final_metadata: FinalMetadata<bool>,
+
+    portabilization: Portabilization<<Self as PredictionTransformImpl>::Correction>,
     
     _marker: PhantomData<Data>,
 }
 
 impl<Data> OrthogonalTransform<Data> 
     where 
-        Data: Vector,
+        Data: Vector + Portable,
         Data::Component: DataValue
 {
-    pub fn new() -> Self {
+    pub fn new(cfg: portabilization::Config) -> Self {
         Self {
             out: Vec::new(),
             metadata: Vec::new(),
+            final_metadata: FinalMetadata::Local(Vec::new()),
+            portabilization: Portabilization::new(cfg),
             _marker: PhantomData,
         }
     }
 }
 
-impl<Data> PredictionTransform for OrthogonalTransform<Data> 
-    where Data: Vector,
-    Data::Component: DataValue
+impl<Data> PredictionTransformImpl for OrthogonalTransform<Data> 
+    where
+        Data: Vector + Portable,
+        Data::Component: DataValue
 {
     const ID: usize = 5;
 
@@ -99,58 +112,29 @@ impl<Data> PredictionTransform for OrthogonalTransform<Data>
 
     }
 
-    fn inverse(&mut self, pred: Self::Data, crr: Self::Correction, metadata: Self::Metadata) -> Self::Data {
-        let one = Data::Component::one();
-        let pred_norm_squared = pred.dot(pred);
-        let ref_on_pred_perp = if metadata {
-            // Safety: 
-            // dereferencing the constant-sized array by a constant index
-            unsafe {
-                let mut out = pred * (*pred.get_unchecked(0) / pred_norm_squared);
-                *out.get_unchecked_mut(0) += one;
-                out
-            }
+    fn squeeze_impl(&mut self) {
+        self.final_metadata = if self.metadata.iter().all(|&v|v) {
+            FinalMetadata::Global(self.metadata.pop().unwrap())
         } else {
-            // Safety: 
-            // dereferencing the constant-sized array by a constant index
-            unsafe {
-                let mut out = pred * (*pred.get_unchecked(1) / pred_norm_squared);
-                *out.get_unchecked_mut(1) += one;
-                out
-            }
+            FinalMetadata::Local(std::mem::take(&mut self.metadata))
         };
-
-        let mut pred_cross_orig = Data::zero();
-        let rotation = rotation_matrix_from(pred, unsafe{ *crr.get_unchecked(0) });
-        unsafe {
-            *pred_cross_orig.get_unchecked_mut(0) = rotation.get_unchecked(0).dot(ref_on_pred_perp);
-            *pred_cross_orig.get_unchecked_mut(1) = rotation.get_unchecked(1).dot(ref_on_pred_perp);
-            *pred_cross_orig.get_unchecked_mut(2) = rotation.get_unchecked(2).dot(ref_on_pred_perp);
-        };
-
-        // now recover the original vector by rotating 'pred' on the plane defined by 'pred_cross_orig'
-        let rotation = rotation_matrix_from(pred_cross_orig, unsafe{ *crr.get_unchecked(1) });
-        let mut orig = Data::zero();
-        unsafe {
-            *orig.get_unchecked_mut(0) = rotation.get_unchecked(0).dot(pred);
-            *orig.get_unchecked_mut(1) = rotation.get_unchecked(1).dot(pred);
-            *orig.get_unchecked_mut(2) = rotation.get_unchecked(2).dot(pred);
-        };
-        
-        orig
     }
 
-    fn squeeze(&mut self) -> (FinalMetadata<Self::Metadata>, Vec<Self::Correction>) {
-        if self.metadata.iter().all(|&v|v) {
-            (
-                FinalMetadata::Global(self.metadata.pop().unwrap()),
-                mem::take(&mut self.out)
-            )
-        } else {
-            (
-                FinalMetadata::Local(std::mem::take(&mut self.metadata)),
-                mem::take(&mut self.out)
-            )
-        }
+    fn portabilize(&mut self) -> (WritableFormat, WritableFormat) {
+        self.portabilization.portabilize(self.out.clone())
+    }
+
+    fn portabilize_and_write_metadata<F>(&mut self, writer: &mut F) -> WritableFormat 
+        where F: FnMut((u8, u64))
+    {
+        self.portabilization.portabilize_and_write_metadata(mem::take(&mut self.out), writer)
+    }
+
+    fn get_final_metadata(&self) -> &FinalMetadata<Self::Metadata> {
+        &self.final_metadata
+    }
+
+    fn get_final_metadata_writable_form(&self) -> WritableFormat {
+        self.final_metadata.clone().into()
     }
 }

@@ -1,21 +1,13 @@
 use crate::core::{attribute::Attribute, shared::Vector};
 use std::marker::PhantomData;
-use super::PredictionScheme;
+use super::PredictionSchemeImpl;
 
 pub struct DeltaPrediction<Data: Vector> {
 	_marker: PhantomData<Data>,
 }
 
-impl<Data: Vector> DeltaPrediction<Data> {
-	pub fn new() -> Self {
-		Self {
-			_marker: PhantomData,
-		}
-	}
-}
 
-
-impl<Data: Vector + Clone> PredictionScheme for DeltaPrediction<Data>
+impl<Data: Vector + Clone> PredictionSchemeImpl<'_> for DeltaPrediction<Data>
 {
 	const ID: u32 = 1;
 	
@@ -23,14 +15,14 @@ impl<Data: Vector + Clone> PredictionScheme for DeltaPrediction<Data>
 
 	type AdditionalDataForMetadata = ();
 	
-	fn init(&mut self) {
-
+	fn new(_parents: &[&Attribute]) -> Self {
+		Self { _marker: PhantomData }
 	}
 	
 	// No metadata
-	fn compute_metadata(&mut self, _faces: &[[usize;3]],_additional_data: Self::AdditionalDataForMetadata) {}
+	fn compute_metadata(&mut self, _additional_data: Self::AdditionalDataForMetadata) {}
 
-	fn get_values_impossible_to_predict(&mut self, value_indeces: &mut Vec<std::ops::Range<usize>>, _faces: &[[usize; 3]]) 
+	fn get_values_impossible_to_predict(&mut self, _value_indeces: &mut Vec<std::ops::Range<usize>>) 
 		-> Vec<std::ops::Range<usize>>
 	{
 		unimplemented!()
@@ -44,9 +36,7 @@ impl<Data: Vector + Clone> PredictionScheme for DeltaPrediction<Data>
 	
 	fn predict(
 		&self,
-		values_up_till_now: &[Data],
-		_parent: &Vec<&Attribute>,
-		_faces: &[[usize; 3]]
+		values_up_till_now: &[Data]
 	) -> Self::Data 
 	{
 		values_up_till_now.last().unwrap().clone()

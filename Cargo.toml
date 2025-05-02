@@ -14,5 +14,7 @@ version = "0.0.1"
 nd_vector = { path = "macros/nd_vector" }
 lazy_static = "1.5.0"
 seq-macro = "0.3.6"
+remain = "*"
+thiserror = "*"
 
 [build-dependencies]

@@ -5,7 +5,8 @@ use super::attribute::ComponentDataType;
 use core::fmt;
 use std::{
     ops,
-    cmp
+    cmp,
+    mem,
 };
 
 pub type VertexIdx = usize;
@@ -14,33 +15,16 @@ pub type FaceIdx = usize;
 
 
 pub trait Float: DataValue + ops::Div<Output=Self> + ops::Neg<Output=Self> {
-    type Bits: DataValue;
-    fn from_bits(bits: Self::Bits)-> Self;
-    fn to_bits(self)-> Self::Bits;
     fn sqrt(self)-> Self;
 }
 
 impl Float for f32 {
-    type Bits = u32;
-    fn from_bits(bits: Self::Bits)-> Self {
-        Self::from_bits(bits)
-    }
-    fn to_bits(self)-> Self::Bits {
-        self.to_bits()
-    }
     fn sqrt(self)-> Self {
         self.sqrt()
     }
 }
 
 impl Float for f64 {
-    type Bits = u64;
-    fn from_bits(bits: Self::Bits)-> Self {
-        Self::from_bits(bits)
-    }
-    fn to_bits(self)-> Self::Bits {
-        self.to_bits()
-    }
     fn sqrt(self)-> Self {
         self.sqrt()
     }
@@ -167,10 +151,12 @@ pub trait DataValue:
     fn to_u64(self) -> u64;
     fn from_f64(data: f64) -> Self;
     fn to_f64(self) -> f64;
+    fn to_bits(self) -> (u8, u64);
+    fn from_bits(data: u64) -> Self;
 }
 
 macro_rules! impl_data_value {
-    ($(($t:ty, $component_type: expr)),*) => {
+    (int: $(($t:ty, $component_type: expr)),*) => {
         $(
             impl DataValue for $t {
                 fn get_dyn() -> ComponentDataType {
@@ -199,16 +185,68 @@ macro_rules! impl_data_value {
                 fn to_f64(self) -> f64 {
                     self as f64
                 }
+
+                fn to_bits(self) -> (u8, u64) {
+                    ((mem::size_of::<Self>()<<3) as u8, self as u64)
+                }
+
+                fn from_bits(data: u64) -> Self {
+                    data as $t
+                }
+            }
+        )*
+    };
+
+    (float: $(($t:ty, $component_type: expr)),*) => {
+        $(
+            impl DataValue for $t {
+                fn get_dyn() -> ComponentDataType {
+                    $component_type
+                }
+                fn zero() -> Self {
+                    0 as $t
+                }
+
+                fn one() -> Self {
+                    1 as $t
+                }
+
+                fn from_u64(data: u64) -> Self {
+                    data as $t
+                }
+
+                fn to_u64(self) -> u64 {
+                    self as u64
+                }
+
+                fn from_f64(data: f64) -> Self {
+                    data as $t
+                }
+
+                fn to_f64(self) -> f64 {
+                    self as f64
+                }
+
+                fn to_bits(self) -> (u8, u64) {
+                    ((mem::size_of::<Self>()<<3) as u8, self.to_bits() as u64)
+                }
+
+                fn from_bits(data: u64) -> Self {
+                    u64::from_bits(data) as $t
+                }
             }
         )*
     };
 }
 
-impl_data_value!(
+impl_data_value!(int: 
     (u8, ComponentDataType::U8),
     (u16, ComponentDataType::U16),
     (u32, ComponentDataType::U32),
-    (u64, ComponentDataType::U64),
+    (u64, ComponentDataType::U64)
+);
+
+impl_data_value!(float: 
     (f32, ComponentDataType::F32),
     (f64, ComponentDataType::F64)
 );
@@ -259,6 +297,7 @@ impl<const N: usize, T> fmt::Debug for NdVector<N, T>
 
 use std::ops::Index;
 use std::ops::IndexMut;
+use crate::shared::attribute::Portable;
 impl_ndvector_ops!();
 
 

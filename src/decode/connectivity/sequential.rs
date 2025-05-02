@@ -11,8 +11,7 @@ impl ConnectivityDecoder for Sequential {
         let num_points = reader.next(NUM_POINTS_SLOT);
         let num_faces = reader.next(NUM_POINTS_SLOT);
         
-        let index_size = index_size_from_vertex_count(num_points).unwrap();
-        
+        let index_size = index_size_from_vertex_count(num_points as usize).unwrap() as u8;
 
         let faces = (0..num_faces).map(|_| {
             [
@@ -34,9 +33,7 @@ mod tests {
     use crate::core::buffer;
     use crate::encode::connectivity::ConnectivityEncoder;
     use crate::encode;
-    use crate::encode::connectivity::sequential::Config;
     use crate::core::shared::{
-        ConfigType,
         NdVector,
         Vector
     };
@@ -45,7 +42,8 @@ mod tests {
     #[test]
     fn test_encode_connectivity() {
         let mut encoder = encode::connectivity::sequential::Sequential;
-        let mut buffer = Writer::new();
+        let mut buff_writer = Writer::new();
+        let mut writer = |input| buff_writer.next(input);
         let mut faces = vec![
             [9,12,13], [8,9,13], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
             [8,13,14], [7,8,14], [1,7,8], [0,1,7], [0,1,2], [0,2,3], [2,3,13], [3,13,14],
@@ -53,9 +51,9 @@ mod tests {
             [6,12,15], [6,9,12], [5,6,9], [5,9,10], [4,5,10], [4,10,11], [4,11,15], [11,12,15]
         ];
         let mut points = [NdVector::<3,f32>::zero(); 9];
-        let result = encoder.encode_connectivity(&mut faces, &Config::default(), &mut points, &mut buffer);
+        let result = encoder.encode_connectivity(&mut faces, &mut points, &mut writer);
         assert!(result.is_ok());
-        let buffer: buffer::Buffer = buffer.into();
+        let buffer: buffer::Buffer = buff_writer.into();
         let reader = buffer.into_reader();
         let mut decoder = Sequential;
         let decoded_faces = decoder.decode_connectivity(reader);

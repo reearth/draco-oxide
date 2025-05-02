@@ -1,6 +1,6 @@
 use crate::core::shared::{DataValue, NdVector, Vector};
 
-pub(super) fn rotation_matrix_from<Data>(axis: Data, angle: f64) -> [Data; 3] 
+pub(crate) fn rotation_matrix_from<Data>(axis: Data, angle: f64) -> [Data; 3] 
     where
         Data: Vector,
         Data::Component: DataValue
@@ -36,7 +36,7 @@ pub(super) fn rotation_matrix_from<Data>(axis: Data, angle: f64) -> [Data; 3]
 use crate::core::shared::Abs;
 /// Transforms the data to the octahedron space.
 /// Make sure that the data is three dimensional.
-pub(super) unsafe fn octahedral_transform<Data>(v: Data) -> NdVector<2, f64>
+pub(crate) unsafe fn octahedral_transform<Data>(v: Data) -> NdVector<2, f64>
 	where 
 		Data: Vector,
 		Data::Component: DataValue
@@ -82,7 +82,7 @@ pub(super) unsafe fn octahedral_transform<Data>(v: Data) -> NdVector<2, f64>
 /// Data is transformed back from the octahedron space.
 /// Safety:
 /// 'Data' must be three dimensional.
-pub(super) unsafe fn octahedral_inverse_transform<Data>(v: NdVector<2, f64>) -> Data 
+pub(crate) unsafe fn octahedral_inverse_transform<Data>(v: NdVector<2, f64>) -> Data 
 	where 
 		Data: Vector,
 		Data::Component: DataValue

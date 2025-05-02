@@ -1,6 +1,6 @@
-use crate::core::attribute::{Attribute, AttributeType, ComponentDataType};
+use crate::core::attribute::{Attribute, AttributeType};
 use crate::core::shared::{Cross, DataValue, Float, NdVector, Vector};
-use super::PredictionScheme;
+use super::PredictionSchemeImpl;
 use std::{
 	ops,
 	mem,
@@ -8,21 +8,21 @@ use std::{
 use crate::core::shared::Dot;
 use crate::utils::merge_indeces;
 
-pub struct DerivativePredictionForTextureCoordinates<Data> {
+pub struct DerivativePredictionForTextureCoordinates<'a, Data> 
+    where
+        Data: Vector,
+        Data::Component: DataValue
+{
     _marker: std::marker::PhantomData<Data>,
+    faces: &'a [[usize; 3]],
+    points: &'a [NdVector<3, f64>],
 }
 
-impl<Data> DerivativePredictionForTextureCoordinates<Data> 
+impl<'a, Data> DerivativePredictionForTextureCoordinates<'a, Data> 
 	where 
 		Data: Vector, 
 		Data::Component: DataValue
 {
-    pub fn new() -> Self {
-        Self {
-            _marker: std::marker::PhantomData,
-        }
-    }
-
 	fn predict_impl<F>(&self, values_up_till_now: &[Data], points: &[NdVector<3,F>], faces: &[[usize; 3]]) -> Data 
 		where
 			F: Float,
@@ -114,7 +114,7 @@ impl<Data> DerivativePredictionForTextureCoordinates<Data>
 	}
 }
 
-impl<Data> PredictionScheme for DerivativePredictionForTextureCoordinates<Data>
+impl<'parents, Data> PredictionSchemeImpl<'parents> for DerivativePredictionForTextureCoordinates<'parents, Data>
     where 
 		Data: Vector,
 		Data::Component: DataValue
@@ -125,23 +125,43 @@ impl<Data> PredictionScheme for DerivativePredictionForTextureCoordinates<Data>
 
 	type AdditionalDataForMetadata = ();
 	
-	/// Clean the data from previous encoding.
-	fn init(&mut self) {
+    /// We need two parents: faces and points.
+	fn new(parents: &[&'parents Attribute]) -> Self {
+        assert!(parents.len() == 2, "Derivative prediction needs two parents: faces and points.");
+        assert!(
+            parents[0].get_attribute_type() == AttributeType::Connectivity && 
+            parents[0].get_attribute_type() == AttributeType::Position,
+            "Derivative prediction needs two parents: faces and points, but they are: {:?} and {:?}.",
+            parents[0].get_attribute_type(),
+            parents[1].get_attribute_type()
+        );
 
+        let faces = unsafe {
+            parents[0].as_slice_unchecked()
+        };
+        let points = unsafe {
+            parents[1].as_slice_unchecked()
+        };
+
+        Self {
+            faces,
+            points,
+            _marker: std::marker::PhantomData,
+        }   
     }
 	
 	/// Prediction computes the metadata beforehand (unlike transform or portabilization)
-	fn compute_metadata(&mut self, _faces: &[[usize; 3]], _additional_data: Self::AdditionalDataForMetadata) {
+	fn compute_metadata(&mut self, _additional_data: Self::AdditionalDataForMetadata) {
 
     }
 
-	fn get_values_impossible_to_predict(&mut self, seq: &mut Vec<std::ops::Range<usize>>, faces: &[[usize; 3]]) 
+	fn get_values_impossible_to_predict(&mut self, seq: &mut Vec<std::ops::Range<usize>>) 
 		-> Vec<std::ops::Range<usize>> 
     {
 		let mut is_already_encoded: Vec<bool> = Vec::new();
         let mut vertices_without_parallelogram: Vec<ops::Range<usize>> = Vec::new();
 
-        for face in faces {
+        for face in self.faces {
             debug_assert!(face.is_sorted());
             let num_unvisited_vertices = face.iter()
                 .filter(|&&v| v>=is_already_encoded.len() || !is_already_encoded[v])
@@ -295,41 +315,13 @@ impl<Data> PredictionScheme for DerivativePredictionForTextureCoordinates<Data>
     }
 	
 	/// predicts the attribute from the given information. 
-	/// 'PointData' is a type representing a position i.e. it is an array of f32
-	/// or f64 of size (typically) 2 or 3. It has to be generic since the data
-	/// is not known at compile time.
 	fn predict (
 		&self,
-		values_up_till_now: &[Self::Data],
-		parents: &Vec<&Attribute>,
-		faces: &[[usize; 3]]
+		values_up_till_now: &[Self::Data]
 	) -> Self::Data {
 		let n_points = values_up_till_now.len();
-		
-		assert!(
-			parents[0].get_num_components() == 3,
-			"Derivative prediction only works for 3D data, but the input data is {}D.",
-			parents[0].get_num_components()
-		);
-		assert!(
-			parents[0].get_attribute_type() == AttributeType::Position,
-			"Derivative prediction only works for point data, but it is of type {:?}.",
-			parents[0].get_attribute_type()
-		);
-		// Safety: just checked
 
-		let component_type = parents[0].get_component_type();
-		unsafe{
-			if component_type == ComponentDataType::F32 {
-				let points = &parents[0].as_slice_unchecked::<NdVector<3, f32>>()[..=n_points];
-				self.predict_impl(values_up_till_now, points, faces)
-			} else if component_type == ComponentDataType::F64 {
-				let points = &parents[0].as_slice_unchecked::<NdVector<3, f64>>()[..=n_points];
-				self.predict_impl(values_up_till_now, points, faces)
-			} else {
-				panic!("Derivative prediction only works for f32 and f64, but it is {:?}", component_type);
-			}
-		}
+		self.predict_impl(values_up_till_now, self.points, self.faces)
     }
 }
 
@@ -337,11 +329,10 @@ impl<Data> PredictionScheme for DerivativePredictionForTextureCoordinates<Data>
 mod tests {
 	use super::*;
 	use crate::core::shared::NdVector;
-	use crate::core::attribute::Attribute;
+	use crate::core::attribute::{Attribute, AttributeId};
 
 	#[test]
 	fn test_derivative_prediction() {
-		let prediction = DerivativePredictionForTextureCoordinates::<NdVector<2,f32>>::new();
 		let faces = vec![[0,1,2], [0,1,3]];
 		let values_up_till_now = vec![
             NdVector::from([1.0, 0.0]),
@@ -354,10 +345,11 @@ mod tests {
 			NdVector::from([0.0, 0.0, 1.0]),
 			NdVector::from([2.0, 2.0, 2.0])
 		];
-		let pts_att = Attribute::from(points, AttributeType::Position);
-		let parents = vec![&pts_att];
+        let face_att = Attribute::from_faces(AttributeId::new(0), faces, Vec::new());
+		let pts_att = Attribute::from(AttributeId::new(1), points, AttributeType::Position, vec![AttributeId::new(0)]);
+		let prediction = DerivativePredictionForTextureCoordinates::<NdVector<2,f32>>::new(&[&face_att, &pts_att]);
 
-		let predicted_value = prediction.predict(&values_up_till_now[..], &parents, &faces[..]);
+		let predicted_value = prediction.predict(&values_up_till_now[..]);
 		
 		assert_eq!(predicted_value, NdVector::from([1.0, 1.0]));
 	}

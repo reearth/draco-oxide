@@ -3,23 +3,17 @@ use std::{
     ops
 };
 
-use super::PredictionScheme;
+use super::PredictionSchemeImpl;
+use crate::core::attribute::AttributeType;
 use crate::core::{attribute::Attribute, shared::Vector};
 use crate::utils::merge_indeces;
 
-pub(crate) struct MeshParallelogramPrediction<Data> {
+pub(crate) struct MeshParallelogramPrediction<'parents, Data> {
+    faces: &'parents[[usize; 3]],
 	_marker: std::marker::PhantomData<Data>
 }
 
-impl<Data> MeshParallelogramPrediction<Data> {
-    pub fn new() -> Self {
-        Self {
-            _marker: std::marker::PhantomData
-        }
-    }
-}
-
-impl<Data> PredictionScheme for MeshParallelogramPrediction<Data> 
+impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPrediction<'parents, Data> 
     where Data: Vector + Clone + ops::Add<Output = Data> + ops::Sub<Output = Data> 
 {
     const ID: u32 = 2;
@@ -28,19 +22,29 @@ impl<Data> PredictionScheme for MeshParallelogramPrediction<Data>
 
     type AdditionalDataForMetadata = ();
 	
-	fn init(&mut self) {}
+	fn new(parents: &[&'parents Attribute] ) -> Self {
+        let faces = unsafe {
+            parents.iter().find(|x| x.get_attribute_type() == AttributeType::Connectivity)
+                .expect("MeshParallelogramPrediction: No connectivity attribute found")
+                .as_slice_unchecked::<[usize;3]>()
+        };
+        Self {
+            faces,
+            _marker: std::marker::PhantomData,
+        }
+    }
 
-	fn compute_metadata(&mut self, _faces: &[[usize; 3]], _additional_data: Self::AdditionalDataForMetadata) {
+	fn compute_metadata(&mut self, _additional_data: Self::AdditionalDataForMetadata) {
         
     }
 	
-	fn get_values_impossible_to_predict(&mut self, seq: &mut Vec<std::ops::Range<usize>>, faces: &[[usize; 3]]) 
+	fn get_values_impossible_to_predict(&mut self, seq: &mut Vec<std::ops::Range<usize>>) 
         -> Vec<std::ops::Range<usize>>
     {
         let mut is_already_encoded: Vec<bool> = Vec::new();
         let mut vertices_without_parallelogram: Vec<ops::Range<usize>> = Vec::new();
 
-        for face in faces {
+        for face in self.faces {
             debug_assert!(face.is_sorted());
             let num_unvisited_vertices = face.iter()
                 .filter(|&&v| v>=is_already_encoded.len() || !is_already_encoded[v])
@@ -196,14 +200,12 @@ impl<Data> PredictionScheme for MeshParallelogramPrediction<Data>
 	fn predict(
 		&self,
 		values_up_till_now: &[Data],
-		_: &Vec<&Attribute>,
-        faces: &[[usize; 3]]
 	) -> Self::Data {
         let n_points = values_up_till_now.len();
 
         // Find the the first opposite face.
         // 'diagonal' is the vertex opposite to 'n_points', and 'a' and 'b' are the other points such that 'a<b'.
-        let [a,b,diagonal] = faces.iter()
+        let [a,b,diagonal] = self.faces.iter()
             .filter(|f| f.contains(&n_points))
             .map(|&[a,b,c]| 
                 if a == n_points {
@@ -219,7 +221,7 @@ impl<Data> PredictionScheme for MeshParallelogramPrediction<Data>
                 if a >= n_points || b >= n_points {
                     return None;
                 }
-                let face = faces.iter()
+                let face = self.faces.iter()
                     .find(|f| f.contains(&a) && f.contains(&b) && !f.contains(&n_points));
                 if let Some(face) = face {
                     let diagonal = *face.iter()
@@ -246,10 +248,12 @@ mod test {
     use std::vec;
 
     use super::*;
+    use crate::core::attribute::AttributeId;
     use crate::core::buffer::writer::Writer;
+    use crate::core::buffer::MsbFirst;
     use crate::core::shared::{ConfigType, NdVector}; 
     use crate::encode::connectivity::{edgebreaker::{Config, Edgebreaker}, ConnectivityEncoder}; 
-    use crate::shared::attribute::prediction_scheme::PredictionScheme;
+    use crate::shared::attribute::prediction_scheme::PredictionSchemeImpl;
 
     #[test]
     fn test_get_impossible_to_predict_1() {
@@ -279,11 +283,30 @@ mod test {
             torus_in_decoded_order
         };
 
-        let points = vec![0.0; faces.iter().flatten().max().unwrap()+1];
+        let points_len = faces.iter().flatten().max().unwrap()+1;
+        let points = vec![NdVector::<3,f64>::zero(); points_len];
+
+        let parents = vec![
+            Attribute::from_faces(
+                AttributeId::new(0),
+                faces,
+                vec![]
+            ),
+            Attribute::from(
+                AttributeId::new(1),
+                points,
+                AttributeType::Position,
+                vec![]
+            )
+        ];
+        let parents = [
+            &parents[0],
+            &parents[1]
+        ];
         
-        let mut mesh_prediction = MeshParallelogramPrediction::<NdVector<3, f32>>::new();
-        let mut seq = vec![0..points.len()];
-        let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut seq, &faces);
+        let mut mesh_prediction = MeshParallelogramPrediction::<NdVector<3, f32>>::new(&parents);
+        let mut seq = vec![0..points_len];
+        let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut seq);
         assert_eq!(seq, vec![5..6, 8..16, 24..32, 34..36, 39..41]);
         assert_eq!(&impossible_to_predict, &vec![0..5, 6..8, 16..24, 32..34, 36..39]);
 
@@ -292,12 +315,30 @@ mod test {
     #[test]
     fn test_get_impossible_to_predict_2() {
         let faces = (0..10).map(|i| [3*i, 3*i+1, 3*i+2]).collect::<Vec<_>>();
-        let points = vec![0.0; faces.iter().flatten().max().unwrap()+1];
-        let mut mesh_prediction = MeshParallelogramPrediction::<NdVector<3, f32>>::new();
-        let mut seq = vec![0..points.len()];
-        let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut seq, &faces);
+        let points_len = faces.iter().flatten().max().unwrap()+1;
+        let points = vec![NdVector::<3,f64>::zero(); points_len];
+        let parents = vec![
+            Attribute::from_faces(
+                AttributeId::new(0),
+                faces,
+                Vec::new()
+            ),
+            Attribute::from(
+                AttributeId::new(1),
+                points,
+                AttributeType::Position,
+                vec![AttributeId::new(0)]
+            )
+        ];
+        let parents = [
+            &parents[0],
+            &parents[1]
+        ];
+        let mut mesh_prediction = MeshParallelogramPrediction::<NdVector<3, f32>>::new(&parents);
+        let mut seq = vec![0..points_len];
+        let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut seq);
         assert_eq!(seq, vec![]);
-        assert_eq!(impossible_to_predict, vec![0..points.len()]);
+        assert_eq!(impossible_to_predict, vec![0..points_len]);
     }
 
     #[test]
@@ -309,10 +350,10 @@ mod test {
             [15,16,20], [16,20,21], [16,17,21], [17,21,22], [17,18,22], [18,22,23], [18,19,23], [19,23,24]
         ];
         faces.sort();
+        let points_len = 25;
         let mut points = {
-            let n_points = 25;
             let mut points = Vec::new();
-            for i in 0..n_points {
+            for i in 0..points_len {
                 let x = i % 5;
                 let y = (i / 5) % 5;
                 let z = x + y;
@@ -321,18 +362,37 @@ mod test {
             points
         };
 
-        let mut encoder = Edgebreaker::new();
-        let mut writer = Writer::new();
-        let rerult = encoder.encode_connectivity(&mut faces, &Config::default(), &mut points, &mut writer);
+        let mut encoder = Edgebreaker::new(Config::default());
+        let mut buff_writer = Writer::<MsbFirst>::new();
+        let mut writer = |input: (u8, u64)| buff_writer.next(input);
+        let rerult = encoder.encode_connectivity(&mut faces, &mut points, &mut writer);
         assert!(rerult.is_ok());
 
-        let mut mesh_prediction = MeshParallelogramPrediction::<NdVector<3, f32>>::new();
-        let mut seq = vec![0..points.len()];
-        let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut seq, &faces);
+        let parents = vec![
+            Attribute::from_faces(
+                AttributeId::new(0),
+                faces.to_vec(),
+                Vec::new()
+            ),
+            Attribute::from(
+                AttributeId::new(1),
+                points.clone(),
+                AttributeType::Position,
+                vec![AttributeId::new(0)]
+            )
+        ];
+        let parents = [
+            &parents[0],
+            &parents[1]
+        ];
+
+        let mut mesh_prediction = MeshParallelogramPrediction::<NdVector<3, f32>>::new(&parents);
+        let mut seq = vec![0..points_len];
+        let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut seq);
         
         let mut points_up_till_now = {
             // fill the answer for the vertices that are impossible to predict
-            let mut out = vec![NdVector::from([0.0, 0.0, 0.0]); points.len()];
+            let mut out = vec![NdVector::from([0.0, 0.0, 0.0]); points_len];
             for i in impossible_to_predict.into_iter().flatten() {
                 out[i] = points[i];
             }
@@ -344,8 +404,8 @@ mod test {
             while !faces[face_max_idx].contains(&i) {
                 face_max_idx += 1;
             }
-            let predicted = mesh_prediction.predict(&points[..i], &vec![], &faces[..=face_max_idx]);
-            // In this test, predtion and the original point are the same
+            let predicted = mesh_prediction.predict(&points[..i]);
+            // In this test, prediction and the original point are the same
             assert_eq!(predicted, points[i]);
             points_up_till_now[i] = predicted;
 

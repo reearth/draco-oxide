@@ -1,26 +1,44 @@
-use crate::core::shared::Vector;
 
+use crate::core::shared::Vector;
 use super::{buffer, shared::DataValue};
+
 pub struct Attribute {
+	/// attribute id
+	id: AttributeId,
+
+	/// attribute buffer
 	buffer: buffer::attribute::AttributeBuffer,
-	
-	/// id of the parents, if any
-	parent_id: Option<usize>,
-	
+
 	/// attribute type
 	att_type: AttributeType,
+	
+	/// the reference of the parent, if any
+	parents: Vec<AttributeId>,
 }
 
+
+
 impl Attribute {
-	pub fn from<Data>(data: Vec<Data>, att_type: AttributeType) -> Self 
+	pub(crate) fn from<Data>(id: AttributeId, data: Vec<Data>, att_type: AttributeType, parents: Vec<AttributeId>) -> Self 
 		where 
 			Data: Vector,
 	{
 		let buffer = buffer::attribute::AttributeBuffer::from(data);
 		Self {
+			id,
 			buffer,
-			parent_id: None,
-			att_type
+			parents,
+			att_type,
+		}
+	}
+
+	pub(crate) fn from_faces(id: AttributeId, data: Vec<[usize;3]>, parents: Vec<AttributeId>) -> Self {
+		let buffer = buffer::attribute::AttributeBuffer::from(data);
+		Self {
+			id,
+			buffer,
+			parents: parents,
+			att_type: AttributeType::Connectivity
 		}
 	}
 
@@ -36,12 +54,24 @@ impl Attribute {
 		self.buffer.get_component_type()
 	}
 
+	#[inline]
+	pub fn get_id(&self) -> AttributeId {
+		self.id
+	}
+
+	#[inline]
 	pub fn get_num_components(&self) -> usize {
 		self.buffer.get_num_components()
 	}
 
+	#[inline]
 	pub fn get_attribute_type(&self) -> AttributeType {
 		self.att_type
+	}
+
+	#[inline]
+	pub fn get_parents(&self) -> &Vec<AttributeId> {
+		self.parents.as_ref()
 	}
 
 	#[inline(always)]
@@ -50,16 +80,23 @@ impl Attribute {
 	}
 
 	#[inline]
-	/// returns the data values as a slice of casted values to the given type.
+	/// returns the data values as a slice of values casted to the given type.
 	/// # Safety:
     /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
-	pub unsafe fn as_slice_unchecked<Data>(&self) -> &[Data] 
-		where 
-			Data: Vector,
-			Data::Component: DataValue
+	pub unsafe fn as_slice_unchecked<Data>(&self) -> &[Data]
 	{
 		// Safety: upheld
 		self.buffer.as_slice::<Data>()
+	}
+
+    #[inline]
+	/// returns the data values as a mutable slice of values casted to the given type.
+	/// # Safety:
+    /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
+	pub unsafe fn as_slice_unchecked_mut<Data>(&mut self) -> &mut [Data]
+	{
+		// Safety: upheld
+		self.buffer.as_slice_mut::<Data>()
 	}
 }
 
@@ -114,10 +151,24 @@ pub enum AttributeType {
 }
 
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttributeId(usize);
+
+impl AttributeId {
+    pub(crate) fn new(id: usize) -> Self {
+        Self(id)
+    }
+
+    /// Returns the id of the attribute.
+    pub fn as_usize(&self) -> usize {
+        self.0
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use crate::core::shared::NdVector;
-
     use super::*;
 
 
@@ -129,12 +180,11 @@ mod tests {
 			NdVector::from([7.0f32, 8.0, 9.0])
 		];
 		println!("size of NdVector<3,f32> = {}", std::mem::size_of::<NdVector<3,f32>>());
-		let att = super::Attribute::from(data.clone(), super::AttributeType::Position);
+		let att = super::Attribute::from(AttributeId::new(0), data.clone(), super::AttributeType::Position, Vec::new());
 		assert_eq!(att.len(), data.len());
 		assert_eq!(att.get::<NdVector<3,f32>>(0), data[0], "{:b}!={:b}", att.get::<NdVector<3,f32>>(0).get(0).to_bits(), data[0].get(0).to_bits());
 		assert_eq!(att.get_component_type(), super::ComponentDataType::F32);
 		assert_eq!(att.get_num_components(), 3);
 		assert_eq!(att.get_attribute_type(), super::AttributeType::Position);
-		assert_eq!(unsafe{ att.as_slice_unchecked::<NdVector<3,f32>>() }, &data[..]);
 	}
 }

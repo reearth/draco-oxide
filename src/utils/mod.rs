@@ -1,3 +1,5 @@
+pub mod geom;
+
 pub(crate) fn splice_disjoint_indeces(set_of_subseqs: Vec<Vec<std::ops::Range<usize>>>) -> Vec<std::ops::Range<usize>> {
     let mut spliced = set_of_subseqs.into_iter()
         .flatten()

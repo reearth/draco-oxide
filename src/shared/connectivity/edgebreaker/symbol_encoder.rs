@@ -1,4 +1,5 @@
-use crate::core::{buffer::{reader::Reader, writer::Writer, MsbFirst}, shared::ConfigType};
+use crate::core::buffer::reader::Reader;
+use crate::core::shared::ConfigType;
 
 use super::{HANDLE_METADATA_SLOTS, NUM_VERTICES_IN_HOLE_SLOTS, SYMBOL_ENCODING_CONFIG_SLOT};
 
@@ -47,13 +48,15 @@ impl ConfigType for SymbolEncodingConfig {
 }
 
 impl SymbolEncodingConfig {
-    pub(crate) fn write_symbol_encoding(self, writer: &mut Writer<MsbFirst>) {
+    pub(crate) fn write_symbol_encoding<F>(self, writer: &mut F) 
+        where F: FnMut((u8, u64))
+    {
         let id = match self {
             Self::CrLight => 0,
             Self::Balanced => 1,
             Self::Rans => 2,
         };
-        writer.next((SYMBOL_ENCODING_CONFIG_SLOT, id));
+        writer((SYMBOL_ENCODING_CONFIG_SLOT, id));
     }
 
     pub(crate) fn get_symbol_encoding(reader: &mut Reader) -> Self {
@@ -66,7 +69,7 @@ impl SymbolEncodingConfig {
     }
 }
 pub(crate) trait SymbolEncoder {
-    fn encode_symbol(symbol: Symbol) -> Result<(usize, usize), Err>;
+    fn encode_symbol(symbol: Symbol) -> Result<(u8, u64), Err>;
     fn decode_symbol(reader: &mut Reader) -> Symbol;
 }
 
@@ -74,7 +77,7 @@ use crate::encode::connectivity::edgebreaker::Err;
 
 pub(crate) struct CrLight;
 impl SymbolEncoder for CrLight {
-    fn encode_symbol(symbol: Symbol) -> Result<(usize, usize), Err> {
+    fn encode_symbol(symbol: Symbol) -> Result<(u8, u64), Err> {
         match symbol {
             Symbol::C => Ok((1, 0)),
             Symbol::R => Ok((2, 0b10)),
@@ -95,9 +98,9 @@ impl SymbolEncoder for CrLight {
                 };
                 let slot_size = NUM_VERTICES_IN_HOLE_SLOTS[size];
                 Ok((
-                    5 + 2 + slot_size, 
-                    0b11110 << (2+slot_size) | size << slot_size | n_vertices)
-                )
+                    (5 + 2 + slot_size) as u8, 
+                    (0b11110 << (2+slot_size) | size << slot_size | n_vertices) as u64
+                ))
             },
             Symbol::H(metadata) => {
                 let size = if metadata >> 8 == 0 {
@@ -113,9 +116,9 @@ impl SymbolEncoder for CrLight {
                 };
                 let slot_size = HANDLE_METADATA_SLOTS[size];
                 Ok((
-                    5 + 2 + slot_size, 
-                    0b11111 << (2+slot_size) | size << slot_size | metadata)
-                )
+                    (5 + 2 + slot_size) as u8,
+                    (0b11111 << (2+slot_size) | size << slot_size | metadata) as u64
+                ))
             },
         }
     }
@@ -140,14 +143,14 @@ impl SymbolEncoder for CrLight {
             0 => {
                 // M
                 let size = reader.next(2);
-                let n_vertices = reader.next(NUM_VERTICES_IN_HOLE_SLOTS[size]);
-                Symbol::M(n_vertices)
+                let n_vertices = reader.next(NUM_VERTICES_IN_HOLE_SLOTS[size as usize]);
+                Symbol::M(n_vertices as usize)
             },
             1 => {
                 // H
                 let size = reader.next(2);
-                let n_vertices = reader.next(HANDLE_METADATA_SLOTS[size]);
-                Symbol::H(n_vertices)
+                let n_vertices = reader.next(HANDLE_METADATA_SLOTS[size as usize]);
+                Symbol::H(n_vertices as usize)
             },
             _ => unreachable!("Interanl Error: There must be a bug in the buffer implementation.")
         }
@@ -157,7 +160,7 @@ impl SymbolEncoder for CrLight {
 pub(crate) struct Balanced;
 
 impl SymbolEncoder for Balanced {
-    fn encode_symbol(symbol: Symbol) -> Result<(usize, usize), Err> {
+    fn encode_symbol(symbol: Symbol) -> Result<(u8, u64), Err> {
         match symbol {
             Symbol::C => Ok((1, 0)),
             Symbol::R => Ok((3, 0b100)),
@@ -178,9 +181,9 @@ impl SymbolEncoder for Balanced {
                 };
                 let slot_size = NUM_VERTICES_IN_HOLE_SLOTS[size];
                 Ok((
-                    5 + 2 + slot_size, 
-                    0b11101 << (2+slot_size) | size << slot_size | n_vertices)
-                )
+                    (5 + 2 + slot_size) as u8, 
+                    (0b11101 << (2+slot_size) | size << slot_size | n_vertices) as u64
+                ))
             },
             Symbol::H(n_vertices) => {
                 let size = if n_vertices >> 8 == 0 {
@@ -196,9 +199,9 @@ impl SymbolEncoder for Balanced {
                 };
                 let slot_size = HANDLE_METADATA_SLOTS[size];
                 Ok((
-                    5 + 2 + slot_size, 
-                    0b11110 << (2+slot_size) | size << slot_size | n_vertices)
-                )
+                    (5 + 2 + slot_size) as u8,
+                    (0b11110 << (2+slot_size) | size << slot_size | n_vertices) as u64
+                ))
             },
         }
     }
@@ -223,14 +226,14 @@ impl SymbolEncoder for Balanced {
             0 => {
                 // M
                 let size = reader.next(2);
-                let n_vertices = reader.next(NUM_VERTICES_IN_HOLE_SLOTS[size]);
-                Symbol::M(n_vertices)
+                let n_vertices = reader.next(NUM_VERTICES_IN_HOLE_SLOTS[size as usize]);
+                Symbol::M(n_vertices as usize)
             },
             1 => {
                 // H
                 let size = reader.next(2);
-                let n_vertices = reader.next(HANDLE_METADATA_SLOTS[size]);
-                Symbol::H(n_vertices)
+                let n_vertices = reader.next(HANDLE_METADATA_SLOTS[size as usize]);
+                Symbol::H(n_vertices as usize)
             },
             _ => unreachable!("Interanl Error: There must be a bug in the buffer implementation.")
         }
@@ -243,7 +246,7 @@ pub(crate) struct Rans {
 }
 
 impl SymbolEncoder for Rans {
-    fn encode_symbol(symbol: Symbol) -> Result<(usize, usize), Err> {
+    fn encode_symbol(symbol: Symbol) -> Result<(u8, u64), Err> {
         unimplemented!()
     }
 

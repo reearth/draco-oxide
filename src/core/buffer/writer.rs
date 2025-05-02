@@ -11,7 +11,7 @@ pub struct Writer<Order: OrderConfig> {
 	num_elements: usize,
 
 	/// the number of elements written in the current byte.
-	pos_in_curr_byte: usize,
+	pos_in_curr_byte: u8,
 
 	/// raw buffer to write to.
 	/// we return it back to the buffer at the end.
@@ -33,12 +33,12 @@ impl<Order: OrderConfig> Into<Buffer<Order>> for Writer<Order> {
 impl<Order: OrderConfig> Writer<Order> {
 	/// write the 'size' bits of data at the current offset.
 	/// the input will be taken to be the first 'size' bits of 'value'.
-	pub fn next(&mut self, (size, value): (usize, usize)) {
+	pub fn next(&mut self, (size, value): (u8, u64)) {
 		// this not an unsafe condition, but it is a good practice to avoid weird inputs.
 		assert!(size <= 64 && size > 0, "Invalid size: {}", size);
 
 		// this is the unsafe condition. Allocate more memory if needed.
-		while size + self.num_elements > self.buffer.cap << 3 {
+		while size as usize + self.num_elements > self.buffer.cap << 3 {
 			self.buffer.double();
 		}
 
@@ -56,13 +56,13 @@ impl<Order: OrderConfig> Writer<Order> {
 	/// the first 'size' bits will be taken from 'value' as an input.
 	/// Safety:  The caller must ensure that 'buffer' has allocated enough memory to store the data; 
 	/// i.e. 'buffer.cap' is greater than or equal to 'num_elements'+'size'.
-	pub unsafe fn next_unchecked(&mut self, (size, value): (usize, usize)) {
-		self.num_elements = self.num_elements.unchecked_add(size);
+	pub unsafe fn next_unchecked(&mut self, (size, value): (u8, u64)) {
+		self.num_elements = self.num_elements.unchecked_add(size as usize);
 		
 		let mut offset = if Order::IS_MSB_FIRST{ size } else { 0 };
 		
 		if self.pos_in_curr_byte != 0 {
-			let num_remaining_in_curr_byte = 8_usize.unchecked_sub(self.pos_in_curr_byte);
+			let num_remaining_in_curr_byte = 8_u8.unchecked_sub(self.pos_in_curr_byte);
 			if size <= num_remaining_in_curr_byte {
 				unsafe {
 					// Safety: dereferencing the pointer is safe because the condition implies that 
@@ -108,7 +108,7 @@ impl<Order: OrderConfig> Writer<Order> {
 			self.ptr = self.ptr.add(1);
 		}
 		unsafe {
-			self.ptr.write(if Order::IS_MSB_FIRST {(value & ((1<<offset)-1))<<(8_usize.unchecked_sub(offset))} else {value >> offset} as u8);
+			self.ptr.write(if Order::IS_MSB_FIRST {(value & ((1<<offset)-1))<<(8_u8.unchecked_sub(offset))} else {value >> offset} as u8);
 		}
 		self.pos_in_curr_byte = if Order::IS_MSB_FIRST {offset} else {size.unchecked_sub(offset) & 7};
 	}

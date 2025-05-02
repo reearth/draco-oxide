@@ -445,7 +445,7 @@ impl ConnectivityDecoder for SpiraleReversi {
     fn decode_connectivity(&mut self, mut reader: Reader) -> Vec<[VertexIdx; 3]> {
         self.init();
         let symbol_encoding = SymbolEncodingConfig::get_symbol_encoding(&mut reader);
-        self.num_connected_components = reader.next(NUM_CONNECTED_COMPONENTS_SLOT);
+        self.num_connected_components = reader.next(NUM_CONNECTED_COMPONENTS_SLOT) as usize;
 
         // unwrap the symbol encoding config here so that the spirale reversi does not 
         // need to unwrap config during each iteration.
@@ -466,6 +466,7 @@ impl ConnectivityDecoder for SpiraleReversi {
 #[cfg(test)]
 mod tests {
     use crate::core::buffer::{writer, Buffer};
+    use crate::encode::connectivity::edgebreaker::Config;
     use crate::encode::connectivity::{edgebreaker, ConnectivityEncoder};
     use crate::core::shared::{
         ConfigType,
@@ -482,11 +483,12 @@ mod tests {
             [1,2,3]
         ];
         let  mut points = vec![NdVector::<3,f32>::zero(); 4];
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
         let reader = buffer.into_reader();
         let mut spirale_reversi = SpiraleReversi::new();
         let decoded_faces = spirale_reversi.decode_connectivity(reader);
@@ -509,11 +511,12 @@ mod tests {
         // positions do not matter
         let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
         let reader = buffer.into_reader();
         let mut spirale_reversi = SpiraleReversi::new();
         let decoded_faces = spirale_reversi.decode_connectivity(reader);
@@ -545,11 +548,12 @@ mod tests {
         // positions do not matter
         let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
         let reader = buffer.into_reader();
         let mut spirale_reversi = SpiraleReversi::new();
         let decoded_faces = spirale_reversi.decode_connectivity(reader);
@@ -585,11 +589,12 @@ mod tests {
         // positions do not matter
         let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
         let reader = buffer.into_reader();
         let mut spirale_reversi = SpiraleReversi::new();
         let decoded_faces = spirale_reversi.decode_connectivity(reader);
@@ -617,11 +622,12 @@ mod tests {
         // positions do not matter
         let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
         let reader = buffer.into_reader();
         let mut spirale_reversi = SpiraleReversi::new();
         let decoded_faces = spirale_reversi.decode_connectivity(reader);
@@ -651,11 +657,12 @@ mod tests {
         // positions do not matter
         let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
         let reader = buffer.into_reader();
         let mut spirale_reversi = SpiraleReversi::new();
         let decoded_faces = spirale_reversi.decode_connectivity(reader);

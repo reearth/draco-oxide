@@ -17,3 +17,18 @@ pub mod core;
 
 pub mod utils;
 mod tests;
+
+pub use crate::core::buffer::Buffer;
+pub use crate::core::mesh::{
+    Mesh,
+    builder::MeshBuilder,
+};
+
+pub mod prelude {
+    pub use crate::core::shared::{NdVector, Vector};
+    pub use crate::core::attribute::{Attribute, AttributeType};
+    pub use crate::core::mesh::{Mesh, builder::MeshBuilder};
+    pub use crate::core::buffer::{self, Buffer};
+    pub use crate::encode::{encode, Config};
+    pub use crate::core::shared::ConfigType;
+}

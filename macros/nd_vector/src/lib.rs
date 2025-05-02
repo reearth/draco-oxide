@@ -33,6 +33,10 @@ pub fn impl_ndvector_ops_for_dim(input: TokenStream) -> TokenStream {
     let indices_partial_eq = (0..n).map(|i| {
         quote! { result &= self.data.get_unchecked(#i).eq(rhs.data.get_unchecked(#i)); }
     });
+    let indices_portable = (0..n).map(|i| {
+        // quote! { (*self.data.get_unchecked(#i)).to_bits() }
+        quote! { result.push((*self.data.get_unchecked(#i)).to_bits()); }
+    });
 
     let expanded = quote! {
         impl<T> std::ops::Add for NdVector<#n, T> 
@@ -161,6 +165,16 @@ pub fn impl_ndvector_ops_for_dim(input: TokenStream) -> TokenStream {
             fn eq(&self, rhs: &Self) -> bool {
                 let mut result = true;
                 unsafe { #(#indices_partial_eq)* }
+                result
+            }
+        }
+
+        impl<Data> Portable for NdVector<#n, Data> 
+            where Data: DataValue
+        {
+            fn to_bits(&self) -> Vec<(u8, u64)> {
+                let mut result = Vec::with_capacity(#n);
+                unsafe{ #(#indices_portable)* }
                 result
             }
         }

@@ -91,6 +91,6 @@ impl<Writer, S> RansCoder<Writer, S>
         for (i, &freq) in self.freq_count.iter().enumerate() {
             metadata[i] = freq;
         }
-        metadata
+        metadata;
     }
 }
