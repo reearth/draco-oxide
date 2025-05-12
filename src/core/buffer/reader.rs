@@ -24,8 +24,8 @@ impl<Order: OrderConfig> Reader<Order> {
 	/// the output data is stored in the first 'size' bits.
 	pub fn next(&mut self, size: u8) -> u64 {
 		assert!(size <= 64 && size > 0, "Invalid size: {}", size);
-		assert!(size as usize <= self.num_remaining_bits, "Attempt to read beyond buffer bounds");
-			unsafe{ self.next_unchecked(size) }
+		assert!(size as usize <= self.num_remaining_bits, "Attempt to read beyond buffer bounds.");
+		unsafe{ self.next_unchecked(size) }
 	}
 
 	/// read the 'size' bits of data at the current offset without checking the bounds.
@@ -102,14 +102,19 @@ impl<Order: OrderConfig> Reader<Order> {
 		value
 	}
 
-	pub(super) fn new(buffer: RawBuffer) -> Self {
+	pub(super) fn new(buffer: RawBuffer, len: usize) -> Self {
 		let ptr = buffer.data.as_ptr();
 		Self {
 			ptr,
-			num_remaining_bits: buffer.cap << 3,
+			num_remaining_bits: len,
 			pos_in_curr_byte: 0,
 			_buffer: buffer,
 			_phantom: std::marker::PhantomData,
 		}
+	}
+
+
+	pub fn get_num_remaining_bits(&self) -> usize {
+		self.num_remaining_bits
 	}
 }

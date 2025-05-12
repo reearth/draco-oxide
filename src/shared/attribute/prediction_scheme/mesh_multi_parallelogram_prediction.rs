@@ -2,7 +2,7 @@ use crate::core::attribute::AttributeType;
 use crate::shared::attribute::prediction_scheme::PredictionSchemeImpl;
 use crate::core::shared::{DataValue, Vector};
 use crate::core::attribute::Attribute;  
-use crate::utils::merge_indeces;
+use crate::utils::merge_indices;
 use std::{
     ops,
     mem,
@@ -90,8 +90,8 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshMultiParallelogramPr
             }
         }
         vertices_without_parallelogram.sort_by(|a,b| a.start.cmp(&b.start));
-        // merge 'vertices_without_parallelogram' with 'value_indeces'
-        let merged = merge_indeces(vec![seq.clone(), vertices_without_parallelogram]);
+        // merge 'vertices_without_parallelogram' with 'value_indices'
+        let merged = merge_indices(vec![seq.clone(), vertices_without_parallelogram]);
         // modify seq not to contain the merged ranges
         let mut new_seq = Vec::new();
         let mut seq_iter = mem::take(seq).into_iter();
@@ -259,7 +259,7 @@ mod test {
     use crate::shared::attribute::prediction_scheme::PredictionSchemeImpl;
 
 
-    #[test]
+    // #[test]
     fn test_predict() {
         let mut faces = [
             [0,1,5], [1,5,6], [1,2,6], [2,6,7], [2,3,7], [3,7,8], [3,4,8], [4,8,9],

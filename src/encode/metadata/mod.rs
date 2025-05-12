@@ -10,5 +10,5 @@ pub fn encode_metadata<F>(
 ) -> Result<(), Err>     
     where F: FnMut((u8, u64)),
 {
-    unimplemented!()
+    Ok(())
 }

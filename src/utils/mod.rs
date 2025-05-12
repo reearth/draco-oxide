@@ -1,6 +1,7 @@
 pub mod geom;
+pub(crate) mod debug;
 
-pub(crate) fn splice_disjoint_indeces(set_of_subseqs: Vec<Vec<std::ops::Range<usize>>>) -> Vec<std::ops::Range<usize>> {
+pub(crate) fn splice_disjoint_indices(set_of_subseqs: Vec<Vec<std::ops::Range<usize>>>) -> Vec<std::ops::Range<usize>> {
     let mut spliced = set_of_subseqs.into_iter()
         .flatten()
         .collect::<Vec<_>>();
@@ -11,7 +12,7 @@ pub(crate) fn splice_disjoint_indeces(set_of_subseqs: Vec<Vec<std::ops::Range<us
     spliced
 }
 
-pub(crate) fn merge_indeces(mut set_of_subseqs: Vec<Vec<std::ops::Range<usize>>>) -> Vec<std::ops::Range<usize>> {
+pub(crate) fn merge_indices(mut set_of_subseqs: Vec<Vec<std::ops::Range<usize>>>) -> Vec<std::ops::Range<usize>> {
     for sub_seq in set_of_subseqs.iter_mut() {
         connect_subsequence(sub_seq);
     }
@@ -107,25 +108,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_splice_disjoint_indeces() {
+    fn test_splice_disjoint_indices() {
         let set_of_subseqs = vec![
             vec![0..2],
             vec![4..6],
             vec![2..4, 7..9],
         ];
-        let result = splice_disjoint_indeces(set_of_subseqs);
+        let result = splice_disjoint_indices(set_of_subseqs);
         assert_eq!(result, vec![0..6, 7..9]);
     }
 
     #[test]
-    fn test_merge_indeces() {
+    fn test_merge_indices() {
         let set_of_subseqs = vec![
             vec![0..1, 1..2, 3..5, 8..10],
             vec![1..3, 4..6, 8..9],
             vec![1..4, 7..9],
             vec![0..79],
         ];
-        let result = merge_indeces(set_of_subseqs);
+        let result = merge_indices(set_of_subseqs);
         assert_eq!(result, vec![1..2, 8..9]);
     }
 }

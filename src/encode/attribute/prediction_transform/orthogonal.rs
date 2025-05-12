@@ -1,8 +1,6 @@
-use std::mem;
 use std::marker::PhantomData;
 
 use crate::core::shared::{Abs, DataValue, NdVector, Vector};
-use crate::encode::attribute::portabilization::{self, Portabilization};
 use crate::encode::attribute::WritableFormat;
 use crate::shared::attribute::Portable;
 
@@ -21,8 +19,6 @@ pub struct OrthogonalTransform<Data>
 
     final_metadata: FinalMetadata<bool>,
 
-    portabilization: Portabilization<<Self as PredictionTransformImpl>::Correction>,
-    
     _marker: PhantomData<Data>,
 }
 
@@ -31,35 +27,24 @@ impl<Data> OrthogonalTransform<Data>
         Data: Vector + Portable,
         Data::Component: DataValue
 {
-    pub fn new(cfg: portabilization::Config) -> Self {
+    pub fn new(_cfg: super::Config) -> Self {
         Self {
             out: Vec::new(),
             metadata: Vec::new(),
             final_metadata: FinalMetadata::Local(Vec::new()),
-            portabilization: Portabilization::new(cfg),
             _marker: PhantomData,
         }
     }
 }
 
-impl<Data> PredictionTransformImpl for OrthogonalTransform<Data> 
+impl<Data> PredictionTransformImpl<Data> for OrthogonalTransform<Data> 
     where
         Data: Vector + Portable,
         Data::Component: DataValue
 {
-    const ID: usize = 5;
-
-    type Data = Data;
-    type Correction = NdVector<2,f64>;
-    type Metadata = bool;
-
-    fn map(_orig: Self::Data, _pred: Self::Data, _metadata: Self::Metadata) -> Self::Correction {
-        unimplemented!()
-    }
-
     // ToDo: Add dynamic data check.
 
-    fn map_with_tentative_metadata(&mut self, orig: Self::Data, pred: Self::Data) {
+    fn map_with_tentative_metadata(&mut self, orig: Data, pred: Data) {
         let one = Data::Component::one();
         let zero = Data::Component::zero();
 
@@ -112,29 +97,13 @@ impl<Data> PredictionTransformImpl for OrthogonalTransform<Data>
 
     }
 
-    fn squeeze_impl(&mut self) {
-        self.final_metadata = if self.metadata.iter().all(|&v|v) {
-            FinalMetadata::Global(self.metadata.pop().unwrap())
-        } else {
-            FinalMetadata::Local(std::mem::take(&mut self.metadata))
-        };
+    fn out<F>(self, _writer: &mut F) -> std::vec::IntoIter<WritableFormat>where F:FnMut((u8,u64)) {
+        unimplemented!()
     }
 
-    fn portabilize(&mut self) -> (WritableFormat, WritableFormat) {
-        self.portabilization.portabilize(self.out.clone())
-    }
-
-    fn portabilize_and_write_metadata<F>(&mut self, writer: &mut F) -> WritableFormat 
-        where F: FnMut((u8, u64))
+    fn squeeze<F>(&mut self, _writer: &mut F) 
+        where F:FnMut((u8,u64)) 
     {
-        self.portabilization.portabilize_and_write_metadata(mem::take(&mut self.out), writer)
-    }
-
-    fn get_final_metadata(&self) -> &FinalMetadata<Self::Metadata> {
-        &self.final_metadata
-    }
-
-    fn get_final_metadata_writable_form(&self) -> WritableFormat {
-        self.final_metadata.clone().into()
+        unimplemented!()
     }
 }

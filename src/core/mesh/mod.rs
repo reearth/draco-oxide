@@ -1,8 +1,12 @@
 pub mod builder;
+pub mod metadata;
+
+use std::mem;
 
 use super::{attribute::{AttributeType, ComponentDataType, Attribute}, shared::{Float, Vector}};
 use crate::{core::shared::NdVector, utils::geom::point_to_face_distance_3d};
 
+#[derive(Debug, Clone)]
 pub struct Mesh {
 	attributes: Vec<Attribute>,
 }
@@ -27,8 +31,8 @@ impl Mesh {
             }), 
             "All attributes after the first non-connectivity attribute must be of type non-connectivity"
         );
-        let non_conn_atts = &self.attributes[..at];
-        let conn_atts = &self.attributes[at..];
+        let conn_atts = &self.attributes[..at];
+        let non_conn_atts = &self.attributes[at..];
         (conn_atts, non_conn_atts)
     }
 
@@ -38,11 +42,17 @@ impl Mesh {
         }
     }
 
-    pub fn add_attribute(&mut self, att: Attribute) {
-        self.attributes.push(att);
+    pub(crate) fn add_attribute(&mut self, att: Attribute) {
+        if att.get_attribute_type() == AttributeType::Connectivity {
+            let mut tmp = vec![att];
+            mem::swap(&mut tmp, &mut self.attributes);
+            self.attributes.append(&mut tmp);
+        } else {
+            self.attributes.push(att);
+        }
     }
 
-    pub fn l2_norm(&self, other: Self) -> f64 {
+    pub fn diff_l2_norm(&self, other: &Self) -> f64 {
         let pos_att_iter = self.attributes.iter()
             .enumerate()
             .filter(|(_,att)| att.get_attribute_type() == AttributeType::Position);

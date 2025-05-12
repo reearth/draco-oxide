@@ -4,80 +4,67 @@ pub mod orthogonal;
 pub mod oct_orthogonal;
 pub mod oct_reflection;
 pub mod oct_difference;
+use crate::encode::attribute::portabilization::PortabilizationImpl;
 
-use core::fmt;
-use std::cmp;
+use std::{
+	cmp,
+	fmt
+};
 
-use crate::{core::shared::{ConfigType, Vector}, shared::attribute::Portable};
+use crate::core::shared::{ConfigType, Vector};
+use crate::shared::attribute::Portable;
 
-use super::{attribute_encoder::GroupConfig, portabilization::Portabilization, WritableFormat};
+use super::portabilization::{self, Portabilization};
+use crate::encode::attribute::WritableFormat;
 
+#[remain::sorted]
+#[enum_dispatch::enum_dispatch(PredictionTransformImpl<Data>)]
 pub enum PredictionTransform<Data> 
 	where Data: Vector + Portable
 {
-	NoTransform(NoPredictionTransform<Data>),
 	Difference(difference::Difference<Data>),
+	NoTransform(NoPredictionTransform<Data>),
 	OctahedralDifference(oct_difference::OctahedronDifferenceTransform<Data>),
-	OctahedralReflection(oct_reflection::OctahedronReflectionTransform<Data>),
 	OctahedralOrthogonal(oct_orthogonal::OctahedronOrthogonalTransform<Data>),
+	OctahedralReflection(oct_reflection::OctahedronReflectionTransform<Data>),
 	Orthogonal(orthogonal::OrthogonalTransform<Data>),
 }
 
 impl<Data> PredictionTransform<Data> 
 	where Data: Vector + Portable
 {
-	pub(crate) fn map_with_tentative_metadata(&mut self, orig: Data, pred: Data) {
-		match self {
-			PredictionTransform::NoTransform(_) => unreachable!(),
-			PredictionTransform::Difference(x) => x.map_with_tentative_metadata(orig, pred),
-			PredictionTransform::OctahedralDifference(x) => x.map_with_tentative_metadata(orig, pred),
-			PredictionTransform::OctahedralReflection(x) => x.map_with_tentative_metadata(orig, pred),
-			PredictionTransform::OctahedralOrthogonal(x) => x.map_with_tentative_metadata(orig, pred),
-			PredictionTransform::Orthogonal(x) => x.map_with_tentative_metadata(orig, pred),
+	pub(crate) fn new(cfg: Config) -> Self {
+		let ty = cfg.ty;
+		match ty {
+			PredictionTransformType::NoTransform => PredictionTransform::NoTransform(NoPredictionTransform::new(cfg)),
+			PredictionTransformType::Difference => PredictionTransform::Difference(difference::Difference::new(cfg)),
+			PredictionTransformType::OctahedralDifference => PredictionTransform::OctahedralDifference(oct_difference::OctahedronDifferenceTransform::new(cfg)),
+			PredictionTransformType::OctahedralReflection => PredictionTransform::OctahedralReflection(oct_reflection::OctahedronReflectionTransform::new(cfg)),
+			PredictionTransformType::OctahedralOrthogonal => PredictionTransform::OctahedralOrthogonal(oct_orthogonal::OctahedronOrthogonalTransform::new(cfg)),
+			PredictionTransformType::Orthogonal => PredictionTransform::Orthogonal(orthogonal::OrthogonalTransform::new(cfg)),
 		}
 	}
-
-	pub(crate) fn squeeze(&mut self) -> (WritableFormat, WritableFormat) {
+	pub(crate) fn get_type(&self) -> PredictionTransformType {
 		match self {
-			PredictionTransform::NoTransform(_) => unreachable!(),
-			PredictionTransform::Difference(x) => x.squeeze(),
-			PredictionTransform::OctahedralDifference(x) => x.squeeze(),
-			PredictionTransform::OctahedralReflection(x) => x.squeeze(),
-			PredictionTransform::OctahedralOrthogonal(x) => x.squeeze(),
-			PredictionTransform::Orthogonal(x) => x.squeeze(),
-		}
-	}
-
-	pub(crate) fn squeeze_and_write<F>(&mut self, writer: &mut F) -> WritableFormat
-		where F: FnMut((u8, u64))
-	{
-		match self {
-			PredictionTransform::NoTransform(_) => unreachable!(),
-			PredictionTransform::Difference(x) => x.squeeze_and_write(writer),
-			PredictionTransform::OctahedralDifference(x) => x.squeeze_and_write(writer),
-			PredictionTransform::OctahedralReflection(x) => x.squeeze_and_write(writer),
-			PredictionTransform::OctahedralOrthogonal(x) => x.squeeze_and_write(writer),
-			PredictionTransform::Orthogonal(x) => x.squeeze_and_write(writer),
+			PredictionTransform::NoTransform(_) => PredictionTransformType::NoTransform,
+			PredictionTransform::Difference(_) => PredictionTransformType::Difference,
+			PredictionTransform::OctahedralDifference(_) => PredictionTransformType::OctahedralDifference,
+			PredictionTransform::OctahedralReflection(_) => PredictionTransformType::OctahedralReflection,
+			PredictionTransform::OctahedralOrthogonal(_) => PredictionTransformType::OctahedralOrthogonal,
+			PredictionTransform::Orthogonal(_) => PredictionTransformType::Orthogonal,
 		}
 	}
 }
 
-pub(crate) trait PredictionTransformImpl {
-	const ID: usize = 0;
 
-	type Data: Vector;
-	type Correction: Vector + Copy; // ToDo: examine if Copy is needed and remove it if not
-	type Metadata;
-	
-	/// transforms the data (the correction value) with the given metadata.
-	fn map(orig: Self::Data, pred: Self::Data, metadata: Self::Metadata) -> Self::Correction;
-
+#[enum_dispatch::enum_dispatch]
+pub(crate) trait PredictionTransformImpl<Data> {
 	/// transforms the data (the correction value) with the tentative metadata value.
 	/// The tentative metadata can be determined by the function without any restriction,
 	/// but it needs to be returned. The output of the transform might get later on 
 	/// fixed by the metadata universal to the attribute after all the transforms are
 	/// done once for each attribute value.
-	fn map_with_tentative_metadata(&mut self, orig: Self::Data, pred: Self::Data);
+	fn map_with_tentative_metadata(&mut self, orig: Data, pred: Data);
 	
 	/// squeezes the transform results having computed the entire attribute and
 	/// gives up the final data.
@@ -85,32 +72,11 @@ pub(crate) trait PredictionTransformImpl {
 	/// and the transformed data, or doing some trade-off's between the tentative
 	/// metadata and the transformed data to decide the global metadata that will 
 	/// be encoded to buffer.
-	fn squeeze(&mut self) -> (WritableFormat, WritableFormat) {
-		self.squeeze_impl();
-		let (port_metadata, data) = self.portabilize();
-		let mut metadata= self.get_final_metadata_writable_form();
-		metadata.append(&port_metadata);
-		(metadata, data)
-	}
-
-	fn squeeze_and_write<F>(&mut self, writer: &mut F) -> WritableFormat 
-		where F: FnMut((u8, u64))
-	{
-		self.squeeze_impl();
-		self.get_final_metadata_writable_form().write(writer);
-		self.portabilize_and_write_metadata(writer)
-	}
-
-	fn squeeze_impl(&mut self);
-
-	fn portabilize(&mut self) -> (WritableFormat, WritableFormat);
-
-	fn portabilize_and_write_metadata<F>(&mut self, writer: &mut F) -> WritableFormat
+	fn squeeze<F>(&mut self, writer: &mut F) 
 		where F: FnMut((u8, u64));
 
-	fn get_final_metadata(&self) -> &FinalMetadata<Self::Metadata>;
-
-	fn get_final_metadata_writable_form(&self) -> WritableFormat;
+	fn out<F>(self, writer: &mut F) -> std::vec::IntoIter<WritableFormat>
+		where F: FnMut((u8, u64));
 }
 
 
@@ -123,6 +89,27 @@ pub(crate) enum FinalMetadata<T> {
 	Global(T)
 }
 
+impl<T> FinalMetadata<T> 
+	where T: Portable,
+{
+	pub(crate) fn read_from_bits<F>(stream_in: &mut F) -> Self 
+		where F: FnMut(u8)->u64
+	{
+		if stream_in(1)==0 {
+			let len = stream_in(64) as usize;
+			let mut out = Vec::with_capacity(len);
+			for _ in 0..len {
+				let v = T::read_from_bits(stream_in);
+				out.push(v);
+			}
+			FinalMetadata::Local(out)
+		} else {
+			let out = T::read_from_bits(stream_in);
+			FinalMetadata::Global(out)
+		}
+	}
+}
+
 impl<T> From<FinalMetadata<T>> for WritableFormat 
 	where WritableFormat: From<T>
 {
@@ -130,7 +117,8 @@ impl<T> From<FinalMetadata<T>> for WritableFormat
 		let mut out = WritableFormat::new();
 		match data {
 			FinalMetadata::Local(x) => {
-				out.push((1,0));			
+				out.push((1,0));
+				out.push((64, x.len() as u64));
 				for v in x {
 					out.append(&mut <WritableFormat as From<T>>::from(v));
 				}
@@ -167,99 +155,89 @@ impl<T> cmp::PartialEq for FinalMetadata<T>
 	}
 }
 
-/// Trait limiting the selections of the encoding methods for vertex coordinates.
-trait TransformForVertexCoords: PredictionTransformImpl {}
 
-/// Trait limiting the selections of the encoding methods for texture coordinates.
-trait TransformForTexCoords: PredictionTransformImpl {}
 
-/// Trait limiting the selections of the encoding methods for normals.
-trait TansformForNormals: PredictionTransformImpl {}
-
-#[derive(Clone, Copy)]
+#[remain::sorted]
+#[derive(Clone, Copy, Debug)]
 pub enum PredictionTransformType {
 	Difference,
-	OctahedralDifference,
-	OctahedralReflection,
-	OctahedralOrthogonal,
-	Orthogonal,
 	NoTransform,
+	OctahedralDifference,
+	OctahedralOrthogonal,
+	OctahedralReflection,
+	Orthogonal,
 }
 
-#[derive(Clone, Copy)]
+impl PredictionTransformType {
+	pub(crate) fn get_id(&self) -> u8 {
+		match self {
+			PredictionTransformType::NoTransform => 0,
+			PredictionTransformType::Difference => 1,
+			PredictionTransformType::OctahedralDifference => 2,
+			PredictionTransformType::OctahedralReflection => 3,
+			PredictionTransformType::OctahedralOrthogonal => 4,
+			PredictionTransformType::Orthogonal => 5,
+		}
+	}
+}
+
+#[derive(Clone, Debug)]
 pub struct Config {
-	pub prediction_transform: PredictionTransformType,
+	pub ty: PredictionTransformType,
+	pub portabilization: super::portabilization::Config,
 }
 
 impl ConfigType for Config {
 	fn default()-> Self {
 		Config {
-			prediction_transform: PredictionTransformType::Difference,
+			ty: PredictionTransformType::Difference,
+			portabilization: <super::portabilization::Config as ConfigType>::default(),
 		}
 	}
 }
 
 
 pub struct NoPredictionTransform<Data> 
-	where Data: Vector
+	where Data: Vector + Portable
 {
+	cfg: portabilization::Config,
+	out: Vec<Data>,
 	_marker: std::marker::PhantomData<Data>,
-	portabilization: Portabilization<<Self as PredictionTransformImpl>::Correction>,
 }
 
 impl<Data> NoPredictionTransform<Data> 
 	where Data: Vector + Portable
 {
-	pub fn new(cfg: GroupConfig) -> Self {
-		let portabilization = Portabilization::new(cfg.portabilization);
+	pub fn new(cfg: Config) -> Self {
 		Self {
+			cfg: cfg.portabilization,
+			out: Vec::new(),
 			_marker: std::marker::PhantomData,
-			portabilization,
-		}
-	}
-
-	pub fn new_with_portabilization(portabilization: Portabilization<<Self as PredictionTransformImpl>::Correction>) -> Self {
-		Self {
-			_marker: std::marker::PhantomData,
-			portabilization,
 		}
 	}
 }
 
-impl<Data> PredictionTransformImpl for NoPredictionTransform<Data> 
+impl<Data> PredictionTransformImpl<Data> for NoPredictionTransform<Data> 
 	where 
-		Data: Vector,
+		Data: Vector + Portable,
 {
-	const ID: usize = 0;
-	type Data = Data;
-	type Correction = Data;
-	type Metadata = ();
-	fn map(_orig: Self::Data, _pred: Self::Data, _metadata: Self::Metadata) -> Self::Correction{
-		unreachable!()
-	}
-	fn map_with_tentative_metadata(&mut self, _orig: Self::Data, _pred: Self::Data) {
-		unreachable!()
+
+
+	fn map_with_tentative_metadata(&mut self, orig: Data, _pred: Data) {
+		self.out.push(orig);
 	}
 
-	fn squeeze_impl(&mut self) {
-		unreachable!()
-	}
-
-	fn portabilize(&mut self) -> (WritableFormat, WritableFormat) {
-		unreachable!()
-	}
-
-	fn portabilize_and_write_metadata<F>(&mut self, _writer: &mut F) -> WritableFormat 
+	fn out<F>(self, writer: &mut F) -> std::vec::IntoIter<WritableFormat> 
 		where F: FnMut((u8, u64))
 	{
-		unreachable!()
+		Portabilization::new(
+		self.out,
+			self.cfg,
+			writer
+		).portabilize()
 	}
 
-	fn get_final_metadata(&self) -> &FinalMetadata<Self::Metadata> {
-		unreachable!()
-	}
-
-	fn get_final_metadata_writable_form(&self) -> WritableFormat {
-		unreachable!()
-	}
+	fn squeeze<F>(&mut self, _writer: &mut F) 
+		where F: FnMut((u8,u64))  
+	{}
 }

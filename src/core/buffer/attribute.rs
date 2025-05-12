@@ -145,6 +145,7 @@ impl AttributeBuffer {
     }
 
 	#[inline(always)]
+    /// Returns the number of values of the attribute.
     pub fn len(&self) -> usize {
         self.len
     }
@@ -227,6 +228,15 @@ impl AttributeBuffer {
             Vec::from_raw_parts(slice.as_ptr() as *mut Data, self.len, self.len)
         }
     }
+
+    #[inline]
+    /// Returns a slice of all the values in the buffer casted to the static type `u8`.
+    unsafe fn as_slice_u8(&self) -> &[u8] {
+        std::slice::from_raw_parts(
+            self.as_ptr(),
+            self.len * self.num_components * self.component_type.size(),
+        )
+    }
 }
 
 
@@ -282,34 +292,292 @@ impl From<Vec<[usize; 3]>> for AttributeBuffer {
     }
 }
 
-
-pub(crate) struct AttributeBufferFamily {
-    pub(crate) num_components: usize,
-    pub(crate) component_type: ComponentDataType,
-    pub(crate) atts: Vec<AttributeBuffer>,
-
-}
-/// Classifies the attributes into distinct families based on their component type and number of components.
-pub fn classify(atts: Vec<AttributeBuffer>) -> Vec<AttributeBufferFamily> {
-    let mut families: Vec<AttributeBufferFamily> = Vec::new();
-
-    for att in atts {
-        let maybe_handle = families.iter_mut().find(|f| 
-                f.component_type == att.get_component_type() && f.num_components == att.get_num_components()
-            );
-        match maybe_handle {
-            Some(handle) => handle.atts.push(att),
-            None => {
-                families.push(
-                    AttributeBufferFamily { 
-                        num_components: att.get_num_components(),
-                        component_type: att.get_component_type(),
-                        atts: vec![att],
-                    }
-                );
-            }
+impl Clone for AttributeBuffer {
+    fn clone(&self) -> Self {
+        let data = unsafe { self.as_slice_u8().to_vec() };
+        let component_type = self.component_type;
+        let num_components = self.num_components;
+        let len = self.len;
+        let buffer = RawBuffer::from_vec(data);
+        let last = unsafe {
+            buffer.as_ptr().add(len * mem::size_of::<u8>())
         };
+
+        Self {
+            data: buffer,
+            len,
+            last,
+            component_type,
+            num_components,
+        }
+    }
+}
+
+impl std::fmt::Debug for AttributeBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let data = match self.component_type {
+            ComponentDataType::U8 => {
+                match self.num_components {
+                    1 => format!("{:?}", unsafe{ self.as_slice::<[u8;1]>() }),
+                    2 => format!("{:?}", unsafe{ self.as_slice::<[u8;2]>() }),
+                    3 => format!("{:?}", unsafe{ self.as_slice::<[u8;3]>() }),
+                    4 => format!("{:?}", unsafe{ self.as_slice::<[u8;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::U16 => {
+                match self.num_components {
+                    1 => format!("{:?}", unsafe{ self.as_slice::<[u16;1]>() }),
+                    2 => format!("{:?}", unsafe{ self.as_slice::<[u16;2]>() }),
+                    3 => format!("{:?}", unsafe{ self.as_slice::<[u16;3]>() }),
+                    4 => format!("{:?}", unsafe{ self.as_slice::<[u16;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::U32 => {
+                match self.num_components {
+                    1 => format!("{:?}", unsafe{ self.as_slice::<[u32;1]>() }),
+                    2 => format!("{:?}", unsafe{ self.as_slice::<[u32;2]>() }),
+                    3 => format!("{:?}", unsafe{ self.as_slice::<[u32;3]>() }),
+                    4 => format!("{:?}", unsafe{ self.as_slice::<[u32;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::U64 => {
+                match self.num_components {
+                    1 => format!("{:?}", unsafe{ self.as_slice::<[u64;1]>() }),
+                    2 => format!("{:?}", unsafe{ self.as_slice::<[u64;2]>() }),
+                    3 => format!("{:?}", unsafe{ self.as_slice::<[u64;3]>() }),
+                    4 => format!("{:?}", unsafe{ self.as_slice::<[u64;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::F32 => {
+                match self.num_components {
+                    1 => format!("{:?}", unsafe{ self.as_slice::<[f32;1]>() }),
+                    2 => format!("{:?}", unsafe{ self.as_slice::<[f32;2]>() }),
+                    3 => format!("{:?}", unsafe{ self.as_slice::<[f32;3]>() }),
+                    4 => format!("{:?}", unsafe{ self.as_slice::<[f32;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::F64 => {
+                match self.num_components {
+                    1 => format!("{:?}", unsafe{ self.as_slice::<[f64;1]>() }),
+                    2 => format!("{:?}", unsafe{ self.as_slice::<[f64;2]>() }),
+                    3 => format!("{:?}", unsafe{ self.as_slice::<[f64;3]>() }),
+                    4 => format!("{:?}", unsafe{ self.as_slice::<[f64;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+        };
+        f.debug_struct("AttributeBuffer")
+            .field("len", &self.len)
+            .field("component_type", &self.component_type)
+            .field("num_components", &self.num_components)
+            .field("data", &data)
+            .finish()
+    }
+}
+
+impl std::cmp::PartialEq for AttributeBuffer {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len && 
+        self.component_type == other.component_type && 
+        self.num_components == other.num_components &&
+        (0..self.len()*self.num_components*self.component_type.size()).all(|i| {
+            let self_ptr = unsafe { self.as_ptr().add(i) };
+            let other_ptr = unsafe { other.as_ptr().add(i) };
+            unsafe { ptr::read(self_ptr) == ptr::read(other_ptr) }
+        })
+    }
+}
+
+pub(crate) struct MaybeInitAttributeBuffer {
+    /// Contains the data of the attribute.
+    data: RawBuffer,
+
+    /// The length of allocation.
+    len: usize,
+
+    /// pointer of the last element.
+    last: *mut u8,
+
+    component_type: ComponentDataType,
+
+    num_components: usize,
+
+    /// Debugging purpose only; this will not be used in the release mode.
+    initialized_elements: Vec<bool>,
+}
+
+impl MaybeInitAttributeBuffer {
+    /// Creates a new attribute buffer with the given component type and number of components.
+    /// This allocates memory for the buffer, but does not initialize it.
+    pub fn new(len: usize, component_type: ComponentDataType, num_components: usize) -> Self {
+        let data = RawBuffer::with_capacity(len*component_type.size()*num_components);
+        let last = unsafe { data.as_ptr().add(len*component_type.size()*num_components) };
+        let mut initialized_elements = Vec::with_capacity(len);
+        #[cfg(debug_assertions)] {
+            initialized_elements.resize(len, false);
+        }
+        Self {
+            data,
+            len,
+            last,
+            component_type,
+            num_components,
+            initialized_elements,
+        }
     }
 
-    families
+    /// Returns a slice of all the values in the buffer casted to the static type `Data`.
+	/// Safety: Callers must know exactly which part of resulting slice is valid. \
+	/// Dereferencing the uninitialized part of the slice is undefined behavior.
+	/// Moreover, 'num_components * component_type.size()' must equal 'std::mem::size_of::<Data>()'.
+    pub fn as_slice_unchecked<Data>(&self) -> &[Data] 
+        where 
+            Data: Vector,
+            Data::Component: DataValue
+    {
+        debug_assert_eq!(
+            mem::size_of::<Data>(), self.component_type.size() * self.num_components, 
+            "Cannot create slice: Trying to cast to {}, but the buffer stores elements of type {}D vector of {:?}, which has size {}",
+            mem::size_of::<Data>(), self.num_components, self.component_type, self.component_type.size(),
+        );
+        // Safety: upheld.
+        unsafe {
+            std::slice::from_raw_parts(
+                self.data.as_ptr() as *const Data,
+                self.len,
+            )
+        }
+    }
+
+
+    #[allow(unused)]
+    #[inline]
+    pub fn write<Data>(&mut self, idx: usize, data: Data) 
+        where 
+            Data: Vector,
+            Data::Component: DataValue
+    {
+        assert_eq!(
+            Data::Component::get_dyn(), self.component_type, 
+            "Data type mismatch: Cannot push data of type {:?} into attribute buffer of type {:?}", 
+            Data::Component::get_dyn(), self.component_type
+        );
+        assert!(
+            Data::NUM_COMPONENTS == self.num_components,
+            "Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
+            Data::NUM_COMPONENTS, self.num_components
+        );
+        assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
+
+        self.write_type_unchecked(idx, data);
+    }
+
+    /// Safety: The caller must ensure that the type of the data matches the type of the buffer.
+    /// Furthermore, the index must be within the bounds of the buffer.
+    #[inline]
+    pub fn write_type_unchecked<Data>(&mut self, idx: usize, data: Data) 
+        where 
+            Data: Vector,
+            Data::Component: DataValue
+    {
+        debug_assert_eq!(
+            Data::Component::get_dyn(), self.component_type, 
+            "Data type mismatch: Cannot push data of type {:?} into attribute buffer of type {:?}", 
+            Data::Component::get_dyn(), self.component_type
+        );
+        debug_assert!(
+            Data::NUM_COMPONENTS == self.num_components,
+            "Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
+            Data::NUM_COMPONENTS, self.num_components
+        );
+
+        debug_assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
+
+        #[cfg(debug_assertions)] {
+            self.initialized_elements[idx] = true;
+        }
+
+        unsafe {
+            (self.data.as_ptr() as *mut Data).add(idx).write(data);
+        }
+    }
+
+    /// Returns the number of values of the attribute.
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns the component type of the attribute.
+    #[inline(always)]
+    pub fn get_component_type(&self) -> ComponentDataType {
+        self.component_type
+    }
+
+    /// Returns the number of components.
+    #[inline(always)]
+    pub fn get_num_components(&self) -> usize {
+        self.num_components
+    }
+}
+
+impl From<MaybeInitAttributeBuffer> for AttributeBuffer {
+    fn from(maybe_init: MaybeInitAttributeBuffer) -> Self {
+        debug_assert!(
+            maybe_init.initialized_elements.iter().all(|&x| x),
+            "Not all elements are initialized: Out of {} elements, uninitialized are {:?}",
+            maybe_init.len,
+            maybe_init.initialized_elements.iter().filter(|&&x| !x)
+        );
+
+        Self {
+            data: maybe_init.data,
+            len: maybe_init.len,
+            last: maybe_init.last,
+            component_type: maybe_init.component_type,
+            num_components: maybe_init.num_components,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::prelude::NdVector;
+
+    use super::*;
+    #[test]
+    fn clone() {
+        let data = vec![
+            NdVector::from([1.0f32, 2.0, 3.0]), 
+            NdVector::from([4.0f32, 5.0, 6.0]), 
+            NdVector::from([7.0f32, 8.0, 9.0])
+        ];
+
+        let att = AttributeBuffer::from(data);
+
+        let att_clone = att.clone();
+        assert_eq!(att, att_clone, "The clone is not equal to the original");
+    }
+
+    #[test]
+    fn maybe_init() {
+        let mut buffer = MaybeInitAttributeBuffer::new(5, ComponentDataType::F32, 3);
+        let data = (0..5).map(|i| NdVector::from([i as f32, i as f32, i as f32])).collect::<Vec<_>>();
+        let mut idx = 1;
+        for _ in 0..5 {
+            idx = (idx*2)%5; // 2 is a generator of $ \Z / 5 \Z $
+            buffer.write(idx, data[idx]);
+        }
+        buffer.write(0, data[0]);
+        
+        let att = AttributeBuffer::from(buffer);
+        // check if the data is correct
+        let answer = AttributeBuffer::from(data);
+        assert_eq!(att, answer, "The attribute buffer is not equal to the original");
+    }
 }

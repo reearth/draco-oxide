@@ -2,26 +2,34 @@ use crate::shared::connectivity::sequential::{index_size_from_vertex_count, NUM_
 use crate::core::shared::VertexIdx;
 use super::ConnectivityDecoder;
 
+#[derive(thiserror::Error, Debug)]
+#[remain::sorted]
+pub enum Err {
+    #[error("Stream input returned with None, though more data was expected.")]
+    NotEnoughData,
+}
+
 pub(crate) struct Sequential;
 
 
 impl ConnectivityDecoder for Sequential {
-
-    fn decode_connectivity(&mut self, mut reader: crate::core::buffer::reader::Reader) -> Vec<[VertexIdx; 3]> {
-        let num_points = reader.next(NUM_POINTS_SLOT);
-        let num_faces = reader.next(NUM_POINTS_SLOT);
+    fn decode_connectivity<F>(&mut self, reader: &mut F) -> Result<Vec<[VertexIdx; 3]>, super::Err> 
+        where F: FnMut(u8) -> u64,
+    {
+        let num_points = reader(NUM_POINTS_SLOT);
+        let num_faces = reader(NUM_POINTS_SLOT);
         
         let index_size = index_size_from_vertex_count(num_points as usize).unwrap() as u8;
 
         let faces = (0..num_faces).map(|_| {
             [
-                reader.next(index_size) as VertexIdx,
-                reader.next(index_size) as VertexIdx,
-                reader.next(index_size) as VertexIdx,
+                reader(index_size) as VertexIdx,
+                reader(index_size) as VertexIdx,
+                reader(index_size) as VertexIdx,
             ]
         }).collect();
             
-        faces
+        Ok(faces)
     }
 }
 
@@ -54,9 +62,10 @@ mod tests {
         let result = encoder.encode_connectivity(&mut faces, &mut points, &mut writer);
         assert!(result.is_ok());
         let buffer: buffer::Buffer = buff_writer.into();
-        let reader = buffer.into_reader();
+        let mut buff_reader = buffer.into_reader();
+        let mut reader = |input| buff_reader.next(input);
         let mut decoder = Sequential;
-        let decoded_faces = decoder.decode_connectivity(reader);
-        assert_eq!(faces, decoded_faces);
+        let decoded_faces = decoder.decode_connectivity(&mut reader);
+        assert_eq!(faces, decoded_faces.unwrap());
     }
 }

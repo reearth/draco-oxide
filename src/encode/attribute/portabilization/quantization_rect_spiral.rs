@@ -16,11 +16,10 @@ impl<Data> QuantizationRectangleSpiral<Data>
         Data: Vector,
         Data::Component: DataValue
 {
-    pub fn new() -> Self {
-        Self {
-            center: Data::zero(), 
-            radius: Data::Component::zero(),
-        }
+    pub fn new<F>(_att_vals: Vec<Data>, _cfg: super::Config, _writer: &mut F) -> Self 
+        where F:FnMut((u8, u64)) 
+    {
+        unimplemented!()
     }
 
     fn metadata_into_writable_format(&self) -> WritableFormat {
@@ -38,7 +37,7 @@ impl<Data> QuantizationRectangleSpiral<Data>
         // WritableFormat::from(out)
     }
 
-    fn linearize(&self, data: Vec<Data>, center: Data) -> WritableFormat {
+    fn linearize(&self, _data: Vec<Data>, _center: Data) -> WritableFormat {
         unimplemented!()
         // let size = self.quantization_size.iter().product::<usize>();
         // let out = data.into_iter()
@@ -58,48 +57,9 @@ impl<Data> QuantizationRectangleSpiral<Data>
 }
 
 impl<Data> PortabilizationImpl for QuantizationRectangleSpiral<Data> 
-    where 
-        Data: Vector + Copy,
+    where Data: Vector + Copy,
 {
-    type Data = Data;
-    const PORTABILIZATION_ID: usize = 1;
-
-    fn portabilize(&mut self, att_vals: Vec<Self::Data>) -> (WritableFormat, WritableFormat) {
+    fn portabilize(self) -> std::vec::IntoIter<WritableFormat> {
         unimplemented!()
-        // let mut global_metadata_min = Data::zero();
-        // for (i, &component) in (0..Data::NUM_COMPONENTS).map(|i| (i, unsafe{ att_vals[0].get_unchecked(i)})) {
-        //     unsafe{
-        //         *global_metadata_min.get_unchecked_mut(i) = component;
-        //     }
-        // }
-        // let mut global_metadata_max = global_metadata_min;
-        // for att_val in &att_vals {
-        //     for (i, &component) in (0..Data::NUM_COMPONENTS).map(|i| (i, unsafe{ att_val.get_unchecked(i)})) {
-        //         unsafe{
-        //             if component < *global_metadata_min.get_unchecked(i) {
-        //                 *global_metadata_min.get_unchecked_mut(i) = component;
-        //             } else if component > *global_metadata_max.get_unchecked(i) {
-        //                 *global_metadata_max.get_unchecked_mut(i) = component;
-        //             }
-        //         }
-        //     }
-        // }
-        
-        // let mut out = Vec::new();
-        // out.reserve(att_vals.len());
-        // for att_val in att_vals {
-        //     let range = global_metadata_max - global_metadata_min;
-        //     let diff = att_val - global_metadata_min;
-        //     let normalized = diff.elem_div(range);
-        //     let mut scale = Data::zero();
-        //     for i in 0..Data::NUM_COMPONENTS {
-        //         *scale.get_mut(i) = <Data as Vector>::Component::from_u64(quantization_size[i] as u64 - 1);
-        //     }
-        //     let val = normalized.elem_mul(scale);
-
-        //     out.push(val);
-        // }
-
-        // (self.linearize(out), self.metadata_into_writable_format())
     }
 }

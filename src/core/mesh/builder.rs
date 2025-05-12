@@ -42,19 +42,37 @@ impl MeshBuilder {
     }
 
     pub fn build(self) -> Result<Mesh, Err> {
-        let mut attributes = self.get_sorted_attributes();
-        Self::preprocess_connectivity(&mut attributes);
+        self.dependency_check()?;
 
-        // check if it has the point attribute
-        if attributes.iter().any(|att| att.get_attribute_type() != AttributeType::Position) {
-            return Err(Err::NoPointAttribute);
-        }
+        let mut attributes = self.get_sorted_attributes();
+        Self::check_position_and_connectivity(&mut attributes)?;
         
         Ok(
             Mesh {
                 attributes,
             }
         )
+    }
+
+
+    /// Checks if attributes have a valid dependency structure.
+    fn dependency_check(&self) -> Result<(), Err> {
+        // Check if all attributes has at least minimal dependencies
+        for att in &self.attributes {
+            if let Some(d) = att.get_attribute_type()
+                .get_minimum_dependency()
+                .iter() // for each minimum dependency, ...
+                .find(|ty| 
+                    att.get_parents()
+                        .iter() // for each parent id, ...
+                        .map(|parent_id| self.attributes.iter().find(|att| &att.get_id() == parent_id ).unwrap()) // for each parent attribute, ...
+                        .all(|parent| parent.get_attribute_type() != **ty)
+                ) 
+            {
+                return Err(Err::MinimumDependencyError(att.get_attribute_type(), *d));
+            }
+        }
+        Ok(())
     }
 
 
@@ -94,27 +112,22 @@ impl MeshBuilder {
         sorted
     }
 
-    fn preprocess_connectivity(atts: &mut Vec<Attribute>) {
-        for conn_att in atts
-                .iter_mut()
-                .take_while(|att| att.get_attribute_type() == AttributeType::Connectivity) 
-        {
-            let faces = unsafe { conn_att.as_slice_unchecked_mut::<[usize; 3]>() };
-
-            let mut vertices = faces.iter()
-                .flat_map(|face| face)
-                .copied()
-                .collect::<Vec<_>>();
-            vertices.sort();
-            vertices.dedup();
-
-            for face in faces    {
-                for v in face {
-                    let new_v = vertices.binary_search(v).unwrap();
-                    *v = new_v;
+    /// Checks if the position attribute values are large enough to be used by the connectivity attributes.
+    fn check_position_and_connectivity(atts: &mut Vec<Attribute>) -> Result<(), Err> {
+        for pos_att in atts.iter().filter(|att| att.get_attribute_type() == AttributeType::Position) {
+            if let Some(conn_att) = pos_att.get_parents().iter().find_map(|parent_id| {
+                atts.iter().find(|att| att.get_id() == *parent_id && att.get_attribute_type() == AttributeType::Connectivity)
+            }) {
+                // Safety: conn_att is a connectivity attribute.
+                let conn_att = unsafe{ conn_att.as_slice_unchecked::<[usize;3]>() };
+                let max_idx = conn_att.iter().flat_map(|face| face.iter()).copied().max().unwrap_or(0);
+                if max_idx >= pos_att.len() {
+                    return Err(Err::PositionAndConnectivityNotCompatible(max_idx, pos_att.len()));
                 }
             }
         }
+
+        Ok(())
     }
 }
 
@@ -122,6 +135,9 @@ impl MeshBuilder {
 #[remain::sorted]
 #[derive(Error, Debug)]
 pub enum Err {
-    #[error("The mesh does not have a point attribute.")]
-    NoPointAttribute,
+    #[error("One of the attributes does not meet the minimum dependency; {:?} must depend on {:?}.", .0, .1)]
+    MinimumDependencyError(AttributeType, AttributeType),
+
+    #[error("The connectivity attribute and the position attribute are not compatible; the connectivity attribute has a maximum index of {0} and the position attribute has a length of {1}.")]
+    PositionAndConnectivityNotCompatible(usize, usize)
 }

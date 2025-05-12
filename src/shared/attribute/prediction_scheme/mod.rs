@@ -27,7 +27,7 @@ pub trait PredictionSchemeImpl<'a>
 	/// Prediction computes the metadata beforehand (unlike transform or portabilization)
 	fn compute_metadata(&mut self, additional_data: Self::AdditionalDataForMetadata);
 
-	fn get_values_impossible_to_predict(&mut self, value_indeces: &mut Vec<std::ops::Range<usize>>) 
+	fn get_values_impossible_to_predict(&mut self, value_indices: &mut Vec<std::ops::Range<usize>>) 
 		-> Vec<std::ops::Range<usize>>;
 	
 	/// predicts the attribute from the given information. 
@@ -39,7 +39,7 @@ pub trait PredictionSchemeImpl<'a>
 }
 
 #[remain::sorted]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum PredictionSchemeType
 {
 	DeltaPrediction,
@@ -49,11 +49,38 @@ pub enum PredictionSchemeType
 	NoPrediction
 }
 
+impl PredictionSchemeType {
+	pub(crate) fn get_id(&self) -> u8 {
+		match self {
+			PredictionSchemeType::DeltaPrediction => 0,
+			PredictionSchemeType::DerivativePrediction => 1,
+			PredictionSchemeType::MeshMultiParallelogramPrediction => 2,
+			PredictionSchemeType::MeshParallelogramPrediction => 3,
+			PredictionSchemeType::NoPrediction => 4,
+		}
+	}
+
+	pub(crate) fn from_id<F>(stream_in: &mut F) -> Result<Self, usize> 
+		where F: FnMut(u8) -> u64
+	{
+		let id = stream_in(4);
+		let out = match id {
+			0 => PredictionSchemeType::DeltaPrediction,
+			1 => PredictionSchemeType::DerivativePrediction,
+			2 => PredictionSchemeType::MeshMultiParallelogramPrediction,
+			3 => PredictionSchemeType::MeshParallelogramPrediction,
+			4 => PredictionSchemeType::NoPrediction,
+			_ => return Err(id as usize),
+		};
+		Ok(out)
+	}
+}
+
 #[remain::sorted]
 pub enum PredictionScheme<'parents, Data>
 	where Data: Vector
 {
-	DeltaPrediction(delta_prediction::DeltaPrediction<Data>),
+	DeltaPrediction(delta_prediction::DeltaPrediction<'parents, Data>),
 	DerivativePrediction(derivative_prediction::DerivativePredictionForTextureCoordinates<'parents, Data>),
 	MeshMultiParallelogramPrediction(mesh_multi_parallelogram_prediction::MeshMultiParallelogramPrediction<'parents, Data>),
 	MeshParallelogramPrediction(mesh_parallelogram_prediction::MeshParallelogramPrediction<'parents, Data>),
@@ -63,8 +90,8 @@ pub enum PredictionScheme<'parents, Data>
 impl<'parents, Data> PredictionScheme<'parents, Data>
 	where Data: Vector
 {
-	pub(crate) fn new(cfg: Config, parents: &[&'parents Attribute]) -> Self {
-		match cfg.prediction_scheme {
+	pub(crate) fn new(ty: PredictionSchemeType, parents: &[&'parents Attribute]) -> Self {
+		match ty {
 			PredictionSchemeType::DeltaPrediction => {
 				let prediction = delta_prediction::DeltaPrediction::new(parents);
 				PredictionScheme::DeltaPrediction(prediction)
@@ -88,21 +115,28 @@ impl<'parents, Data> PredictionScheme<'parents, Data>
 		}
 	}
 
-	pub(crate) fn get_values_impossible_to_predict(&mut self, value_indeces: &mut Vec<std::ops::Range<usize>>) 
+	pub(crate) fn new_from_stream<F>(stream_in: &mut F, parents: &[&'parents Attribute]) -> Result<Self, usize> 
+		where F: FnMut(u8) -> u64
+	{
+		let ty = PredictionSchemeType::from_id(stream_in)?;
+		Ok(Self::new(ty, parents))
+	}
+
+	pub(crate) fn get_values_impossible_to_predict(&mut self, value_indices: &mut Vec<std::ops::Range<usize>>) 
 		-> Vec<std::ops::Range<usize>>
 	{
 		match self {
 			PredictionScheme::DeltaPrediction(prediction) => {
-				prediction.get_values_impossible_to_predict(value_indeces)
+				prediction.get_values_impossible_to_predict(value_indices)
 			}
 			PredictionScheme::DerivativePrediction(prediction) => {
-				prediction.get_values_impossible_to_predict(value_indeces)
+				prediction.get_values_impossible_to_predict(value_indices)
 			}
 			PredictionScheme::MeshMultiParallelogramPrediction(prediction) => {
-				prediction.get_values_impossible_to_predict(value_indeces)
+				prediction.get_values_impossible_to_predict(value_indices)
 			}
 			PredictionScheme::MeshParallelogramPrediction(prediction) => {
-				prediction.get_values_impossible_to_predict(value_indeces)
+				prediction.get_values_impossible_to_predict(value_indices)
 			}
 			PredictionScheme::NoPrediction(_) => {
 				Vec::new()
@@ -133,19 +167,29 @@ impl<'parents, Data> PredictionScheme<'parents, Data>
 			}
 		}
 	}
+
+	pub(crate) fn get_type(&self) -> PredictionSchemeType {
+		match self {
+			PredictionScheme::DeltaPrediction(_) => PredictionSchemeType::DeltaPrediction,
+			PredictionScheme::DerivativePrediction(_) => PredictionSchemeType::DerivativePrediction,
+			PredictionScheme::MeshMultiParallelogramPrediction(_) => PredictionSchemeType::MeshMultiParallelogramPrediction,
+			PredictionScheme::MeshParallelogramPrediction(_) => PredictionSchemeType::MeshParallelogramPrediction,
+			PredictionScheme::NoPrediction(_) => PredictionSchemeType::NoPrediction,
+		}
+	}
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Config
 {
-	pub prediction_scheme: PredictionSchemeType,
+	pub ty: PredictionSchemeType,
 	pub parents: Vec<usize>,
 }
 
 impl ConfigType for Config {
 	fn default() -> Self {
 		Config {
-			prediction_scheme: PredictionSchemeType::DeltaPrediction,
+			ty: PredictionSchemeType::DeltaPrediction,
 			parents: Vec::new(),
 		}
 	}
@@ -173,7 +217,7 @@ impl<'a, Data> PredictionSchemeImpl<'a> for NoPrediction<Data> {
 	fn compute_metadata(&mut self, _additional_data: Self::AdditionalDataForMetadata) {
 		unreachable!()
 	}
-	fn get_values_impossible_to_predict(&mut self, _value_indeces: &mut Vec<std::ops::Range<usize>>) 
+	fn get_values_impossible_to_predict(&mut self, _value_indices: &mut Vec<std::ops::Range<usize>>) 
 		-> Vec<std::ops::Range<usize>>
 	{
 		unreachable!()

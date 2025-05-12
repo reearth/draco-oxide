@@ -6,7 +6,7 @@ use std::{
 	mem,
 };
 use crate::core::shared::Dot;
-use crate::utils::merge_indeces;
+use crate::utils::merge_indices;
 
 pub struct DerivativePredictionForTextureCoordinates<'a, Data> 
     where
@@ -63,7 +63,6 @@ impl<'a, Data> DerivativePredictionForTextureCoordinates<'a, Data>
             .unwrap();
 
 		let x_pos = points[n_points];
-        println!("x_pos = {:?}", x_pos);
 
 		let a_tex = values_up_till_now[a];
 		let b_tex = values_up_till_now[b];
@@ -130,7 +129,7 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for DerivativePredictionForT
         assert!(parents.len() == 2, "Derivative prediction needs two parents: faces and points.");
         assert!(
             parents[0].get_attribute_type() == AttributeType::Connectivity && 
-            parents[0].get_attribute_type() == AttributeType::Position,
+            parents[1].get_attribute_type() == AttributeType::Position,
             "Derivative prediction needs two parents: faces and points, but they are: {:?} and {:?}.",
             parents[0].get_attribute_type(),
             parents[1].get_attribute_type()
@@ -207,8 +206,8 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for DerivativePredictionForT
             }
         }
         vertices_without_parallelogram.sort_by(|a,b| a.start.cmp(&b.start));
-        // merge 'vertices_without_parallelogram' with 'value_indeces'
-        let merged = merge_indeces(vec![seq.clone(), vertices_without_parallelogram]);
+        // merge 'vertices_without_parallelogram' with 'value_indices'
+        let merged = merge_indices(vec![seq.clone(), vertices_without_parallelogram]);
         // modify seq not to contain the merged ranges
         let mut new_seq = Vec::new();
         let mut seq_iter = mem::take(seq).into_iter();
@@ -319,8 +318,6 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for DerivativePredictionForT
 		&self,
 		values_up_till_now: &[Self::Data]
 	) -> Self::Data {
-		let n_points = values_up_till_now.len();
-
 		self.predict_impl(values_up_till_now, self.points, self.faces)
     }
 }

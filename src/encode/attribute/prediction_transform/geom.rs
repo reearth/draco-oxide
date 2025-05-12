@@ -153,7 +153,6 @@ mod tests {
 			// Safety:
 			// inputs are three dimensional
 			let transformed = unsafe { octahedral_transform(n) };
-			println!("transformed: {:?}", transformed);
 			let recovered = unsafe { octahedral_inverse_transform(transformed) };
 			let diff = n - recovered;
 			let diff_norm_squared = diff.dot(diff);

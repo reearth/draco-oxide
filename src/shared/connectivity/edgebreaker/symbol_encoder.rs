@@ -1,5 +1,5 @@
-use crate::core::buffer::reader::Reader;
 use crate::core::shared::ConfigType;
+use crate::encode::connectivity::edgebreaker::Err;
 
 use super::{HANDLE_METADATA_SLOTS, NUM_VERTICES_IN_HOLE_SLOTS, SYMBOL_ENCODING_CONFIG_SLOT};
 
@@ -15,7 +15,7 @@ pub(crate) enum Symbol {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SymbolEncodingConfig {
+pub(crate) enum SymbolEncodingConfig {
 	/// The default binary representations for the CLERS symbols, defined
 	/// as follows:
 	/// C: 0
@@ -59,8 +59,10 @@ impl SymbolEncodingConfig {
         writer((SYMBOL_ENCODING_CONFIG_SLOT, id));
     }
 
-    pub(crate) fn get_symbol_encoding(reader: &mut Reader) -> Self {
-        match reader.next(SYMBOL_ENCODING_CONFIG_SLOT) {
+    pub(crate) fn get_symbol_encoding<F>(reader: &mut F) -> Self 
+        where F: FnMut(u8) -> u64
+    {
+        match reader(SYMBOL_ENCODING_CONFIG_SLOT) {
             0 => Self::CrLight,
             1 => Self::Balanced,
             2 => Self::Rans,
@@ -70,10 +72,9 @@ impl SymbolEncodingConfig {
 }
 pub(crate) trait SymbolEncoder {
     fn encode_symbol(symbol: Symbol) -> Result<(u8, u64), Err>;
-    fn decode_symbol(reader: &mut Reader) -> Symbol;
+    fn decode_symbol<F>(reader: &mut F) -> Symbol
+        where F: FnMut(u8) -> u64;
 }
-
-use crate::encode::connectivity::edgebreaker::Err;
 
 pub(crate) struct CrLight;
 impl SymbolEncoder for CrLight {
@@ -123,33 +124,35 @@ impl SymbolEncoder for CrLight {
         }
     }
 
-    fn decode_symbol(reader: &mut Reader) -> Symbol {
-        if reader.next(1) == 0 {
+    fn decode_symbol<F>(reader: &mut F) -> Symbol 
+        where F: FnMut(u8) -> u64
+    {
+        if reader(1) == 0 {
             return Symbol::C;
         }
 
-        if reader.next(1) == 0 {
+        if reader(1) == 0 {
             return Symbol::R;
         }
 
-        match reader.next(2) {
+        match reader(2) {
             0b00 => return Symbol::L,
             0b01 => return Symbol::E,
             0b10 => return Symbol::S,
             _ => {}
         }
 
-        return match reader.next(1) {
+        return match reader(1) {
             0 => {
                 // M
-                let size = reader.next(2);
-                let n_vertices = reader.next(NUM_VERTICES_IN_HOLE_SLOTS[size as usize]);
+                let size = reader(2);
+                let n_vertices = reader(NUM_VERTICES_IN_HOLE_SLOTS[size as usize]);
                 Symbol::M(n_vertices as usize)
             },
             1 => {
                 // H
-                let size = reader.next(2);
-                let n_vertices = reader.next(HANDLE_METADATA_SLOTS[size as usize]);
+                let size = reader(2);
+                let n_vertices = reader(HANDLE_METADATA_SLOTS[size as usize]);
                 Symbol::H(n_vertices as usize)
             },
             _ => unreachable!("Interanl Error: There must be a bug in the buffer implementation.")
@@ -206,33 +209,35 @@ impl SymbolEncoder for Balanced {
         }
     }
 
-    fn decode_symbol(reader: &mut Reader) -> Symbol {
-        if reader.next(1) == 0 {
+    fn decode_symbol<F>(reader: &mut F) -> Symbol 
+        where F: FnMut(u8) -> u64
+    {
+        if reader(1) == 0 {
             return Symbol::C;
         }
 
-        if reader.next(1) == 0 {
+        if reader(1) == 0 {
             return Symbol::R;
         }
 
-        match reader.next(2) {
+        match reader(2) {
             0b00 => return Symbol::L,
             0b01 => return Symbol::E,
             0b10 => return Symbol::S,
             _ => {}
         }
 
-        return match reader.next(1) {
+        return match reader(1) {
             0 => {
                 // M
-                let size = reader.next(2);
-                let n_vertices = reader.next(NUM_VERTICES_IN_HOLE_SLOTS[size as usize]);
+                let size = reader(2);
+                let n_vertices = reader(NUM_VERTICES_IN_HOLE_SLOTS[size as usize]);
                 Symbol::M(n_vertices as usize)
             },
             1 => {
                 // H
-                let size = reader.next(2);
-                let n_vertices = reader.next(HANDLE_METADATA_SLOTS[size as usize]);
+                let size = reader(2);
+                let n_vertices = reader(HANDLE_METADATA_SLOTS[size as usize]);
                 Symbol::H(n_vertices as usize)
             },
             _ => unreachable!("Interanl Error: There must be a bug in the buffer implementation.")
@@ -246,11 +251,13 @@ pub(crate) struct Rans {
 }
 
 impl SymbolEncoder for Rans {
-    fn encode_symbol(symbol: Symbol) -> Result<(u8, u64), Err> {
+    fn encode_symbol(_symbol: Symbol) -> Result<(u8, u64), Err> {
         unimplemented!()
     }
 
-    fn decode_symbol(reader: &mut Reader) -> Symbol {
+    fn decode_symbol<F>(_reader: &mut F) -> Symbol 
+        where F: FnMut(u8) -> u64
+    {
         unimplemented!()
     }
 }

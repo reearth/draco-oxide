@@ -6,9 +6,9 @@ use std::{
 use super::PredictionSchemeImpl;
 use crate::core::attribute::AttributeType;
 use crate::core::{attribute::Attribute, shared::Vector};
-use crate::utils::merge_indeces;
+use crate::utils::merge_indices;
 
-pub(crate) struct MeshParallelogramPrediction<'parents, Data> {
+pub struct MeshParallelogramPrediction<'parents, Data> {
     faces: &'parents[[usize; 3]],
 	_marker: std::marker::PhantomData<Data>
 }
@@ -90,8 +90,8 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPredict
             }
         }
         vertices_without_parallelogram.sort_by(|a,b| a.start.cmp(&b.start));
-        // merge 'vertices_without_parallelogram' with 'value_indeces'
-        let merged = merge_indeces(vec![seq.clone(), vertices_without_parallelogram]);
+        // merge 'vertices_without_parallelogram' with 'value_indices'
+        let merged = merge_indices(vec![seq.clone(), vertices_without_parallelogram]);
         // modify seq not to contain the merged ranges
         let mut new_seq = Vec::new();
         let mut seq_iter = mem::take(seq).into_iter();

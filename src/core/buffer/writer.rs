@@ -4,11 +4,12 @@ use super::{
 
 /// Writes the data to the buffer by borrowing it mutably.
 /// Mostly used by the encoder.
+#[derive(Debug)]
 pub struct Writer<Order: OrderConfig> {
 	ptr: *mut u8,
 
 	/// the number of bits written to the buffer.
-	num_elements: usize,
+	num_bits: usize,
 
 	/// the number of elements written in the current byte.
 	pos_in_curr_byte: u8,
@@ -24,7 +25,7 @@ impl<Order: OrderConfig> Into<Buffer<Order>> for Writer<Order> {
 	fn into(self) -> Buffer<Order> {
 		Buffer::<Order> {
 			data: self.buffer,
-			len: self.num_elements,
+			len: self.num_bits,
 			_phantom: std::marker::PhantomData,
 		}
 	}
@@ -38,16 +39,23 @@ impl<Order: OrderConfig> Writer<Order> {
 		assert!(size <= 64 && size > 0, "Invalid size: {}", size);
 
 		// this is the unsafe condition. Allocate more memory if needed.
-		while size as usize + self.num_elements > self.buffer.cap << 3 {
+		while size as usize + self.num_bits >= self.buffer.cap << 3 {
 			self.buffer.double();
 		}
 
-		// Safety: since 'self.num_elements' is less than 'self.buffer.cap << 3', we have
-		// 'self.num_elements >> 3' <= '(self.buffer.cap << 3) >> 3' = 'self.buffer.cap',
+		// Safety: since 'self.num_bits' is less than 'self.buffer.cap << 3', we have
+		// 'self.num_bits >> 3' <= '(self.buffer.cap << 3) >> 3' = 'self.buffer.cap',
 		// so the  safety around 'self.buffer.cap' caries over this unsafe block.
 		unsafe{ 
-			self.ptr = self.buffer.as_ptr().add(self.num_elements >> 3);
+			self.ptr = self.buffer.as_ptr().add(self.num_bits >> 3);
 		}
+
+		// First 'size' bits of 'value' need to contain the data.
+		debug_assert!(
+			size==64 || value >> size==0,
+			"Invalid Data: 'value' has more than 'size' bits of data: {:?}",
+			(size, value)
+		);
 
 		unsafe{ self.next_unchecked((size, value)) }
 	}
@@ -55,9 +63,9 @@ impl<Order: OrderConfig> Writer<Order> {
 	/// write the 'size' bits of data at the current offset without checking the bounds.
 	/// the first 'size' bits will be taken from 'value' as an input.
 	/// Safety:  The caller must ensure that 'buffer' has allocated enough memory to store the data; 
-	/// i.e. 'buffer.cap' is greater than or equal to 'num_elements'+'size'.
+	/// i.e. 'buffer.cap' is greater than or equal to 'num_bits'+'size'.
 	pub unsafe fn next_unchecked(&mut self, (size, value): (u8, u64)) {
-		self.num_elements = self.num_elements.unchecked_add(size as usize);
+		self.num_bits = self.num_bits.unchecked_add(size as usize);
 		
 		let mut offset = if Order::IS_MSB_FIRST{ size } else { 0 };
 		
@@ -117,7 +125,7 @@ impl<Order: OrderConfig> Writer<Order> {
 		let buffer= RawBuffer::with_capacity(1);
 		Self {
 			ptr: buffer.as_ptr(),
-			num_elements: 0,
+			num_bits: 0,
 			pos_in_curr_byte: 0,
 			buffer,
 			_phantom: std::marker::PhantomData,
@@ -125,15 +133,16 @@ impl<Order: OrderConfig> Writer<Order> {
 	}
 
 	/// A constructor that allocates the specified size (in bits) beforehand.
-	pub fn with_len(len: usize) -> Self {
+	pub fn with_cap(len: usize) -> Self {
 		let cap = (len + 7) >> 3;
 		let buffer = RawBuffer::with_capacity(cap);
 		Self {
 			ptr: buffer.data.as_ptr(),
-			num_elements: 0,
+			num_bits: 0,
 			pos_in_curr_byte: 0,
 			buffer,
 			_phantom: std::marker::PhantomData,
 		}
 	}
 }
+

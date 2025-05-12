@@ -12,8 +12,11 @@ pub fn encode_attributes<F>(
     where F: FnMut((u8, u64))
 {
     let (_,non_conn_atts) = mesh.take_splitted_attributes();
+
+    // Write the number of attributes
+    writer((16, non_conn_atts.len() as u64)); 
     
-    for (non_conn_att, att_cfg) in non_conn_atts.into_iter().zip(cfg.cfgs.into_iter()) {
+    for non_conn_att in non_conn_atts.into_iter() {
         let parents_ids = non_conn_att.get_parents();
         let parents = parents_ids.iter()
             .map(|&id| &mesh.get_attributes()[id.as_usize()])
@@ -22,13 +25,13 @@ pub fn encode_attributes<F>(
             non_conn_att,
             &parents,
             writer,
-            att_cfg,
+            attribute_encoder::Config::default(),
         );
 
         if cfg.merge_rans_coders {
             unimplemented!("Merging rANS coders is not implemented yet");
         } else {
-            if let Err(err) = encoder.encode::<false>() {
+            if let Err(err) = encoder.encode::<true>() {
                 return Err(Err::AttributeError(err))
             }
         }
@@ -37,36 +40,41 @@ pub fn encode_attributes<F>(
     Ok(())
 }
 
-struct WritableFormat {
+pub(crate) struct WritableFormat {
     data: Vec<(u8, u64)>, // (size, data)
 }
 
 impl WritableFormat {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             data: Vec::new(),
         }
     }
     
-    fn append(&mut self, other: &WritableFormat) {
+    pub fn append(&mut self, other: &WritableFormat) {
         self.data.extend_from_slice(&other.data);
     }
 
     #[inline]
-    fn push(&mut self, input: (u8, u64)) {
+    pub fn push(&mut self, input: (u8, u64)) {
         self.data.push(input);
     }
     
-    fn from_vec(data: Vec<(u8, u64)>) -> Self {
+    #[inline]
+    pub fn from_vec(data: Vec<(u8, u64)>) -> Self {
         Self { data }
     }
     
-    fn write<F>(&mut self, writer: &mut F)
+    pub fn write<F>(self, writer: &mut F)
         where F: FnMut((u8, u64))
     {
-        for (size, data) in self.data.iter() {
-            writer((*size, *data));
+        for (size, data) in self.data.into_iter() {
+            writer((size, data));
         }
+    }
+
+    pub fn into_iter(self) -> IntoWritableFormatIter {
+        IntoWritableFormatIter::new(self.data)
     }
 }
 
@@ -84,25 +92,45 @@ impl From<()> for WritableFormat {
     fn from(_: ()) -> Self {
         WritableFormat::new()
     }
-} 
+}
 
-impl From<bool> for WritableFormat {
-    fn from(input: bool) -> Self {
-        let data = if input { 1 } else { 0 };
-        WritableFormat::from_vec(vec![(1, data)])
+
+struct IntoWritableFormatIter {
+    data: std::vec::IntoIter<(u8, u64)>,
+}
+
+impl IntoWritableFormatIter {
+    fn new(data: Vec<(u8, u64)>) -> Self {
+        Self {
+            data: data.into_iter(),
+        }
     }
-} 
+
+    fn write_next<F>(&mut self, writer: &mut F)
+        where F: FnMut((u8, u64))
+    {
+        writer(self.data.next().unwrap());
+    }
+}
+
+impl Iterator for IntoWritableFormatIter {
+    type Item = (u8, u64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.data.next()
+    }
+}
 
 
 pub struct Config {
-    cfgs: Vec<attribute_encoder::Config>,
+    _cfgs: Vec<attribute_encoder::Config>,
     merge_rans_coders: bool,
 }
 
 impl ConfigType for Config {
     fn default() -> Self {
         Self {
-            cfgs: vec![attribute_encoder::Config::default()],
+            _cfgs: vec![attribute_encoder::Config::default()],
             merge_rans_coders: false,
         }
     }

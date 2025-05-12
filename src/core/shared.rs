@@ -197,7 +197,7 @@ macro_rules! impl_data_value {
         )*
     };
 
-    (float: $(($t:ty, $component_type: expr)),*) => {
+    (float: $(($t:ty, $uint_t:ty, $component_type: expr)),*) => {
         $(
             impl DataValue for $t {
                 fn get_dyn() -> ComponentDataType {
@@ -232,7 +232,7 @@ macro_rules! impl_data_value {
                 }
 
                 fn from_bits(data: u64) -> Self {
-                    u64::from_bits(data) as $t
+                    <$t>::from_bits(data as $uint_t) as $t
                 }
             }
         )*
@@ -247,8 +247,8 @@ impl_data_value!(int:
 );
 
 impl_data_value!(float: 
-    (f32, ComponentDataType::F32),
-    (f64, ComponentDataType::F64)
+    (f32, u32, ComponentDataType::F32),
+    (f64, u64, ComponentDataType::F64)
 );
 
 
@@ -302,7 +302,7 @@ impl_ndvector_ops!();
 
 
 pub trait Vector:
-    Clone + Copy + PartialEq
+    Clone + Copy + fmt::Debug + PartialEq
     + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Self::Component, Output=Self> + ops::Div<Self::Component, Output=Self> 
     + ops::AddAssign + ops::SubAssign + ops::Mul<Self::Component, Output=Self> + ops::Div<Self::Component, Output=Self>
     + ElementWiseMul<Output = Self> + ElementWiseDiv<Output = Self>

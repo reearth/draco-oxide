@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::{
     fmt,
     cmp,
@@ -16,6 +17,7 @@ use crate::shared::connectivity::edgebreaker::symbol_encoder::{
 	SymbolEncoder,
 };
 use crate::shared::connectivity::edgebreaker::{NUM_CONNECTED_COMPONENTS_SLOT, NUM_FACES_SLOT};
+use crate::shared::connectivity::EdgebreakerDecoder;
 use std::collections::VecDeque;
 use std::vec;
 
@@ -87,40 +89,37 @@ pub(crate) struct Edgebreaker {
 }
 
 
-#[derive(fmt::Debug, cmp::PartialEq, Clone)]
+#[derive(Clone, fmt::Debug, cmp::PartialEq)]
 pub struct Config {
     symbol_encoding: SymbolEncodingConfig,
+    decoder: EdgebreakerDecoder,
 }
 
 impl ConfigType for Config {
     fn default() -> Self {
         Self{
-			symbol_encoding: SymbolEncodingConfig::default()
+			symbol_encoding: SymbolEncodingConfig::default(), 
+            decoder: EdgebreakerDecoder::SpiraleReversi
 		}
     }
 }
 
 
-#[derive(cmp::PartialEq)]
+#[derive(Debug, cmp::PartialEq)]
+#[remain::sorted]
+#[derive(thiserror::Error)]
 pub enum Err {
-    NonOrientable,
-    TooManyConnectedComponents,
-    HoleSizeTooLarge,
+    #[error("Faces are not sorted.")]
+    FaceNotSorted,
+    #[error("Too many handles.")]
     HandleSizeTooLarge,
+    #[error("Too many holes.")]
+    HoleSizeTooLarge,
+    #[error("The input mesh is non-orientable.")]
+    NonOrientable,
+    #[error("The input mesh has too many connected components: {0}")]
+    TooManyConnectedComponents(usize),
 }
-
-impl fmt::Debug for Err {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			Self::NonOrientable => write!(f, "NonOrientable"),
-            Self::TooManyConnectedComponents => write!(f, "TooManyConnectedComponents"),
-            Self::HoleSizeTooLarge => write!(f, "HoleSizeTooLarge"),
-            Self::HandleSizeTooLarge => write!(f, "HandleSizeTooLarge"),
-		}
-	}
-}
-
-
 
 impl Edgebreaker {
 	// Build the object with empty arrays.
@@ -150,8 +149,9 @@ impl Edgebreaker {
 	/// decomposes it into manifolds with boundaries if it is not homeomorhic to a
 	/// manifold. 
 	pub(crate) fn init<CoordValType>(&mut self , points: &mut [NdVector<3, CoordValType>], faces: &[[VertexIdx; 3]]) -> Result<(), Err> {
-        debug_assert!(faces.is_sorted(), "Faces are not sorted");
-
+        if !faces.is_sorted() || !faces.iter().all(|x| x.is_sorted()) {
+            return Err(Err::FaceNotSorted);
+        }
         self.visited_vertices = vec!(false; points.len());
         self.visited_faces = vec!(false; faces.len());
         self.face_orientation = vec!(false; faces.len());
@@ -250,7 +250,7 @@ impl Edgebreaker {
                 
                 // For each adjacent face, toggle orientation if needed and check for conflicts.
                 // If a conflict is found, return Err(Err::NonOrientable).
-                // Otherwise, push unchecked neighbors onto the queue.
+                // Otherwise, push unchecked neighbors to the queue.
                 let face = faces[face_idx];
                 for edge in [[face[0], face[1]], [face[0], face[2]], [face[1], face[2]]] {
                     // ToDo: this binary search can be optimized.
@@ -271,7 +271,7 @@ impl Edgebreaker {
                         
                         let orientation_of_adjacent_face = orientation_of_next_face(face, self.face_orientation[face_idx], edge, adjacent_face);
 
-                        unsafe{
+                        unsafe {
                             if *self.visited_faces.get_unchecked(adjacent_face_idx) {
                                 if *self.face_orientation.get_unchecked(adjacent_face_idx)^orientation_of_adjacent_face {
                                     // If we detect a mismatch in orientation here, return an error.
@@ -633,7 +633,7 @@ impl Edgebreaker {
         } else {
             num_visited_points -= 1;
         }
-        
+
         self.cutting_paths.push(cutting_path);
 
         Ok(num_visited_points)
@@ -847,7 +847,7 @@ impl Edgebreaker {
         }
     }
 
-    fn reflect_decode_order<CoordValType: Copy>(&self, faces: &mut [[VertexIdx; 3]], points: &mut [NdVector<3, CoordValType>]) 
+    fn reflect_decode_order<CoordValType: Copy + std::fmt::Debug>(&self, faces: &mut [[VertexIdx; 3]], points: &mut [NdVector<3, CoordValType>]) 
     {
         debug_assert!(
             self.vertex_decode_order.iter().all(|&v| v!= usize::MAX), 
@@ -868,14 +868,12 @@ impl Edgebreaker {
         for f in &mut *faces {
             f.sort();
         }
-
-
+        
         // reflect the vertex order to the points.
         // ToDo: Optimize this.
-        let mut new_points = Vec::new();
-        new_points.reserve(points.len());
-        for (i, &v_idx) in self.vertex_decode_order.iter().enumerate() {
-            new_points[v_idx] = points[i];
+        let mut new_points = points.to_vec();
+        for (i, &new_idx) in self.vertex_decode_order.iter().enumerate() {
+            new_points[new_idx] = points[i];
         }
         for (a,b) in points.iter_mut().zip(new_points.into_iter()) {   
             *a = b;
@@ -896,7 +894,7 @@ impl ConnectivityEncoder for Edgebreaker {
     type Config = Config;
 	type Err = Err;
 	/// The main encoding paradigm for Edgebreaker.
-    fn encode_connectivity<CoordValType: Copy, F>(
+    fn encode_connectivity<CoordValType: Copy + Debug, F>(
         &mut self, 
         faces: &mut [[VertexIdx; 3]], 
         points: &mut [NdVector<3, CoordValType>], 
@@ -911,7 +909,7 @@ impl ConnectivityEncoder for Edgebreaker {
         self.init(points, faces)?;
 
         if self.num_connected_components > 255 {
-            return Err(Err::TooManyConnectedComponents);
+            return Err(Err::TooManyConnectedComponents(self.num_connected_components));
         }
         writer((NUM_CONNECTED_COMPONENTS_SLOT, self.num_connected_components as u64));
 
@@ -951,7 +949,7 @@ impl ConnectivityEncoder for Edgebreaker {
 mod tests {
     use std::vec;
 
-    use crate::{core::{buffer::{self, reader::Reader, MsbFirst}, shared::Vector}, shared::connectivity::edgebreaker::{NUM_CONNECTED_COMPONENTS_SLOT, NUM_FACES_SLOT, SYMBOL_ENCODING_CONFIG_SLOT}};
+    use crate::{core::{buffer::{self, MsbFirst}, shared::Vector}, shared::connectivity::edgebreaker::{NUM_CONNECTED_COMPONENTS_SLOT, NUM_FACES_SLOT, SYMBOL_ENCODING_CONFIG_SLOT}};
 
     use super::*;
 
@@ -1125,7 +1123,9 @@ mod tests {
 
 
     use Symbol::*;
-    fn read_symbols(mut reader: Reader, size: usize) -> Vec<Symbol> {
+    fn read_symbols<F>(mut reader: F, size: usize) -> Vec<Symbol> 
+        where F: FnMut(u8) -> u64
+    {
         let mut out = Vec::new();
         for _ in 0..size {
             out.push(
@@ -1162,7 +1162,7 @@ mod tests {
         let mut writer = |input| buff_writer.next(input);
         let err= Edgebreaker::new(Config::default()).encode_connectivity(&mut faces, &mut points, &mut writer).unwrap_err();
 
-        assert_eq!(err, Err::TooManyConnectedComponents);
+        assert_eq!(err, Err::TooManyConnectedComponents(256));
     }
 
     #[test]
@@ -1191,11 +1191,12 @@ mod tests {
         Edgebreaker::new(Config::default()).encode_connectivity(&mut faces, &mut points, &mut writer).unwrap();
 
         let buffer: buffer::Buffer = buff_writer.into();
-        let mut reader = buffer.into_reader();
+        let mut buff_reader = buffer.into_reader();
+        let mut reader = |input: u8| buff_reader.next(input);
 
-        assert_eq!(reader.next(SYMBOL_ENCODING_CONFIG_SLOT), 0);
-        assert_eq!(reader.next(NUM_CONNECTED_COMPONENTS_SLOT), 1);
-        assert_eq!(reader.next(NUM_FACES_SLOT), faces.len() as u64);
+        assert_eq!(reader(SYMBOL_ENCODING_CONFIG_SLOT), 0);
+        assert_eq!(reader(NUM_CONNECTED_COMPONENTS_SLOT), 1);
+        assert_eq!(reader(NUM_FACES_SLOT), faces.len() as u64);
 
         let answer = vec![E,E,S,R,L,R,R,C,C,R,R,R,C,C];
         assert_eq!(answer, read_symbols(reader, faces.len()));
@@ -1235,11 +1236,12 @@ mod tests {
         Edgebreaker::new(Config::default()).encode_connectivity(&mut faces, &mut points, &mut writer).unwrap();
 
         let buffer: buffer::Buffer = buff_writer.into();
-        let mut reader = buffer.into_reader();
+        let mut buff_reader = buffer.into_reader();
+        let mut reader = |input: u8| buff_reader.next(input);
 
-        assert_eq!(reader.next(SYMBOL_ENCODING_CONFIG_SLOT), 0);
-        assert_eq!(reader.next(NUM_CONNECTED_COMPONENTS_SLOT), 1);
-        assert_eq!(reader.next(NUM_FACES_SLOT), faces.len() as u64);
+        assert_eq!(reader(SYMBOL_ENCODING_CONFIG_SLOT), 0);
+        assert_eq!(reader(NUM_CONNECTED_COMPONENTS_SLOT), 1);
+        assert_eq!(reader(NUM_FACES_SLOT), faces.len() as u64);
 
         let answer = vec![E,E,S,R];
 
@@ -1268,11 +1270,12 @@ mod tests {
         Edgebreaker::new(Config::default()).encode_connectivity(&mut faces, &mut points, &mut writer).unwrap();
 
         let buffer: buffer::Buffer = buff_writer.into();
-        let mut reader = buffer.into_reader();
+        let mut buff_reader = buffer.into_reader();
+        let mut reader = |input: u8| buff_reader.next(input);
 
-        assert_eq!(reader.next(SYMBOL_ENCODING_CONFIG_SLOT), 0);
-        assert_eq!(reader.next(NUM_CONNECTED_COMPONENTS_SLOT), 1);
-        assert_eq!(reader.next(NUM_FACES_SLOT), faces.len() as u64);
+        assert_eq!(reader(SYMBOL_ENCODING_CONFIG_SLOT), 0);
+        assert_eq!(reader(NUM_CONNECTED_COMPONENTS_SLOT), 1);
+        assert_eq!(reader(NUM_FACES_SLOT), faces.len() as u64);
 
         let answer = vec![E, E, E, S, R, L, R, L, R, R, L, R, S, R, E, S, R, C, R, E, L, S, R, C, C, C, R, C, C, L, M(16), C];
 
@@ -1298,11 +1301,12 @@ mod tests {
 
         let buffer: buffer::Buffer = buff_writer.into();
 
-        let mut reader = buffer.into_reader();
+        let mut buff_reader = buffer.into_reader();
+        let mut reader = |input: u8| buff_reader.next(input);
 
-        assert_eq!(reader.next(SYMBOL_ENCODING_CONFIG_SLOT), 0);
-        assert_eq!(reader.next(NUM_CONNECTED_COMPONENTS_SLOT), 1);
-        assert_eq!(reader.next(NUM_FACES_SLOT), faces.len() as u64);
+        assert_eq!(reader(SYMBOL_ENCODING_CONFIG_SLOT), 0);
+        assert_eq!(reader(NUM_CONNECTED_COMPONENTS_SLOT), 1);
+        assert_eq!(reader(NUM_FACES_SLOT), faces.len() as u64);
 
         let answer = vec![E, E, S, R, E, E, S, L, R, S, R, C, H(17), R, C, H(29), R, C, C, R, C, C, R, C, C, C, R, C, C, C, C, C];
 
