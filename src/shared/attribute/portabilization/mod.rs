@@ -1,29 +1,35 @@
-pub mod quantization;
-use crate::core::shared::{ConfigType, Vector};
-use crate::core::buffer::{writer::Writer, MsbFirst};
+use crate::core::shared::Vector;
 
-pub trait Portabilization {
-    type Data: Vector;
-    fn skim(&mut self, data: &[Self::Data]);
-    fn portabilize_and_encode(&mut self, att_val: Self::Data, writer: &mut Writer<MsbFirst>);
+pub mod rect_array;
+pub mod rect_spiral;
+pub mod spherical;
+
+pub(crate) const PORTABILIZATION_ID_SLOT: usize = 0;
+
+pub(crate) trait PortabilizationImpl {
+    const PORTABILIZATION_ID: usize;
 }
 
-#[derive(Clone, Copy)]
-pub enum PortabilizationType {
-    Quantization,
+pub(crate) struct Quantized {
+    size: usize,
+    data: Vec<usize>,
 }
 
-#[derive(Clone, Copy)]
-pub struct Config {
-    pub portabilization: PortabilizationType,
-    pub bit_length: u8,
-}
-
-impl ConfigType for Config {
-    fn default()-> Self {
-        Config {
-            portabilization: PortabilizationType::Quantization,
-            bit_length: 8,
+impl Quantized {
+    pub fn new(data: Vec<usize>, size: usize) -> Self {
+        Self {
+            size,
+            data,
         }
     }
+}
+
+
+pub(crate) trait Linealizer<Data> 
+    where Data: Vector,
+{
+    type Metadata;
+    fn init(&mut self, metadata: Self::Metadata);
+    fn linearize(&self, data: Vec<Data>) -> Vec<u64>;
+    fn inverse_linialize(&self, data: &Vec<usize>) -> Vec<usize>;
 }

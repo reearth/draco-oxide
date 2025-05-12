@@ -1,6 +1,4 @@
 pub mod attribute;
-pub mod encoder;
-pub mod decoder;
 pub mod reader;
 pub mod writer;
 
@@ -10,7 +8,7 @@ use std::{
 
 use reader::Reader;
 
-trait OrderConfig{
+pub trait OrderConfig {
     const IS_MSB_FIRST: bool;
 }
 
@@ -27,12 +25,12 @@ impl OrderConfig for LsbFirst {
     const IS_MSB_FIRST: bool = false;
 }
 
-#[derive(Debug)]
+
 pub struct Buffer<Order: OrderConfig = MsbFirst> {
 	data: RawBuffer,
 
 	/// length of the buffer, i.e. the number of bits stored in the buffer.
-  /// The minimum number of bytes allocated for the buffer is 'len' / 8 + 1.
+    /// The minimum number of bytes allocated for the buffer is 'len' / 8 + 1.
 	len: usize,
 
     _phantom: std::marker::PhantomData<Order>,
@@ -59,14 +57,32 @@ impl<Order: OrderConfig> Buffer <Order> {
 
     /// returns the reader for the buffer.
 	pub fn into_reader(self) -> Reader<Order> {
-        Reader::new(self.data)
+        Reader::new(self.data, self.len)
+    }
+
+    /// returns the data as a slice of u8.
+    pub fn as_slice(&self) -> &[u8] {
+        // Safety: The buffer is guaranteed to be initialized with this size.
+        unsafe { std::slice::from_raw_parts(self.data.as_ptr(), (self.len + 7) >> 3) }
     }
 }
+
+
+impl fmt::Debug for Buffer<MsbFirst> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for n in 0..(self.len+7) >> 3 {
+            write!(f, "{:02x} ", unsafe{ *self.data.as_ptr().add(n) })?;
+        }
+        write!(f, "len: {}", self.len)?;
+        Ok(())
+    }
+}
+
 
 struct RawBuffer {
     data: ptr::NonNull<u8>,
 
-    /// the size of the allocation.
+    /// the size of the allocation in bytes.
     /// The number of bits that can be stored in the buffer is 'cap' * 8.
     cap: usize,
 }
@@ -76,6 +92,8 @@ impl RawBuffer {
         Self { data: ptr::NonNull::dangling(), cap: 0 }
     }
 
+    /// constructs a new buffer with the given capacity.
+    /// 'cap' must be given in bytes.
     fn with_capacity(cap: usize) -> Self {
         let data = unsafe { alloc::alloc(alloc::Layout::array::<u8>(cap).unwrap()) };
         Self { data: ptr::NonNull::new(data).unwrap(), cap }
@@ -103,6 +121,14 @@ impl RawBuffer {
 
     fn as_ptr(&self) -> *mut u8 {
         self.data.as_ptr()
+    }
+
+    fn from_vec<Data>(v: Vec<Data>) -> Self {
+        let cap = v.len() * std::mem::size_of::<Data>();
+        let data = v.as_ptr() as *mut u8;
+        // forget the value to prevent double free
+        std::mem::forget(v);
+        Self { data: ptr::NonNull::new(data).unwrap(), cap }
     }
 }
 
@@ -204,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_writer_reader_unchecked() {
-        let mut writer = writer::Writer::<LsbFirst>::with_len(9+8+7+6+5+4);
+        let mut writer = writer::Writer::<LsbFirst>::with_cap(9+8+7+6+5+4);
         unsafe{
             writer.next_unchecked((9, 0b10101010<<1));
             writer.next_unchecked((8, 0b10101010));

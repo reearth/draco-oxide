@@ -5,7 +5,8 @@ use super::attribute::ComponentDataType;
 use core::fmt;
 use std::{
     ops,
-    cmp
+    cmp,
+    mem,
 };
 
 pub type VertexIdx = usize;
@@ -13,34 +14,17 @@ pub type EdgeIdx = usize;
 pub type FaceIdx = usize;
 
 
-pub trait Float: DataValue + ops::Div<Output=Self> {
-    type Bits: DataValue;
-    fn from_bits(bits: Self::Bits)-> Self;
-    fn to_bits(self)-> Self::Bits;
+pub trait Float: DataValue + ops::Div<Output=Self> + ops::Neg<Output=Self> {
     fn sqrt(self)-> Self;
 }
 
 impl Float for f32 {
-    type Bits = u32;
-    fn from_bits(bits: Self::Bits)-> Self {
-        Self::from_bits(bits)
-    }
-    fn to_bits(self)-> Self::Bits {
-        self.to_bits()
-    }
     fn sqrt(self)-> Self {
         self.sqrt()
     }
 }
 
 impl Float for f64 {
-    type Bits = u64;
-    fn from_bits(bits: Self::Bits)-> Self {
-        Self::from_bits(bits)
-    }
-    fn to_bits(self)-> Self::Bits {
-        self.to_bits()
-    }
     fn sqrt(self)-> Self {
         self.sqrt()
     }
@@ -155,7 +139,7 @@ impl_max!(u8, u16, u32, u64);
 
 
 pub trait DataValue: 
-    Clone + Copy + PartialEq + PartialOrd
+    Clone + Copy + fmt::Debug + PartialEq + PartialOrd
     + Abs + Max
     + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Output=Self> + ops::Div<Output=Self>
     + ops::AddAssign + ops::SubAssign + ops::MulAssign + ops::DivAssign
@@ -167,10 +151,12 @@ pub trait DataValue:
     fn to_u64(self) -> u64;
     fn from_f64(data: f64) -> Self;
     fn to_f64(self) -> f64;
+    fn to_bits(self) -> (u8, u64);
+    fn from_bits(data: u64) -> Self;
 }
 
 macro_rules! impl_data_value {
-    ($(($t:ty, $component_type: expr)),*) => {
+    (int: $(($t:ty, $component_type: expr)),*) => {
         $(
             impl DataValue for $t {
                 fn get_dyn() -> ComponentDataType {
@@ -199,18 +185,70 @@ macro_rules! impl_data_value {
                 fn to_f64(self) -> f64 {
                     self as f64
                 }
+
+                fn to_bits(self) -> (u8, u64) {
+                    ((mem::size_of::<Self>()<<3) as u8, self as u64)
+                }
+
+                fn from_bits(data: u64) -> Self {
+                    data as $t
+                }
+            }
+        )*
+    };
+
+    (float: $(($t:ty, $uint_t:ty, $component_type: expr)),*) => {
+        $(
+            impl DataValue for $t {
+                fn get_dyn() -> ComponentDataType {
+                    $component_type
+                }
+                fn zero() -> Self {
+                    0 as $t
+                }
+
+                fn one() -> Self {
+                    1 as $t
+                }
+
+                fn from_u64(data: u64) -> Self {
+                    data as $t
+                }
+
+                fn to_u64(self) -> u64 {
+                    self as u64
+                }
+
+                fn from_f64(data: f64) -> Self {
+                    data as $t
+                }
+
+                fn to_f64(self) -> f64 {
+                    self as f64
+                }
+
+                fn to_bits(self) -> (u8, u64) {
+                    ((mem::size_of::<Self>()<<3) as u8, self.to_bits() as u64)
+                }
+
+                fn from_bits(data: u64) -> Self {
+                    <$t>::from_bits(data as $uint_t) as $t
+                }
             }
         )*
     };
 }
 
-impl_data_value!(
+impl_data_value!(int: 
     (u8, ComponentDataType::U8),
     (u16, ComponentDataType::U16),
     (u32, ComponentDataType::U32),
-    (u64, ComponentDataType::U64),
-    (f32, ComponentDataType::F32),
-    (f64, ComponentDataType::F64)
+    (u64, ComponentDataType::U64)
+);
+
+impl_data_value!(float: 
+    (f32, u32, ComponentDataType::F32),
+    (f64, u64, ComponentDataType::F64)
 );
 
 
@@ -259,11 +297,12 @@ impl<const N: usize, T> fmt::Debug for NdVector<N, T>
 
 use std::ops::Index;
 use std::ops::IndexMut;
+use crate::shared::attribute::Portable;
 impl_ndvector_ops!();
 
 
 pub trait Vector:
-    Clone + Copy + PartialEq
+    Clone + Copy + fmt::Debug + PartialEq
     + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Self::Component, Output=Self> + ops::Div<Self::Component, Output=Self> 
     + ops::AddAssign + ops::SubAssign + ops::Mul<Self::Component, Output=Self> + ops::Div<Self::Component, Output=Self>
     + ElementWiseMul<Output = Self> + ElementWiseDiv<Output = Self>
@@ -317,9 +356,9 @@ impl<const N: usize, T> Cross for NdVector<N, T>
         if N == 3 {
             unsafe {
                 let mut out = [T::zero(); N];
-                *out.get_unchecked_mut(1) = *self.data.get_unchecked(1) * *other.data.get_unchecked(2) - *self.data.get_unchecked(2) * *other.data.get_unchecked(1);
+                *out.get_unchecked_mut(0) = *self.data.get_unchecked(1) * *other.data.get_unchecked(2) - *self.data.get_unchecked(2) * *other.data.get_unchecked(1);
                 *out.get_unchecked_mut(1) = *self.data.get_unchecked(2) * *other.data.get_unchecked(0) - *self.data.get_unchecked(0) * *other.data.get_unchecked(2);
-                *out.get_unchecked_mut(1) = *self.data.get_unchecked(0) * *other.data.get_unchecked(1) - *self.data.get_unchecked(1) * *other.data.get_unchecked(0);
+                *out.get_unchecked_mut(2) = *self.data.get_unchecked(0) * *other.data.get_unchecked(1) - *self.data.get_unchecked(1) * *other.data.get_unchecked(0);
                 NdVector {
                     data: out
                 }

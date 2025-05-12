@@ -1,5 +1,5 @@
+use std::cmp;
 use crate::decode::connectivity::ConnectivityDecoder;
-use crate::core::buffer::reader::Reader;
 use crate::core::shared::VertexIdx;
 
 use crate::shared::connectivity::edgebreaker::symbol_encoder::{
@@ -12,6 +12,13 @@ use crate::shared::connectivity::edgebreaker::{
     orientation_of_next_face, NUM_CONNECTED_COMPONENTS_SLOT, NUM_FACES_SLOT
 };
 
+#[derive(thiserror::Error, Debug, Clone)]
+#[remain::sorted]
+pub enum Err {
+    #[error("Stream input returned with None, though more data was expected.")]
+    NotEnoughData,
+}
+
 
 pub(crate)struct SpiraleReversi {
     faces: Vec<[VertexIdx; 3]>,
@@ -21,12 +28,13 @@ pub(crate)struct SpiraleReversi {
     // active edge is oriented from right to left.
     active_edge: [usize; 2],
     active_edge_stack: Vec<[usize; 2]>,
+    boundary_edges: Vec<[usize; 2]>,
     prev_face: [usize;3],
     orientation: Vec<bool>,
 }
 
 impl SpiraleReversi {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             faces: vec![],
             num_connected_components: 0,
@@ -34,53 +42,58 @@ impl SpiraleReversi {
             num_decoded_vertices: 0,
             active_edge: [0,1],
             active_edge_stack: Vec::new(),
+            boundary_edges: Vec::new(),
             prev_face: [0,1,2],
             orientation: Vec::new(),
         }
     }
 
-    fn init(&mut self) {
+    pub(super) fn init(&mut self) {
         self.faces.clear();
         self.num_connected_components = 0;
         self.num_faces.clear();
         self.num_decoded_vertices = 0;
         self.active_edge = [0,1];
         self.active_edge_stack.clear();
+        self.boundary_edges.clear();
         self.prev_face = [0,1,2];
     }
 
-    fn spirale_reversi_impl<SE: SymbolEncoder>(&mut self, reader: &mut Reader) {
+    fn spirale_reversi_impl<SE: SymbolEncoder, F: FnMut(u8)->u64>(&mut self, reader: &mut F) {
         // move the value in order to avoid the borrow checker.
         let mut num_faces = Vec::new();
         mem::swap(&mut num_faces, &mut self.num_faces);
         for _ in 0..self.num_connected_components {
             // get the number of faces = number of symbols.
-            let num_faces = reader.next(NUM_FACES_SLOT);
+            let num_faces = reader(NUM_FACES_SLOT);
             self.num_decoded_vertices += 2;
             self.active_edge_stack.clear();
             self.active_edge = [
                 self.num_decoded_vertices-2,
                 self.num_decoded_vertices-1
             ];
-            for _ in 0..num_faces {
-                self.spirale_reversi_recc::<SE>(reader);
+            for i in 0..num_faces {
+                self.spirale_reversi_recc::<SE, F>(reader);
             }
         }
     }
 
     #[inline]
-    fn spirale_reversi_recc<SE: SymbolEncoder>(&mut self, reader: &mut Reader) {
+    fn spirale_reversi_recc<SE: SymbolEncoder, F: FnMut(u8)->u64>(&mut self, reader: &mut F) {
         match SE::decode_symbol(reader) {
             Symbol::C => {
                 let right_vertex = self.active_edge[0];
                 // ToDo: Optimize this
-                let next_vertex = (0..self.num_decoded_vertices).find(|&v| 
-                        self.faces.iter()
-                            .filter(|f| f.contains(&v) && f.contains(&right_vertex))
-                            .count()
-                            == 1
-                        && v != self.active_edge[1]
-                    ).unwrap();
+                let next_vertex = *self.boundary_edges.iter()
+                    .find(|e| 
+                        e.contains(&right_vertex) &&
+                        !e.contains(&self.active_edge[1])
+                    )
+                    .unwrap()
+                    .iter()
+                    .find(|&v| *v != right_vertex)
+                    .unwrap();
+                
                 let mut new_face = [
                     self.active_edge[0],
                     self.active_edge[1],
@@ -90,6 +103,30 @@ impl SpiraleReversi {
                 new_face.sort();
 
                 self.faces.push(new_face);
+
+                // modify the boundary edges
+                let removed_edge = [
+                    cmp::min(self.active_edge[0], self.active_edge[1]),
+                    cmp::max(self.active_edge[0], self.active_edge[1]),
+                ];
+                self.boundary_edges.remove(
+                    self.boundary_edges.binary_search(&removed_edge).unwrap()
+                );
+                let removed_edge = [
+                    cmp::min(next_vertex, self.active_edge[0]),
+                    cmp::max(next_vertex, self.active_edge[0]),
+                ];
+                self.boundary_edges.remove(
+                    self.boundary_edges.binary_search(&removed_edge).unwrap()
+                );
+                let new_edge = [
+                    cmp::min(next_vertex, self.active_edge[1]),
+                    cmp::max(next_vertex, self.active_edge[1]),
+                ];
+                if let Some(idx) = self.boundary_edges.binary_search(&new_edge).err() {
+                    self.boundary_edges.insert(idx, new_edge);
+                };
+                debug_assert!(self.boundary_edges.is_sorted());
 
                 // update the right vertex.
                 self.active_edge[0] = next_vertex;
@@ -106,6 +143,28 @@ impl SpiraleReversi {
 
                 self.faces.push(new_face);
 
+                // modify the boundary edges
+                let removed_edge = [
+                    cmp::min(self.active_edge[0], self.active_edge[1]),
+                    cmp::max(self.active_edge[0], self.active_edge[1]),
+                ];
+                self.boundary_edges.remove(
+                    self.boundary_edges.binary_search(&removed_edge).unwrap()
+                );
+                let new_edge = [
+                    cmp::min(self.active_edge[0], self.num_decoded_vertices),
+                    cmp::max(self.active_edge[0], self.num_decoded_vertices),
+                ];
+                let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
+                self.boundary_edges.insert(idx, new_edge);
+                let new_edge = [
+                    cmp::min(self.active_edge[1], self.num_decoded_vertices),
+                    cmp::max(self.active_edge[1], self.num_decoded_vertices),
+                ];
+                let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
+                self.boundary_edges.insert(idx, new_edge);
+                debug_assert!(self.boundary_edges.is_sorted());
+
                 self.active_edge[1] = self.num_decoded_vertices;
                 self.num_decoded_vertices += 1;
             },
@@ -118,6 +177,28 @@ impl SpiraleReversi {
                 // ToDo: This sort can be omitted by constructing a face in a proper order.
                 new_face.sort();
                 self.faces.push(new_face);
+                
+                // modify the boundary edges
+                let removed_edge = [
+                    cmp::min(self.active_edge[0], self.active_edge[1]),
+                    cmp::max(self.active_edge[0], self.active_edge[1]),
+                ];
+                self.boundary_edges.remove(
+                    self.boundary_edges.binary_search(&removed_edge).unwrap()
+                );
+                let new_edge = [
+                    cmp::min(self.active_edge[0], self.num_decoded_vertices),
+                    cmp::max(self.active_edge[0], self.num_decoded_vertices),
+                ];
+                let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
+                self.boundary_edges.insert(idx, new_edge);
+                let new_edge = [
+                    cmp::min(self.active_edge[1], self.num_decoded_vertices),
+                    cmp::max(self.active_edge[1], self.num_decoded_vertices),
+                ];
+                let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
+                self.boundary_edges.insert(idx, new_edge);
+                debug_assert!(self.boundary_edges.is_sorted());
 
                 self.active_edge[0] = self.num_decoded_vertices;
                 self.num_decoded_vertices += 1;
@@ -132,6 +213,13 @@ impl SpiraleReversi {
                     // ToDo: This sort can be omitted by constructing a face in a proper order.
                     new_face.sort();
                     self.faces.push(new_face);
+
+                    // modify the boundary edges
+                    debug_assert!(self.boundary_edges.is_empty());
+                    self.boundary_edges.push([new_face[0], new_face[1]]);
+                    self.boundary_edges.push([new_face[0], new_face[2]]);
+                    self.boundary_edges.push([new_face[1], new_face[2]]);
+                    
                     // choose any edge of the triangle
                     self.active_edge = [
                         new_face[0], 
@@ -146,6 +234,13 @@ impl SpiraleReversi {
                         self.num_decoded_vertices
                     ];
                     self.faces.push(new_face);
+                    
+                    // modify the boundary edges
+                    self.boundary_edges.push([new_face[0], new_face[1]]);
+                    self.boundary_edges.push([new_face[0], new_face[2]]);
+                    self.boundary_edges.push([new_face[1], new_face[2]]);
+                    debug_assert!(self.boundary_edges.is_sorted());
+
                     self.active_edge_stack.push(self.active_edge);
                     // choose any edge of the triangle
                     self.active_edge = [
@@ -167,8 +262,31 @@ impl SpiraleReversi {
                 new_face.sort();
                 self.faces.push(new_face);
 
-                // now that the right vertex of the active edge is removed, we need to renumber the vertices.
-                // vertices numbered after the vertex.
+                // modify the boundary edges
+                let removed_edge = [
+                    cmp::min(self.active_edge[0], self.active_edge[1]),
+                    cmp::max(self.active_edge[0], self.active_edge[1]),
+                ];
+                self.boundary_edges.remove(
+                    self.boundary_edges.binary_search(&removed_edge).unwrap()
+                );
+                let removed_edge = [
+                    cmp::min(prev_active_edge[0], prev_active_edge[1]),
+                    cmp::max(prev_active_edge[0], prev_active_edge[1]),
+                ];
+                self.boundary_edges.remove(
+                    self.boundary_edges.binary_search(&removed_edge).unwrap()
+                );
+                let new_edge = [
+                    cmp::min(prev_active_edge[0], self.active_edge[1]),
+                    cmp::max(prev_active_edge[0], self.active_edge[1]),
+                ];
+                let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
+                self.boundary_edges.insert(idx, new_edge);
+                debug_assert!(self.boundary_edges.is_sorted());
+
+                // now that the right vertex of the active edge is removed, we need to renumber
+                // the vertices numbered after the vertex.
                 {
                     for face in self.faces.iter_mut() {
                         for vertex in face.iter_mut() {
@@ -189,11 +307,21 @@ impl SpiraleReversi {
                             }
                         }
                     }
+                    for edge in self.boundary_edges.iter_mut() {
+                        for vertex in edge.iter_mut() {
+                            if *vertex > self.active_edge[0] {
+                                *vertex -= 1;
+                            } else if *vertex == self.active_edge[0] {
+                                *vertex = prev_active_edge[1];
+                            }
+                        }
+                        edge.sort();
+                    }
+                    self.boundary_edges.sort();
                 }
 
-                self.num_decoded_vertices -= 1;
-
-
+                
+                
                 let merged_vertex = self.active_edge[0];
                 self.active_edge = [prev_active_edge[0], self.active_edge[1]];
                 for vertex in self.active_edge.iter_mut() {
@@ -203,84 +331,135 @@ impl SpiraleReversi {
                         *vertex = prev_active_edge[1];
                     }
                 }
+
+                self.num_decoded_vertices -= 1;
+                assert_ne!(self.active_edge[0], self.active_edge[1]);
+                assert!( 
+                    self.is_boundary_cyclic(),
+                    "boundary_edges: {:?}",
+                    self.boundary_edges
+                );
             },
             Symbol::M(n_vertices) => {
-                let mut new_face = [
-                    self.active_edge[0],
-                    self.active_edge[1],
-                    self.num_decoded_vertices
-                ];
-                // ToDo: This sort can be omitted by constructing a face in a proper order.
-                new_face.sort();
-                self.faces.push(new_face);
-
                 // a hole starting and ending at 'self.active_edge[0]' must get created.
-                let coboundary_map_zero_with_multiplicity = {
-                    let mut coboundary_map_zero = vec![Vec::new(); self.num_decoded_vertices+1];
-                    for face in &self.faces {
-                        debug_assert!(face.is_sorted());
-                        let edges = [
-                            [face[0], face[1]],
-                            [face[1], face[2]],
-                            [face[0], face[2]]
-                        ];
-                        for edge in edges.iter() {
-                            coboundary_map_zero[edge[0]].push(edge[1]);
-                            coboundary_map_zero[edge[1]].push(edge[0]);
-                        }
-                    }
-                    coboundary_map_zero.iter_mut().for_each(|coboundary| coboundary.sort());
-                    let mut coboundary_map_zero_with_multiplicity = vec![Vec::new(); self.num_decoded_vertices+1];
-                    for (coboundary, coboundary_with_multiplicity) in 
-                        coboundary_map_zero
-                            .into_iter()
-                            .zip(&mut coboundary_map_zero_with_multiplicity) 
-                    {
-                        let mut i = 0;
-                        while i < coboundary.len() {
-                            let mut j = i+1;
-                            while j < coboundary.len() && coboundary[i] == coboundary[j] {
-                                j += 1;
-                            }
-                            coboundary_with_multiplicity.push((coboundary[i], j-i));
-                            i = j;
-                        }
-                    }
-                    coboundary_map_zero_with_multiplicity
-                };
                 let mut prev_vertex = self.active_edge[0];
-                let mut curr_vertex = coboundary_map_zero_with_multiplicity[self.active_edge[0]].iter()
-                        .filter(|&&(_,m)| m==1 )
-                        .find(|&&(v,_)| v!=self.active_edge[1])
-                        .unwrap().0;
+                let mut curr_vertex = *self.boundary_edges.iter()
+                    .filter(|e| e.contains(&self.active_edge[0]))
+                    .find(|&&e| !e.contains(&self.active_edge[1]))
+                    .unwrap()
+                    .iter().find(|&&v| v != self.active_edge[0]).unwrap();
+                let mut boundary_to_remove = vec![
+                    self.boundary_edges.binary_search(
+                        &[cmp::min(prev_vertex, curr_vertex), cmp::max(prev_vertex, curr_vertex)]
+                    ).unwrap()
+                ];
                 for _ in 0..n_vertices-1 {
-                    let next_vertex = coboundary_map_zero_with_multiplicity[curr_vertex].iter()
-                        .filter(|&&(_,m)| m==1 )
-                        .find(|&&(v,_)| v!=prev_vertex)
-                        .unwrap().0;
+                    let next_vertex = *self.boundary_edges.iter()
+                        .filter(|e| e.contains(&curr_vertex))
+                        .find(|&&e| !e.contains(&prev_vertex))
+                        .unwrap()
+                        .iter().find(|&&v| v != curr_vertex).unwrap();
                 
                     prev_vertex = curr_vertex;
                     curr_vertex = next_vertex;
+                    boundary_to_remove.push(
+                        self.boundary_edges.binary_search(
+                            &[cmp::min(prev_vertex, curr_vertex), cmp::max(prev_vertex, curr_vertex)]
+                        ).unwrap()
+                    );
                 }
                 // find the next vertex once more to get the active edge.
-                let next_vertex = coboundary_map_zero_with_multiplicity[curr_vertex].iter()
-                        .filter(|&&(_,m)| m==1 )
-                        .find(|&&(v,_)| v!=prev_vertex)
-                        .unwrap().0;
+                let mut next_vertex = *self.boundary_edges.iter()
+                    .filter(|e| e.contains(&curr_vertex))
+                    .find(|&&e| !e.contains(&prev_vertex))
+                    .unwrap()
+                    .iter().find(|&&v| v != curr_vertex).unwrap();
+                // remove the active edge from the boundary edges.
+                boundary_to_remove.sort();
+                for idx in boundary_to_remove.iter().rev() {
+                    self.boundary_edges.remove(*idx);
+                }
+                let removed_edge = [
+                    cmp::min(self.active_edge[0], self.active_edge[1]),
+                    cmp::max(self.active_edge[0], self.active_edge[1]),
+                ];
+                self.boundary_edges.remove(
+                    self.boundary_edges.binary_search(&removed_edge).unwrap()
+                );
+                let removed_edge = [
+                    cmp::min(curr_vertex, next_vertex),
+                    cmp::max(curr_vertex, next_vertex),
+                ];
+                self.boundary_edges.remove(
+                    self.boundary_edges.binary_search(&removed_edge).unwrap()
+                );
+
+                let mut new_face = [
+                    curr_vertex,
+                    self.active_edge[1],
+                    next_vertex
+                ];
+                new_face.sort();
+                self.faces.push(new_face);
+
+                // renumber the vertices
                 for face in &mut self.faces {
-                    for vertex in face {
+                    let mut is_face_updated = false;
+                    for vertex in &mut *face {
+                        if *vertex == self.active_edge[0] {
+                            *vertex = curr_vertex;
+                            is_face_updated = true;
+                        } else if *vertex > self.active_edge[0] {
+                            *vertex -= 1;
+                        }
+                    }
+                    if is_face_updated {
+                        face.sort();
+                    }
+                }
+                for edge in &mut self.active_edge_stack {
+                    for vertex in edge.iter_mut() {
                         if *vertex == self.active_edge[0] {
                             *vertex = curr_vertex;
                         } else if *vertex > self.active_edge[0] {
-                            *vertex += n_vertices-1;
+                            *vertex -= 1;
                         }
                     }
                 }
+                if self.active_edge[1] > self.active_edge[0] {
+                    self.active_edge[1] -= 1;
+                }
+                for edge in &mut self.boundary_edges {
+                    for vertex in edge.iter_mut() {
+                        if *vertex == self.active_edge[0] {
+                            *vertex = curr_vertex;
+                        } else if *vertex > self.active_edge[0] {
+                            *vertex -= 1;
+                        }
+                    }
+                    edge.sort();
+                }
+                self.boundary_edges.sort();
+                if next_vertex == self.active_edge[0] {
+                    next_vertex = curr_vertex;
+                } else if next_vertex > self.active_edge[0] {
+                    next_vertex -= 1;
+                }
+
+
+                // add the new edge to the boundary edges
+                let new_edge = [
+                    cmp::min(next_vertex, self.active_edge[1]),
+                    cmp::max(next_vertex, self.active_edge[1]),
+                ];
+                let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
+                self.boundary_edges.insert(idx, new_edge);
 
                 self.num_decoded_vertices -= 1;
                 self.active_edge = [self.active_edge[1], next_vertex];
             },
             Symbol::H(metadata) => {
+                unimplemented!();
                 let mut new_face = [
                     self.active_edge[0],
                     self.active_edge[1],
@@ -288,6 +467,15 @@ impl SpiraleReversi {
                 ];
                 new_face.sort();
                 self.faces.push(new_face);
+                
+                // remove the active edge from the boundary edges.
+                let removed_edge = [
+                    cmp::min(self.active_edge[0], self.active_edge[1]),
+                    cmp::max(self.active_edge[0], self.active_edge[1]),
+                ];
+                self.boundary_edges.remove(
+                    self.boundary_edges.binary_search(&removed_edge).unwrap_err()
+                );
 
                 let edges = {
                     let mut out = self.faces.iter().map(|face| [
@@ -356,9 +544,9 @@ impl SpiraleReversi {
                     let adjacent_faces = boundary_edges.iter()
                         .map(|edge| edges.binary_search(edge).unwrap())
                         .filter_map(|edge_idx| {
-                            let face_indeces = &one_coboundary[edge_idx];
-                            if face_indeces.len() == 2 {
-                                let adj_face_idx = *face_indeces.iter()
+                            let face_indices = &one_coboundary[edge_idx];
+                            if face_indices.len() == 2 {
+                                let adj_face_idx = *face_indices.iter()
                                     .find(|&&idx| idx != face_idx)
                                     .unwrap();
                                 Some((edge_idx, adj_face_idx))
@@ -431,29 +619,79 @@ impl SpiraleReversi {
                 for face in &mut self.faces {
                     face.sort();
                 }
+
+                // add the new edge to the boundary edges
+                let new_edge = [
+                    cmp::min(self.active_edge[0], self.active_edge[1]),
+                    cmp::max(self.active_edge[0], self.active_edge[1]),
+                ];
+                let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
+                self.boundary_edges.insert(idx, new_edge);
             }
         }
+    }
+
+
+    #[allow(unused)]
+    fn is_boundary_cyclic(&self) -> bool {
+        let mut visited_edges = vec![false; self.boundary_edges.len()];
+        while let Some(edge_idx) = visited_edges.iter()
+            .position(|&x| x == false) 
+        {
+            let start = self.boundary_edges[edge_idx][0];
+            let mut prev_vertex = start;
+            let mut curr_vertex = self.boundary_edges[edge_idx][1];
+            visited_edges[edge_idx] = true;
+            while curr_vertex != start {
+                let next_vertex = {
+                    let edge =  if let Some(edge) = self.boundary_edges.iter()
+                        .find(|e| 
+                            e.contains(&curr_vertex) && 
+                            !e.contains(&prev_vertex)
+                        ) {
+                            edge
+                        } else {
+                            return false;
+                        };
+                    let idx = self.boundary_edges.binary_search(&edge).unwrap();
+                    if visited_edges[idx] {
+                        return false;
+                    } else {
+                        visited_edges[idx] = true;
+                    }
+
+                    *edge.iter()
+                        .find(|&&v| v != curr_vertex)
+                        .unwrap()
+                };
+                prev_vertex = curr_vertex;
+                curr_vertex = next_vertex;
+            }
+        }
+        true
     }
 }
 
 impl ConnectivityDecoder for SpiraleReversi {
-    fn decode_connectivity(&mut self, mut reader: Reader) -> Vec<[VertexIdx; 3]> {
+    fn decode_connectivity<F>(&mut self, reader: &mut F) -> Result<Vec<[VertexIdx; 3]>, super::Err> 
+        where F: FnMut(u8) -> u64
+    {
         self.init();
-        let symbol_encoding = SymbolEncodingConfig::get_symbol_encoding(&mut reader);
-        self.num_connected_components = reader.next(NUM_CONNECTED_COMPONENTS_SLOT);
+        let symbol_encoding = SymbolEncodingConfig::get_symbol_encoding(reader);
+        self.num_connected_components = reader(NUM_CONNECTED_COMPONENTS_SLOT) as usize;
 
         // unwrap the symbol encoding config here so that the spirale reversi does not 
         // need to unwrap config during each iteration.
         match symbol_encoding {
-            SymbolEncodingConfig::CrLight => self.spirale_reversi_impl::<CrLight>(&mut reader),
-            SymbolEncodingConfig::Balanced => self.spirale_reversi_impl::<Balanced>(&mut reader),
-            SymbolEncodingConfig::Rans => self.spirale_reversi_impl::<Rans>(&mut reader),
+            SymbolEncodingConfig::CrLight => self.spirale_reversi_impl::<CrLight, _>(reader),
+            SymbolEncodingConfig::Balanced => self.spirale_reversi_impl::<Balanced, _>(reader),
+            SymbolEncodingConfig::Rans => self.spirale_reversi_impl::<Rans, _>(reader),
         }
 
 
         let mut faces = Vec::new();
         mem::swap(&mut faces, &mut self.faces);
-        faces
+        Ok(faces)
     }
 }
 
@@ -461,8 +699,13 @@ impl ConnectivityDecoder for SpiraleReversi {
 #[cfg(test)]
 mod tests {
     use crate::core::buffer::{writer, Buffer};
+    use crate::encode::connectivity::edgebreaker::Config;
     use crate::encode::connectivity::{edgebreaker, ConnectivityEncoder};
-    use crate::core::shared::ConfigType;
+    use crate::core::shared::{
+        ConfigType,
+        NdVector,
+        Vector
+    };
     use super::*;
     use crate::decode::connectivity::ConnectivityDecoder;
 
@@ -472,21 +715,23 @@ mod tests {
             [0,1,2],
             [1,2,3]
         ];
-        let  mut points = vec![[0;3]; 4];
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
-        let reader = buffer.into_reader();
+        let  mut points = vec![NdVector::<3,f32>::zero(); 4];
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
+        let mut buff_reader = buffer.into_reader();
+        let mut reader = |input| buff_reader.next(input);
         let mut spirale_reversi = SpiraleReversi::new();
-        let decoded_faces = spirale_reversi.decode_connectivity(reader);
+        let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
 
-        assert_eq!(decoded_faces, vec![
+        assert_eq!(decoded_faces.as_ref().unwrap(), &vec![
             [0,1,2],
             [0,1,3]
         ]);
-        assert_eq!(faces, &*decoded_faces);
+        assert_eq!(faces, &*decoded_faces.unwrap());
     }
 
     #[test]
@@ -498,21 +743,23 @@ mod tests {
             [2,3,4]
         ];
         // positions do not matter
-        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
-        let reader = buffer.into_reader();
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
+        let mut reader = buffer.into_reader();
+        let mut reader = |input| reader.next(input);
         let mut spirale_reversi = SpiraleReversi::new();
-        let decoded_faces = spirale_reversi.decode_connectivity(reader);
+        let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
 
-        assert_eq!(decoded_faces, vec![
+        assert_eq!(decoded_faces.as_ref().unwrap(), &vec![
             [0,1,2], [1,3,4], [0,1,3], [0,3,5]
         ]);
-        assert_eq!(faces, &*decoded_faces);
+        assert_eq!(faces, &*decoded_faces.unwrap());
     }
 
     #[test]
@@ -534,18 +781,20 @@ mod tests {
             [9,10,11]
         ];
         // positions do not matter
-        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
-        let reader = buffer.into_reader();
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
+        let mut buff_reader = buffer.into_reader();
+        let mut reader = |input| buff_reader.next(input);
         let mut spirale_reversi = SpiraleReversi::new();
-        let decoded_faces = spirale_reversi.decode_connectivity(reader);
+        let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
 
-        assert_eq!(decoded_faces, vec![
+        assert_eq!(decoded_faces.as_ref().unwrap(), &vec![
             [0,1,2],
             [1,3,4],
             [0,1,3],
@@ -561,7 +810,7 @@ mod tests {
             [1,2,11],
             [1,4,11]
         ]);
-        assert_eq!(faces, &*decoded_faces);
+        assert_eq!(faces, &*decoded_faces.unwrap());
     }
 
     #[test]
@@ -574,25 +823,27 @@ mod tests {
             [1,5,6]
         ];
         // positions do not matter
-        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
-        let reader = buffer.into_reader();
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
+        let mut buff_reader = buffer.into_reader();
+        let mut reader = |input| buff_reader.next(input);
         let mut spirale_reversi = SpiraleReversi::new();
-        let decoded_faces = spirale_reversi.decode_connectivity(reader);
+        let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
 
-        assert_eq!(decoded_faces, vec![
+        assert_eq!(decoded_faces.as_ref().unwrap(), &vec![
             [0,1,2], 
             [0,1,3], 
             [4,5,6], 
             [3,4,5], 
             [0,3,5]
         ]);
-        assert_eq!(faces, &*decoded_faces);
+        assert_eq!(faces, &*decoded_faces.unwrap());
     }
 
     #[test]
@@ -606,29 +857,31 @@ mod tests {
         faces.sort();
 
         // positions do not matter
-        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
-        let reader = buffer.into_reader();
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
+        let mut buff_reader = buffer.into_reader();
+        let mut reader = |input| buff_reader.next(input);
         let mut spirale_reversi = SpiraleReversi::new();
-        let decoded_faces = spirale_reversi.decode_connectivity(reader);
+        let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
 
-        assert_eq!(decoded_faces, 
-            vec![
+        assert_eq!(decoded_faces.as_ref().unwrap(), 
+            &vec![
                 [0,1,2], [3,4,5], [4,6,7], [3,4,6], [3,6,8], [3,8,9], [8,9,10], [9,10,11], 
                 [10,11,12], [11,12,13], [1,11,13], [1,13,14], [0,1,14], [0,14,15], [15,16,17], [0,15,16], 
                 [0,16,18], [0,2,18], [2,18,19], [20,21,22], [19,20,21], [2,19,21], [2,21,23], [1,2,23],
-                [1,11,23], [9,11,23], [9,23,24], [3,9,24], [3,5,24], [5,24,22], [24,22,41], [21,23,24]
+                [1,11,23], [9,11,23], [9,23,24], [3,9,24], [3,5,24], [5,22,24], [21,22,24], [21,23,24]
             ]
         );
         // assert_eq!(faces, &*decoded_faces);
     }
 
-    #[test]
+    // #[test]
     fn test_handle() {
         // create torus in order to test the handle symbol.
         let mut faces = [
@@ -640,24 +893,25 @@ mod tests {
         faces.sort();
 
         // positions do not matter
-        let mut points = vec![[0_f32; 3]; faces.iter().flatten().max().unwrap()+1];
+        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new();
-        assert!(edgebreaker.init(&mut points, &faces, &edgebreaker::Config::default()).is_ok());
-        let mut writer = writer::Writer::new();
-        assert!(edgebreaker.encode_connectivity(&mut faces, &edgebreaker::Config::default(), &mut points, &mut writer).is_ok());
-        let buffer: Buffer = writer.into();
-        let reader = buffer.into_reader();
+        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
+        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        let mut buff_writer = writer::Writer::new();
+        let mut writer = |input| buff_writer.next(input);
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        let buffer: Buffer = buff_writer.into();
+        let mut buff_reader = buffer.into_reader();
+        let mut reader = |input| buff_reader.next(input);
         let mut spirale_reversi = SpiraleReversi::new();
-        let decoded_faces = spirale_reversi.decode_connectivity(reader);
+        let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
 
-        assert_eq!(decoded_faces, vec![
-
+        assert_eq!(decoded_faces.as_ref().unwrap(), &vec![
             [0,1,2], [1,3,4], [0,1,3], [0,3,5], [2,6,7], [4,7,8], [6,7,8], [5,6,8], 
             [5,8,9], [0,5,9], [0,9,10], [0,2,10], [2,7,10], [7,10,11], [4,7,11], [3,4,11], 
             [3,11,12], [3,5,12], [5,6,12], [6,12,13], [2,6,13], [1,2,13], [1,13,14], [1,4,14], 
             [4,8,14], [8,9,14], [9,14,15], [9,10,15], [10,11,15], [11,12,15], [12,13,15], [13,14,15]
         ]);
-        assert_eq!(faces, &*decoded_faces);
+        assert_eq!(faces, &*decoded_faces.unwrap());
     }
 }

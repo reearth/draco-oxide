@@ -10,7 +10,7 @@ pub struct Reader<Order: OrderConfig = MsbFirst> {
 	num_remaining_bits: usize,
 
 	/// the position in the current byte being read. It is always less than 8.
-	pos_in_curr_byte: usize,
+	pos_in_curr_byte: u8,
 
 	/// The buffer. We want him to die at the very end for deallocation.
 	_buffer: RawBuffer,
@@ -22,10 +22,10 @@ pub struct Reader<Order: OrderConfig = MsbFirst> {
 impl<Order: OrderConfig> Reader<Order> {
 	/// read the 'size' bits of data at the current offset.
 	/// the output data is stored in the first 'size' bits.
-	pub fn next(&mut self, size: usize) -> usize {
+	pub fn next(&mut self, size: u8) -> u64 {
 		assert!(size <= 64 && size > 0, "Invalid size: {}", size);
-		assert!(size <= self.num_remaining_bits, "Attempt to read beyond buffer bounds");
-			unsafe{ self.next_unchecked(size) }
+		assert!(size as usize <= self.num_remaining_bits, "Attempt to read beyond buffer bounds.");
+		unsafe{ self.next_unchecked(size) }
 	}
 
 	/// read the 'size' bits of data at the current offset without checking the bounds.
@@ -33,12 +33,14 @@ impl<Order: OrderConfig> Reader<Order> {
 	/// Safety:  The caller must ensure that 
 
 	///  (1) 'size' is less than or equal to 'self.num_remaining_bits'.
+
+	///  (1) 'size' is less than or equal to 'self.num_remaining_bits'.
 	///  (2) 'size' is less than or equal to 64.
-	pub unsafe fn next_unchecked(&mut self, size: usize) -> usize {
-		self.num_remaining_bits = self.num_remaining_bits.unchecked_sub(size);
+	pub unsafe fn next_unchecked(&mut self, size: u8) -> u64 {
+		self.num_remaining_bits = self.num_remaining_bits.unchecked_sub(size as usize);
 		
 		let mut offset = if Order::IS_MSB_FIRST{ size } else { 0 };
-		let mut value = 0;
+		let mut value: u64 = 0;
 		
 		if self.pos_in_curr_byte != 0 {
 			let num_remaining_in_curr_byte = 8 - self.pos_in_curr_byte;
@@ -49,7 +51,7 @@ impl<Order: OrderConfig> Reader<Order> {
 					} else {
 						ptr::read(self.ptr) >> self.pos_in_curr_byte
 					}
-				} as usize;
+				} as u64;
 				self.pos_in_curr_byte = if size == num_remaining_in_curr_byte {
 					self.ptr = unsafe{ self.ptr.add(1) };
 					0
@@ -64,7 +66,7 @@ impl<Order: OrderConfig> Reader<Order> {
 				} else {
 					(ptr::read(self.ptr) >> self.pos_in_curr_byte) as usize
 				}
-			} as usize;
+			} as u64;
 			self.ptr = unsafe{ self.ptr.add(1) };
 			offset = if Order::IS_MSB_FIRST {
 				offset.unchecked_sub(num_remaining_in_curr_byte)
@@ -78,7 +80,7 @@ impl<Order: OrderConfig> Reader<Order> {
 			if Order::IS_MSB_FIRST {
 				offset = offset.unchecked_sub(8);
 			}
-			value |= unsafe{ ptr::read(self.ptr) as usize } << offset;
+			value |= unsafe{ ptr::read(self.ptr) as u64 } << offset;
 			if !Order::IS_MSB_FIRST {
 				offset = offset.unchecked_add(8);
 			}
@@ -88,9 +90,9 @@ impl<Order: OrderConfig> Reader<Order> {
 		// 'size'-'offset' is the number of bits remaining to be read.
 		value |= unsafe{ 
 			if Order::IS_MSB_FIRST {
-				(ptr::read(self.ptr) as usize >> (8_usize.unchecked_sub(offset))) & ((1<<offset)-1)
+				(ptr::read(self.ptr) as u64 >> (8_u8.unchecked_sub(offset))) & ((1<<offset)-1)
 			} else {
-				(ptr::read(self.ptr) as usize & ((1<<size.unchecked_sub(offset))-1)) << offset
+				(ptr::read(self.ptr) as u64 & ((1<<size.unchecked_sub(offset))-1)) << offset
 			}
 		};
 
@@ -102,14 +104,19 @@ impl<Order: OrderConfig> Reader<Order> {
 		value
 	}
 
-	pub(super) fn new(buffer: RawBuffer) -> Self {
+	pub(super) fn new(buffer: RawBuffer, len: usize) -> Self {
 		let ptr = buffer.data.as_ptr();
 		Self {
 			ptr,
-			num_remaining_bits: buffer.cap << 3,
+			num_remaining_bits: len,
 			pos_in_curr_byte: 0,
 			_buffer: buffer,
 			_phantom: std::marker::PhantomData,
 		}
+	}
+
+
+	pub fn get_num_remaining_bits(&self) -> usize {
+		self.num_remaining_bits
 	}
 }

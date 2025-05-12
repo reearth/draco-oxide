@@ -14,10 +14,10 @@ pub(crate) fn orientation_of_next_face(prev_face: [usize;3], prev_orientation: b
     }
 }
 
-pub(crate) const SYMBOL_ENCODING_CONFIG_SLOT: usize = 4;
-pub(crate) const NUM_CONNECTED_COMPONENTS_SLOT: usize = 8;
-pub(crate) const NUM_FACES_SLOT: usize = 32;
-pub(crate) const HOLE_SLOT_SIZE: usize = 2;
-pub(crate) const HANDLE_SLOT_SIZE: usize = 2;
-pub(crate) const NUM_VERTICES_IN_HOLE_SLOTS: [usize;4] = [8,12,16,20];
-pub(crate) const HANDLE_METADATA_SLOTS: [usize;4] = [8,12,16,20];
+pub(crate) const SYMBOL_ENCODING_CONFIG_SLOT: u8 = 4;
+pub(crate) const NUM_CONNECTED_COMPONENTS_SLOT: u8 = 8;
+pub(crate) const NUM_FACES_SLOT: u8 = 32;
+pub(crate) const HOLE_SLOT_SIZE: u8 = 2;
+pub(crate) const HANDLE_SLOT_SIZE: u8 = 2;
+pub(crate) const NUM_VERTICES_IN_HOLE_SLOTS: [u8;4] = [8,12,16,20];
+pub(crate) const HANDLE_METADATA_SLOTS: [u8;4] = [8,12,16,20];
