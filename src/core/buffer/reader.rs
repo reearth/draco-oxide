@@ -33,6 +33,8 @@ impl<Order: OrderConfig> Reader<Order> {
 	/// Safety:  The caller must ensure that 
 
 	///  (1) 'size' is less than or equal to 'self.num_remaining_bits'.
+
+	///  (1) 'size' is less than or equal to 'self.num_remaining_bits'.
 	///  (2) 'size' is less than or equal to 64.
 	pub unsafe fn next_unchecked(&mut self, size: u8) -> u64 {
 		self.num_remaining_bits = self.num_remaining_bits.unchecked_sub(size as usize);
