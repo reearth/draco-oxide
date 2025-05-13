@@ -1,22 +1,6 @@
-[package]
-description = "draco"
-name = "draco"
-authors = ["Re:Earth Contributors"]
-edition = "2021"
-exclude = ["benches/", "test-data/", "testdata/"]
-homepage = "https://github.com/reearth/draco-rs"
+[workspace]
+resolver = "2"
 license = "MIT OR Apache-2.0"
+homepage = "https://github.com/reearth/draco-rs"
 repository = "https://github.com/reearth/draco-rs"
-rust-version = "1.84"
-version = "0.0.1"
-
-[dependencies]
-enum_dispatch = "0.3.13"
-nd_vector = { path = "macros/nd_vector" }
-lazy_static = "1.5.0"
-seq-macro = "0.3.6"
-remain = "*"
-thiserror = "*"
-tobj = "4.0.3"
-
-[build-dependencies]
+members = ["draco-rs", "cli", "analyzer"]

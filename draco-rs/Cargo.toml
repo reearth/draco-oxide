@@ -1,0 +1,19 @@
+[package]
+description = "draco"
+name = "draco"
+authors = ["Re:Earth Contributors"]
+edition = "2021"
+exclude = ["benches/", "test-data/", "testdata/"]
+rust-version = "1.84"
+version = "0.0.1"
+
+[dependencies]
+enum_dispatch = "0.3.13"
+nd_vector = { path = "macros/nd_vector" }
+lazy_static = "1.5.0"
+seq-macro = "0.3.6"
+remain = "*"
+thiserror = "*"
+tobj = "4.0.3"
+
+[build-dependencies]
