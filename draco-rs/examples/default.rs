@@ -5,7 +5,7 @@ const MESH_NAME: &str = "bunny";
 
 fn main() {
     let (bunny,_) = tobj::load_obj(
-        format!("tests/data/{}.obj", MESH_NAME), 
+        format!("draco-rs/tests/data/{}.obj", MESH_NAME), 
         &tobj::GPU_LOAD_OPTIONS
     ).unwrap();
     let bunny = &bunny[0];
@@ -41,7 +41,7 @@ fn main() {
     let data: Buffer = buff_writer.into();
 
     let mut file = std::fs::File::create(
-        format!("examples/outputs/{}_compressed.draco", MESH_NAME)
+        format!("draco-rs/examples/outputs/{}_compressed.draco", MESH_NAME)
     ).unwrap();
     let out = data.as_slice();
     file.write_all(out).unwrap();
@@ -58,7 +58,7 @@ fn main() {
     println!("Decoding done.");
 
     let mut obj_file = std::fs::File::create(
-        format!("examples/outputs/{}_recovered.obj", MESH_NAME)
+        format!("draco-rs/examples/outputs/{}_recovered.obj", MESH_NAME)
     ).unwrap();
     let mut writer = std::io::BufWriter::new(&mut obj_file);
 
