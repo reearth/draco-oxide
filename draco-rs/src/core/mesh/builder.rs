@@ -45,6 +45,7 @@ impl MeshBuilder {
         self.dependency_check()?;
 
         let mut attributes = self.get_sorted_attributes();
+        Self::check_attribute_size(&attributes)?;
         Self::check_position_and_connectivity(&mut attributes)?;
         
         Ok(
@@ -129,15 +130,43 @@ impl MeshBuilder {
 
         Ok(())
     }
+
+
+    /// attribute size check
+    fn check_attribute_size(attributes: &[Attribute]) -> Result<(), Err> {
+        for att in attributes {
+            let parents = att.get_parents();
+            for parent in parents {
+                let parent_att = attributes.iter().find(|att| att.get_id() == *parent).unwrap();
+                let parent_len = if parent_att.get_attribute_type() == AttributeType::Connectivity {
+                    parent_att.as_slice::<[usize; 3]>().iter()
+                        .flat_map(|face| *face)
+                        .map(|v|v+1)
+                        .max()
+                        .unwrap_or(0)
+                } else {
+                    parent_att.len()
+                };
+                if att.len() != parent_len {
+                    return Err(Err::AttributeSizeError(att.get_id().as_usize(), att.len(), parent_att.get_id().as_usize(), parent_len));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 
 #[remain::sorted]
 #[derive(Error, Debug)]
 pub enum Err {
+    #[error("The attribute {0} has {1} values, but the parent attribute {2} has a size of {3}.")]
+    AttributeSizeError(usize, usize, usize, usize),
+
     #[error("One of the attributes does not meet the minimum dependency; {:?} must depend on {:?}.", .0, .1)]
     MinimumDependencyError(AttributeType, AttributeType),
-
+    
     #[error("The connectivity attribute and the position attribute are not compatible; the connectivity attribute has a maximum index of {0} and the position attribute has a length of {1}.")]
-    PositionAndConnectivityNotCompatible(usize, usize)
+    PositionAndConnectivityNotCompatible(usize, usize),
+
 }

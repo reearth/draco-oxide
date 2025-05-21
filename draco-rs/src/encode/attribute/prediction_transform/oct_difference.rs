@@ -26,10 +26,6 @@ impl<Data> OctahedronDifferenceTransform<Data>
             _marker: std::marker::PhantomData,
         }
     }
-
-    pub fn get_corr(&self) -> &[NdVector<2,f64>] {
-        &self.out
-    }
 }
 
 impl<Data> PredictionTransformImpl<Data> for OctahedronDifferenceTransform<Data> 

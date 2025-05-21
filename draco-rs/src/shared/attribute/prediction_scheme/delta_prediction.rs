@@ -19,7 +19,7 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for DeltaPrediction<'parents
 	type AdditionalDataForMetadata = ();
 	
 	fn new(parents: &[&'parents Attribute]) -> Self {
-        assert!(parents.len() == 1, "prediction needs exactly one parent: connectivity.");
+        assert!(parents.len() >= 1, "prediction needs at least one parent: connectivity.");
         assert!(
             parents[0].get_attribute_type() == AttributeType::Connectivity,
             "Delta prediction requires faces as a parent, but they are: {:?}.",

@@ -3,15 +3,13 @@ use crate::encode::attribute::WritableFormat;
 use crate:: shared::attribute::Portable;
 use super::{
     geom::*, 
-    PredictionTransformImpl, 
-    FinalMetadata
+    PredictionTransformImpl
 };
 
 pub struct OctahedronOrthogonalTransform<Data> 
     where Data: Vector + Portable
 {
     out: Vec<NdVector<2,f64>>,
-    final_metadata: FinalMetadata<()>,
     _marker: std::marker::PhantomData<Data>,
 }
 
@@ -21,7 +19,6 @@ impl<Data> OctahedronOrthogonalTransform<Data>
     pub fn new(_cfg: super::Config) -> Self {
         Self {
             out: Vec::new(),
-            final_metadata: FinalMetadata::Global(()),
             _marker: std::marker::PhantomData,
         }
     }

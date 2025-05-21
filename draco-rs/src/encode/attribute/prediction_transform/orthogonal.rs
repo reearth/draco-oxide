@@ -4,7 +4,7 @@ use crate::core::shared::{Abs, DataValue, NdVector, Vector};
 use crate::encode::attribute::WritableFormat;
 use crate::shared::attribute::Portable;
 
-use super::{FinalMetadata, PredictionTransformImpl};
+use super::PredictionTransformImpl;
 
 pub struct OrthogonalTransform<Data> 
     where 
@@ -16,8 +16,6 @@ pub struct OrthogonalTransform<Data>
     /// This metadata records whether the prediction uses 
     /// (1,0,0) or (0,1,0) as the reference vector.
     metadata: Vec<bool>,
-
-    final_metadata: FinalMetadata<bool>,
 
     _marker: PhantomData<Data>,
 }
@@ -31,7 +29,6 @@ impl<Data> OrthogonalTransform<Data>
         Self {
             out: Vec::new(),
             metadata: Vec::new(),
-            final_metadata: FinalMetadata::Local(Vec::new()),
             _marker: PhantomData,
         }
     }

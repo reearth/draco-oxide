@@ -1,5 +1,4 @@
-use std::mem;
-use crate::{core::shared::DataValue, encode::attribute::WritableFormat, prelude::Vector, shared::attribute::Portable};
+use crate::{core::shared::DataValue, prelude::Vector, shared::attribute::Portable};
 use super::DeportabilizationImpl;
 
 pub(crate) struct ToBits<Data> {
@@ -34,7 +33,7 @@ impl<Data> DeportabilizationImpl<Data> for ToBits<Data>
 }
 
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "evaluation")))]
 mod tests {
     use crate::core::buffer;
     use crate::core::shared::NdVector;

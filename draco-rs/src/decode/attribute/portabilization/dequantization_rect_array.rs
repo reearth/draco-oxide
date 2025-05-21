@@ -30,7 +30,7 @@ impl<Data> DequantizationRectangleArray<Data>
             // Safety: Obvious.
             unsafe { 
                 *quantization_size.get_unchecked_mut(i) = Data::Component::from_f64(
-                    quantization_size.get_unchecked(i).to_f64().ceil()
+                    quantization_size.get_unchecked(i).to_f64().ceil()  + 1.0
                 );
             };
         }
@@ -113,7 +113,7 @@ impl<Data> DeportabilizationImpl<Data> for DequantizationRectangleArray<Data>
 }
 
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "evaluation")))]
 mod tests {
     use crate::core::buffer;
     use crate::core::shared::NdVector;

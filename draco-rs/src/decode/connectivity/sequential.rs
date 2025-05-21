@@ -37,6 +37,7 @@ impl ConnectivityDecoder for Sequential {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::attribute::AttributeId;
     use crate::core::buffer::writer::Writer;
     use crate::core::buffer;
     use crate::encode::connectivity::ConnectivityEncoder;
@@ -45,6 +46,7 @@ mod tests {
         NdVector,
         Vector
     };
+    use crate::prelude::{Attribute, AttributeType};
 
 
     #[test]
@@ -58,8 +60,9 @@ mod tests {
             [7,14,15], [6,7,15], [0,6,7], [0,5,6], [0,3,5], [3,4,5], [3,4,14], [4,14,15],
             [6,12,15], [6,9,12], [5,6,9], [5,9,10], [4,5,10], [4,10,11], [4,11,15], [11,12,15]
         ];
-        let mut points = [NdVector::<3,f32>::zero(); 9];
-        let result = encoder.encode_connectivity(&mut faces, &mut points, &mut writer);
+        let points = vec![NdVector::<3,f32>::zero(); 9];
+        let mut point_att = Attribute::from(AttributeId::new(0), points, AttributeType::Position, Vec::new());
+        let result = encoder.encode_connectivity(&mut faces, &mut [&mut point_att], &mut writer);
         assert!(result.is_ok());
         let buffer: buffer::Buffer = buff_writer.into();
         let mut buff_reader = buffer.into_reader();

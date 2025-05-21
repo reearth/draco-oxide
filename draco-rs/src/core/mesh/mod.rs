@@ -20,6 +20,19 @@ impl Mesh {
         &mut self.attributes
     }
 
+    pub fn get_attributes_mut_by_indices<'a>(&'a mut self, indices: &[usize]) -> Vec<&'a mut Attribute> {
+        let out = indices.iter()
+            .map(|i| &mut self.attributes[*i] as *mut Attribute)
+            .collect::<Vec<_>>();
+
+        unsafe {
+            let out = out.iter()
+                .map(|i| *i)
+                .collect::<Vec<_>>();
+            std::mem::transmute::<Vec<*mut Attribute>, Vec<&mut Attribute>>(out)
+        }
+    }
+
     pub(crate) fn take_splitted_attributes(&self) -> (&[Attribute], &[Attribute]) {
         let at = self.attributes.iter()
             .position(|att| att.get_attribute_type() != AttributeType::Connectivity)

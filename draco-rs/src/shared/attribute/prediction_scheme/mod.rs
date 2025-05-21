@@ -39,7 +39,7 @@ pub trait PredictionSchemeImpl<'a>
 }
 
 #[remain::sorted]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PredictionSchemeType
 {
 	DeltaPrediction,
@@ -73,6 +73,16 @@ impl PredictionSchemeType {
 			_ => return Err(id as usize),
 		};
 		Ok(out)
+	}
+
+	pub fn to_string(&self) -> String {
+		match self {
+			PredictionSchemeType::DeltaPrediction => "DeltaPrediction".to_string(),
+			PredictionSchemeType::DerivativePrediction => "DerivativePrediction".to_string(),
+			PredictionSchemeType::MeshMultiParallelogramPrediction => "MeshMultiParallelogramPrediction".to_string(),
+			PredictionSchemeType::MeshParallelogramPrediction => "MeshParallelogramPrediction".to_string(),
+			PredictionSchemeType::NoPrediction => "NoPrediction".to_string(),
+		}
 	}
 }
 

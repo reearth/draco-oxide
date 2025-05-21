@@ -1,12 +1,12 @@
 use crate::core::shared::VertexIdx;
 use crate::core::shared::ConfigType;
 use crate::encode::connectivity::ConnectivityEncoder;
+use crate::prelude::Attribute;
 use crate::shared::connectivity::sequential::index_size_from_vertex_count;
 use crate::shared::connectivity::sequential::{
     NUM_POINTS_SLOT,
     NUM_FACES_SLOT
 };
-use crate::core::shared::NdVector;
 
 pub(crate) struct Sequential;
 
@@ -20,10 +20,10 @@ impl ConnectivityEncoder for Sequential {
     type Err = Err;
     type Config = Config;
 
-    fn encode_connectivity<CoordValType, F>(
+    fn encode_connectivity<F>(
         &mut self, 
         faces: &mut [[VertexIdx; 3]],
-        points: &mut [NdVector<3, CoordValType>], 
+        points: &mut[&mut Attribute], 
         writer: &mut F
     ) -> Result<(), Err> 
         where  F: FnMut((u8, u64)),

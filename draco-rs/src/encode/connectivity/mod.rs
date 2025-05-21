@@ -1,5 +1,4 @@
 pub mod config;
-pub mod err;
 pub(crate) mod edgebreaker;
 pub(crate) mod sequential;
 
@@ -7,15 +6,15 @@ use std::fmt::Debug;
 
 use crate::core::shared::{
     ConfigType,
-    VertexIdx, 
-    NdVector,
+    VertexIdx,
 };
-use crate::core::attribute::{
-    AttributeType,
-    ComponentDataType
-};
+use crate::core::attribute::AttributeType;
 use crate::core::mesh::Mesh;
+use crate::prelude::Attribute;
 use crate::shared::connectivity::{EdgebreakerDecoder, Encoder, NUM_CONNECTIVITY_ATTRIBUTES_SLOT};
+
+#[cfg(feature = "evaluation")]
+use crate::eval;
 
 /// entry point for encoding connectivity.
 pub fn encode_connectivity<F>(
@@ -25,91 +24,93 @@ pub fn encode_connectivity<F>(
 ) -> Result<(), Err>
     where F: FnMut((u8, u64))
 {
+    #[cfg(feature = "evaluation")]
+    eval::scope_begin("connectivity info", writer);
+
     // create the array of tuples (connectivity attribute (parent), position attribute (chilc) index)
-    let conn_pos_atts_indices = mesh.get_attributes_mut()
-        .iter_mut()
+    let conn_child_atts_indices = mesh.get_attributes()
+        .iter()
         .enumerate()
-        .filter(|(_, att)| att.get_attribute_type() == AttributeType::Position)
-        .map(|(idx, att)| 
-            {
-                debug_assert!(att.get_parents().len() <= 1, "Internal error: position attribute has more than one parent");
-                // ToDo: Consider to remove the following condition.
-                assert!(att.get_parents().len() == 1, "Currently we do not support connectivity attributes without a child.");
-                (att.get_parents()[0], idx)
-            }
-        )
+        .filter(|(_, att)| att.get_attribute_type() == AttributeType::Connectivity)
+        .map(|(idx, conn_att)| {
+            // look for attributes that has 'conn_att' as parent
+            let children = mesh.get_attributes()
+                .iter()
+                .enumerate()
+                .filter(|(_, att)| att.get_parents().contains(&conn_att.get_id()))
+                .map(|(child_idx, _)| child_idx)
+                .collect::<Vec<_>>();
+            let mut out = vec![idx];
+            out.extend(children);
+            out
+        })
         .collect::<Vec<_>>();
 
     // write the number of connectivity attributes
-    if conn_pos_atts_indices.len() >= 1 << NUM_CONNECTIVITY_ATTRIBUTES_SLOT {
+    if conn_child_atts_indices.len() >= 1 << NUM_CONNECTIVITY_ATTRIBUTES_SLOT {
         return Err(Err::TooManyConnectivityAttributes);
     }
-    writer((NUM_CONNECTIVITY_ATTRIBUTES_SLOT, conn_pos_atts_indices.len() as u64));
+    writer((NUM_CONNECTIVITY_ATTRIBUTES_SLOT, conn_child_atts_indices.len() as u64));
 
-    for (conn_att_idx, pos_att_idx) in conn_pos_atts_indices {
-        let conn_att_idx = conn_att_idx.as_usize();
-        let (conn_att, pos_att) = {
-            let (first, last) = mesh.get_attributes_mut().split_at_mut(pos_att_idx);
-            (&mut first[conn_att_idx], &mut last[0])
-        };
-
-        debug_assert!(
-            conn_att.get_num_components() == 3, 
-            "Position attributes must have 3 components"
-        );
+    for idx in conn_child_atts_indices {
+        let mut atts = mesh.get_attributes_mut_by_indices(&idx);
+        let (conn_att, children) = atts.split_at_mut(1);
+        
+        // Safety: we know that the first attribute is a connectivity attribute,
+        // and the connectivity attribute is a 3D array of VertexIdx
         let faces = unsafe{ 
-            conn_att.as_slice_unchecked_mut::<[VertexIdx; 3]>()
+            conn_att[0].as_slice_unchecked_mut::<[VertexIdx; 3]>()
         };
-            
-        match pos_att.get_component_type() {
-            ComponentDataType::F32 => {
-                // Safety: Checked that the number of components is 3 and the type is f32
-                let points = unsafe{ 
-                    pos_att.as_slice_unchecked_mut::<NdVector<3,f32>>()
-                };
-                encode_connectivity_datatype_unpacked(faces, points, writer, cfg.clone())?
-            }
-            ComponentDataType::F64 => {
-                // Safety: Checked that the number of components is 3 and the type is f64
-                let points = unsafe{ 
-                    pos_att.as_slice_unchecked_mut::<NdVector<3, f64>>()
-                };
-                encode_connectivity_datatype_unpacked(faces, points, writer, cfg.clone())?
-            }
-            _ => return Err(Err::PositionAttributeTypeError),
-        };
+
+        encode_connectivity_datatype_unpacked(faces, children, writer, Config::default())?;
+
     }
 
+    #[cfg(feature = "evaluation")]
+    eval::scope_end(writer);
     Ok(())
 }
 
-pub fn encode_connectivity_datatype_unpacked<CoordValType, F>(
+pub fn encode_connectivity_datatype_unpacked<F>(
     faces: &mut [[VertexIdx; 3]],
-    points: &mut [NdVector<3, CoordValType>],
+    children: &mut[&mut Attribute],
     writer: &mut F,
     cfg: Config,
 ) -> Result<(), Err>
 where
-    CoordValType: Copy + Debug,
     F: FnMut((u8, u64)),
 {
     match cfg {
         Config::Edgebreaker(cfg) => {
+            #[cfg(feature = "evaluation")]
+            eval::scope_begin("edgebreaker", writer);
+            
             // write the encoder id
             writer((1,Encoder::Edgebreaker.id()));
             // write the edgebreaker decoder id
             writer((3, EdgebreakerDecoder::SpiraleReversi.id()));
             let mut encoder = edgebreaker::Edgebreaker::new(cfg);
-            let result = encoder.encode_connectivity(faces, points, writer);
+            let result = encoder.encode_connectivity(faces, children, writer);
+            
+            #[cfg(feature = "evaluation")]
+            eval::scope_end(writer);
+
             if let Err(err) = result {
                 return Err(Err::EdgebreakerError(err));
             }
         },
         Config::Sequential(cfg) => {
+            #[cfg(feature = "evaluation")]
+            eval::scope_begin("sequential", writer);
+
             // write the encoder id
             writer((1,Encoder::Sequential.id()));
             let mut encoder = sequential::Sequential::new(cfg);
-            let result = encoder.encode_connectivity(faces, points, writer);
+            let result = encoder.encode_connectivity(faces, children, writer);
+            
+            #[cfg(feature = "evaluation")]
+            eval::scope_end(writer);
+            
             if let Err(err) = result {
                 return Err(Err::SequentialError(err));
             }
@@ -122,10 +123,10 @@ where
 pub trait ConnectivityEncoder {
     type Err;
     type Config;
-    fn encode_connectivity<CoordValType: Copy + Debug, F>(
+    fn encode_connectivity<F>(
         &mut self, 
         faces: &mut [[VertexIdx; 3]],
-        points: &mut [NdVector<3, CoordValType>], 
+        points: &mut[&mut Attribute], 
         buffer: &mut F
     ) -> Result<(), Self::Err>
         where

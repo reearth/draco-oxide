@@ -1,3 +1,5 @@
+use crate::core::shared::VertexIdx;
+
 pub mod symbol_encoder;
 pub mod prediction;
 
@@ -11,6 +13,30 @@ pub(crate) fn orientation_of_next_face(prev_face: [usize;3], prev_orientation: b
         prev_orientation
     } else {
         !prev_orientation
+    }
+}
+
+
+/// returns the sign of 'face' as boolean ('true' if + and 'false' if -), where the sign of 'face'
+/// is defined as the sign of the permutation of the vertices of 'face' with respect to the
+/// sorted 'face'.
+pub(crate) fn sign_of(face: [VertexIdx; 3]) -> bool {
+    // check that the indices are distinct.
+    debug_assert!(face[0] != face[1] && face[0] != face[2] && face[1] != face[2]);
+    let min_idx = (0..3).min_by_key(|&i| face[i]).unwrap();
+    let second = (min_idx+1)%3;
+    let third = (min_idx+2)%3;
+    face[second] < face[third]
+}
+
+// Tells if two faces share an edge, and return the edge if any.
+pub(crate) fn edge_shared_by(f1: &[usize; 3], f2: &[usize; 3]) -> Option<[usize; 2]> {
+    // ToDo: This can be optimized as faces are sorted.
+    let maybe_edge = f1.iter().filter(|v| f2.contains(v)).collect::<Vec<_>>();
+    if maybe_edge.len() == 2 {
+        Some([*maybe_edge[0], *maybe_edge[1]])
+    } else {
+        None
     }
 }
 

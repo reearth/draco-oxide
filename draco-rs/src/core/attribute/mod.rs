@@ -1,9 +1,11 @@
 
+use serde::Serialize;
+
 use crate::core::shared::Vector;
 use super::{buffer, shared::DataValue};
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Attribute {
 	/// attribute id
 	id: AttributeId,
@@ -125,10 +127,14 @@ impl Attribute {
 		// Safety: upheld
 		self.buffer.as_slice_mut::<Data>()
 	}
+
+	pub fn permute(&mut self, indices: &[usize]) {
+		self.buffer.permute(indices);
+	}
 }
 
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum ComponentDataType {
 	F32,
 	F64,
@@ -176,7 +182,7 @@ impl ComponentDataType {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum AttributeType {
 	Position,
 	Normal,
@@ -194,7 +200,7 @@ impl AttributeType {
 	pub fn get_minimum_dependency(&self) -> Vec<Self> {
 		match self {
 			Self::Position => Vec::new(),
-			Self::Normal => vec![Self::Connectivity],
+			Self::Normal => Vec::new(),
 			Self::Color => Vec::new(),
 			Self::TextureCoordinate => vec![Self::Position, Self::Connectivity],
 			Self::Tangent => Vec::new(),
@@ -299,6 +305,7 @@ impl MaybeInitAttribute {
 	/// (1) The type of the 'data' (i.e. 'Data') must match the initializtion.
 	/// (2) The index must be within the bounds of the buffer.
 	#[inline]
+	#[allow(unused)]
 	pub unsafe fn write_type_unchecked<Data>(&mut self, idx:usize, data: Data)
 		where Data: Vector,
 	{
@@ -334,7 +341,7 @@ impl From<MaybeInitAttribute> for Attribute {
 	}
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct AttributeId(usize);
 
 impl AttributeId {

@@ -45,7 +45,8 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPredict
         let mut vertices_without_parallelogram: Vec<ops::Range<usize>> = Vec::new();
 
         for face in self.faces {
-            debug_assert!(face.is_sorted());
+            let mut face = *face;
+            face.sort();
             let num_unvisited_vertices = face.iter()
                 .filter(|&&v| v>=is_already_encoded.len() || !is_already_encoded[v])
                 .count();
@@ -69,8 +70,7 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPredict
                 }
             } else if num_unvisited_vertices == 2 {
                 let unvisited_vertices = face.into_iter()
-                    .filter(|&&v| v>=is_already_encoded.len() || !is_already_encoded[v])
-                    .copied()
+                    .filter(|&v| v>=is_already_encoded.len() || !is_already_encoded[v])
                     .collect::<Vec<_>>();
                 let idx1 = unvisited_vertices[0];
                 let idx2 = unvisited_vertices[1];
@@ -81,7 +81,7 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPredict
                     vertices_without_parallelogram.push(idx2..idx2+1);
                 }
             }
-            for &v in face {
+            for v in face {
                 if v >= is_already_encoded.len() {
                     is_already_encoded.resize(v + 1, false);
                 }
@@ -204,7 +204,8 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPredict
         let n_points = values_up_till_now.len();
 
         // Find the the first opposite face.
-        // 'diagonal' is the vertex opposite to 'n_points', and 'a' and 'b' are the other points such that 'a<b'.
+        // 'diagonal' is the vertex opposite to 'n_points', and 'a' and 'b' are the other points such that 'a<b',
+        // so that 'a', 'n_points', 'b', 'diagonal' form a parallelogram.
         let [a,b,diagonal] = self.faces.iter()
             .filter(|f| f.contains(&n_points))
             .map(|&[a,b,c]| 
@@ -222,10 +223,11 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPredict
                     return None;
                 }
                 let face = self.faces.iter()
-                    .find(|f| f.contains(&a) && f.contains(&b) && !f.contains(&n_points));
+                    .filter(|f| f.contains(&a) && f.contains(&b) && !f.contains(&n_points))
+                    .find(|f| f.iter().all(|&v| v<n_points));
                 if let Some(face) = face {
                     let diagonal = *face.iter()
-                        .find(|&&v| v != a && v != b)
+                        .find(|&&v| v != a && v != b )
                         .unwrap();
                     Some([a, b, diagonal])
                 }
@@ -242,7 +244,7 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPredict
     }
 }
 
-
+#[cfg(not(feature = "evaluation"))]
 #[cfg(test)]
 mod test {
     use std::vec;
@@ -343,15 +345,16 @@ mod test {
 
     #[test]
     fn test_predict() {
-        let mut faces = [
-            [0,1,5], [1,5,6], [1,2,6], [2,6,7], [2,3,7], [3,7,8], [3,4,8], [4,8,9],
-            [5,6,10], [6,10,11], [6,7,11], [7,11,12], [7,8,12], [8,12,13], [8,9,13], [9,13,14],
-            [10,11,15], [11,15,16], [11,12,16], [12,16,17], [12,13,17], [13,17,18], [13,14,18], [14,18,19],
-            [15,16,20], [16,20,21], [16,17,21], [17,21,22], [17,18,22], [18,22,23], [18,19,23], [19,23,24]
+        // square
+        let mut faces = vec![
+            [9,23,24], [8,9,23], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
+            [8,22,23], [7,8,22], [1,7,8], [0,1,7], [0,1,2], [0,2,3], [2,3,13], [3,13,14],
+            [7,21,22], [6,7,21], [0,6,7], [0,5,6], [0,3,5], [3,4,5], [3,4,14], [4,14,15],
+            [6,20,21], [6,19,20], [5,6,19], [5,18,19], [4,5,18], [4,17,18], [4,15,17], [15,16,17]
         ];
         faces.sort();
         let points_len = 25;
-        let mut points = {
+        let points = {
             let mut points = Vec::new();
             for i in 0..points_len {
                 let x = i % 5;
@@ -359,43 +362,68 @@ mod test {
                 let z = x + y;
                 points.push(NdVector::from([x as f32, y as f32, z as f32]));
             }
-            points
+            let map = vec![
+                24,9,10,11,12,
+                23,8,1,2,13,
+                22,7,0,3,14,
+                21,6,5,4,15,
+                20,19,18,17,16
+            ];
+            let mut sorted_points = vec![NdVector::zero(); points_len];
+            for (i, f)in map.into_iter().enumerate() {
+                sorted_points[f] = points[i]; 
+            }
+            sorted_points
         };
+
+        let mut point_att = Attribute::from(
+            AttributeId::new(1),
+            points.clone(),
+            AttributeType::Position,
+            vec![AttributeId::new(0)]
+        );
 
         let mut encoder = Edgebreaker::new(Config::default());
         let mut buff_writer = Writer::<MsbFirst>::new();
         let mut writer = |input: (u8, u64)| buff_writer.next(input);
-        let rerult = encoder.encode_connectivity(&mut faces, &mut points, &mut writer);
-        assert!(rerult.is_ok());
+        let result = encoder.encode_connectivity(&mut faces, &mut [&mut point_att], &mut writer);
+        assert!(result.is_ok());
 
-        let parents = vec![
-            Attribute::from_faces(
+
+        let parent = Attribute::from_faces(
                 AttributeId::new(0),
                 faces.to_vec(),
                 Vec::new()
-            ),
-            Attribute::from(
-                AttributeId::new(1),
-                points.clone(),
-                AttributeType::Position,
-                vec![AttributeId::new(0)]
-            )
-        ];
+            );
         let parents = [
-            &parents[0],
-            &parents[1]
+            &parent
         ];
 
         let mut mesh_prediction = MeshParallelogramPrediction::<NdVector<3, f32>>::new(&parents);
         let mut seq = vec![0..points_len];
         let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut seq);
+
+        assert_eq!(impossible_to_predict, vec![0..8, 16..18, 20..23]); // faces corresponding to the 'E's
         
         let mut points_up_till_now = {
             // fill the answer for the vertices that are impossible to predict
             let mut out = vec![NdVector::from([0.0, 0.0, 0.0]); points_len];
-            for i in impossible_to_predict.into_iter().flatten() {
-                out[i] = points[i];
-            }
+            out[0] = NdVector::from([3.0, 3.0, 6.0]); // 0
+            out[1] = NdVector::from([2.0, 3.0, 5.0]); // 1
+            out[2] = NdVector::from([3.0, 2.0, 5.0]); // 2
+            out[3] = NdVector::from([1.0, 1.0, 2.0]); // 3
+            out[4] = NdVector::from([1.0, 0.0, 1.0]); // 4
+            out[5] = NdVector::from([2.0, 0.0, 2.0]); // 5
+            out[6] = NdVector::from([0.0, 1.0, 1.0]); // 6
+            out[7] = NdVector::from([0.0, 0.0, 0.0]); // 7
+
+            out[16] = NdVector::from([4.0, 3.0, 7.0]); // 16
+            out[17] = NdVector::from([4.0, 2.0, 6.0]); // 17
+
+            out[20] = NdVector::from([4.0, 0.0, 4.0]); // 20
+            out[21] = NdVector::from([3.0, 1.0, 4.0]); // 21
+            out[22] = NdVector::from([3.0, 0.0, 3.0]); // 22
+
             out
         };
 
@@ -404,11 +432,10 @@ mod test {
             while !faces[face_max_idx].contains(&i) {
                 face_max_idx += 1;
             }
-            let predicted = mesh_prediction.predict(&points[..i]);
+            let predicted = mesh_prediction.predict(&point_att.as_slice()[..i]);
             // In this test, prediction and the original point are the same
-            assert_eq!(predicted, points[i]);
+            assert_eq!(predicted, point_att.get(i), "i: {}, ", i);
             points_up_till_now[i] = predicted;
-
         }
     }
 }

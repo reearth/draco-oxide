@@ -40,7 +40,7 @@ pub fn decode_attributes<F>(
     let mut cfg = cfg.decoder_cfgs.into_iter();
     for _ in 0..num_attributes {
         let decoder = attribute_decoder::AttributeDecoder::new_and_init(
-            cfg.next().unwrap(),
+            attribute_decoder::Config::default(),
             stream_in,
             &decoded_attributes,
         )?;

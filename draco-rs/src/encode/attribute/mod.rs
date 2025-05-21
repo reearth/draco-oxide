@@ -2,7 +2,12 @@ pub(crate) mod attribute_encoder;
 pub(crate) mod portabilization;
 pub(crate) mod prediction_transform;
 
-use crate::{prelude::ConfigType, shared::attribute::Portable, Mesh};
+#[cfg(feature = "evaluation")]
+use crate::eval;
+
+use crate::prelude::ConfigType; 
+use crate::shared::attribute::Portable;
+use crate::core::mesh::Mesh;
 
 pub fn encode_attributes<F>(
     mesh: &Mesh,
@@ -11,16 +16,28 @@ pub fn encode_attributes<F>(
 ) -> Result<(), Err> 
     where F: FnMut((u8, u64))
 {
+    #[cfg(feature = "evaluation")]
+    eval::scope_begin("attributes", writer);
+
     let (_,non_conn_atts) = mesh.take_splitted_attributes();
 
     // Write the number of attributes
     writer((16, non_conn_atts.len() as u64)); 
+    #[cfg(feature = "evaluation")]
+    eval::write_json_pair("attributes count", non_conn_atts.len().into(), writer);
+
+    #[cfg(feature = "evaluation")]
+    eval::array_scope_begin("attributes", writer);
     
     for non_conn_att in non_conn_atts.into_iter() {
+        #[cfg(feature = "evaluation")]
+        eval::scope_begin("attribute", writer);
+
         let parents_ids = non_conn_att.get_parents();
         let parents = parents_ids.iter()
             .map(|&id| &mesh.get_attributes()[id.as_usize()])
             .collect::<Vec<_>>();
+
         let encoder = attribute_encoder::AttributeEncoder::new(
             non_conn_att,
             &parents,
@@ -34,7 +51,16 @@ pub fn encode_attributes<F>(
             if let Err(err) = encoder.encode::<true>() {
                 return Err(Err::AttributeError(err))
             }
-        }
+        };
+
+        #[cfg(feature = "evaluation")]
+        eval::scope_end(writer);
+    }
+
+    #[cfg(feature = "evaluation")]
+    {
+        eval::array_scope_end(writer);
+        eval::scope_end(writer);
     }
 
     Ok(())
@@ -73,6 +99,7 @@ impl WritableFormat {
         }
     }
 
+    #[allow(unused)]
     pub fn into_iter(self) -> IntoWritableFormatIter {
         IntoWritableFormatIter::new(self.data)
     }
@@ -95,7 +122,7 @@ impl From<()> for WritableFormat {
 }
 
 
-struct IntoWritableFormatIter {
+pub struct IntoWritableFormatIter {
     data: std::vec::IntoIter<(u8, u64)>,
 }
 
@@ -106,6 +133,7 @@ impl IntoWritableFormatIter {
         }
     }
 
+    #[allow(unused)]
     fn write_next<F>(&mut self, writer: &mut F)
         where F: FnMut((u8, u64))
     {

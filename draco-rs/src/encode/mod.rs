@@ -4,8 +4,13 @@ pub(crate) mod connectivity;
 pub(crate) mod attribute;
 pub(crate) mod entropy;
 
-use crate::{core::mesh::Mesh, debug_write, prelude::ConfigType};
+use crate::core::mesh::Mesh;
+use crate::debug_write;
+use crate::core::shared::ConfigType;
 use thiserror::Error;
+
+#[cfg(feature = "evaluation")]
+use crate::eval;
 
 pub trait EncoderConfig {
     type Encoder;
@@ -40,9 +45,12 @@ pub enum Err {
 }
 
 
-pub fn encode<F>(mut mesh: Mesh, writer: &mut F, cfg: Config) -> Result<(), Err> 
+pub fn encode<F>(mut mesh: Mesh, writer: &mut F, cfg: Config) -> Result<Mesh, Err> 
     where F: FnMut((u8, u64))
 {
+    #[cfg(feature = "evaluation")]
+    eval::scope_begin("compression info", writer);
+    
     // Encode header
     header::encode_header(writer)
         .map_err(|r| Err::HeaderError(r))?;
@@ -54,7 +62,7 @@ pub fn encode<F>(mut mesh: Mesh, writer: &mut F, cfg: Config) -> Result<(), Err>
         .map_err(|r| Err::MetadataError(r))?;
 
     debug_write!("Metadata done, now starting connectivity.", writer);
-
+    
     // Encode connectivity
     connectivity::encode_connectivity(&mut mesh, writer, cfg.connectivity_encoder_cfg)
         .map_err(|r| Err::ConnectivityError(r))?;
@@ -67,16 +75,7 @@ pub fn encode<F>(mut mesh: Mesh, writer: &mut F, cfg: Config) -> Result<(), Err>
 
     debug_write!("All done", writer);
 
-    Ok(())
-}
-
-pub(crate) fn encode_string<F>(s: &str, writer: &mut F) 
-    where F: FnMut((u8, u64))
-{
-    let bytes = s.as_bytes();
-    let len = bytes.len() as u64;
-    writer((64, len));
-    for byte in bytes {
-        writer((8, *byte as u64));
-    }
+    #[cfg(feature = "evaluation")]
+    eval::scope_end(writer);
+    Ok(mesh)
 }

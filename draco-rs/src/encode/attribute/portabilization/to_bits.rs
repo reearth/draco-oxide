@@ -3,6 +3,9 @@ use crate::core::shared::Vector;
 use crate::encode::attribute::WritableFormat;
 use crate::shared::attribute::Portable;
 
+#[cfg(feature = "evaluation")]
+use crate::eval;
+
 use super::Config;
 use super::PortabilizationImpl;
 
@@ -20,9 +23,11 @@ impl<Data> ToBits<Data>
         Data: Vector + Portable,
         Data::Component: DataValue
 {
-    pub fn new<F>(att_vals: Vec<Data>, _cfg: Config, _writer: &mut F) -> Self 
+    pub fn new<F>(att_vals: Vec<Data>, _cfg: Config, writer: &mut F) -> Self 
         where F:FnMut((u8, u64)) 
     {
+        #[cfg(feature = "evaluation")]
+        eval::write_json_pair("portabilization", "ToBits".into(), writer);
         Self {
             att_vals: att_vals.into_iter(),
         }

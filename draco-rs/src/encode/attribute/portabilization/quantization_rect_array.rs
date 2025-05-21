@@ -10,6 +10,9 @@ use super::PortabilizationImpl;
 use super::Resolution;
 use crate::core::shared::Max;
 
+#[cfg(feature = "evaluation")]
+use crate::eval;
+
 pub struct QuantizationRectangleArray<Data>
     where Data: Vector
 
@@ -66,15 +69,17 @@ impl<Data> QuantizationRectangleArray<Data>
             }
         }
 
+        // compute the range. This will be multiplied by 1.0001 to avoid the boundary value to overflow.
+        let range = (global_metadata_max - global_metadata_min) * Data::Component::from_f64(1.0001);
+        
         let unit_cube_size = match cfg.resolution {
             Resolution::UnitCubeSize(cube_size) => Data::Component::from_f64(cube_size),
             Resolution::DivisionSize(division_size) => {
-                let diff = global_metadata_max - global_metadata_min;
                 let mut min_diff = Data::Component::MAX_VALUE;
                 for i in 0..Data::NUM_COMPONENTS {
                     // Safety: Obvious.
-                    let diff_abs = unsafe { *diff.get_unchecked(i) };
-                    if diff_abs < min_diff {
+                    let diff_abs = unsafe { *range.get_unchecked(i) };
+                    if diff_abs < min_diff && diff_abs > Data::Component::zero() {
                         min_diff = diff_abs;
                     }
                 }
@@ -82,15 +87,13 @@ impl<Data> QuantizationRectangleArray<Data>
             }
         };
 
-        // compute the range. This will be multiplied by 1.0001 to avoid the boundary value to overflow.
-        let range = (global_metadata_max - global_metadata_min) * Data::Component::from_f64(1.0001);
         // compute the quantization size
         let mut quantization_size = range / unit_cube_size;
         for i in 0..Data::NUM_COMPONENTS {
             // Safety: Obvious.
             unsafe { 
                 *quantization_size.get_unchecked_mut(i) = Data::Component::from_f64(
-                    quantization_size.get_unchecked(i).to_f64().ceil()
+                    quantization_size.get_unchecked(i).to_f64().ceil() + 1.0
                 );
             };
         }
@@ -123,7 +126,15 @@ impl<Data> QuantizationRectangleArray<Data>
         WritableFormat::from_vec(global_metadata_max.to_bits()).write(writer);
         writer(unit_cube_size.to_bits());
 
-
+        #[cfg(feature = "evaluation")]
+        {
+            eval::write_json_pair("portabilization type", "QuantizationRectangleArray".into(), writer);
+            eval::write_json_pair("global metadata min:", global_metadata_min.into(), writer);
+            eval::write_json_pair("global metadata max:", global_metadata_max.into(), writer);
+            eval::write_json_pair("global metadata range:", range.into(), writer);
+            eval::write_json_pair("unit cube size:", unit_cube_size.into(), writer);
+            eval::write_json_pair("quantization size:", quantization_size.into(), writer);
+        }
 
         Self {
             encoded_with_single_u64,
@@ -196,7 +207,7 @@ impl<Data> PortabilizationImpl for QuantizationRectangleArray<Data>
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "evaluation")))]
 mod tests {
     use crate::{encode::attribute::portabilization::PortabilizationType, prelude::NdVector};
 

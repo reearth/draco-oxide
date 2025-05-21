@@ -6,10 +6,13 @@ use crate::core::attribute::ComponentDataType;
 use crate::core::shared::{DataValue, NdVector};
 use crate::core::attribute::Attribute;
 use crate::debug_write;
-use crate::prelude::ConfigType;
+use crate::prelude::{AttributeType, ConfigType};
 use crate::shared::attribute::Portable;
 use crate::utils::splice_disjoint_indices;
 use thiserror::Error;
+
+#[cfg(feature = "evaluation")]
+use crate::eval;
 
 #[remain::sorted]
 #[derive(Error, Debug)]
@@ -44,6 +47,27 @@ impl GroupConfig {
             prediction_transform: prediction_transform::Config::default(),
         }
     }
+
+    fn default_for(att_ty: AttributeType, size: usize) -> Self {
+        match att_ty {
+            AttributeType::Position => Self {
+                range: vec![0..size],
+                prediction_scheme: prediction_scheme::Config{
+                    ty: prediction_scheme::PredictionSchemeType::MeshParallelogramPrediction,
+                    ..prediction_scheme::Config::default()
+                },
+                prediction_transform: prediction_transform::Config{
+                    ty: prediction_transform::PredictionTransformType::Difference,
+                    portabilization: portabilization::Config::default(),
+                }
+            },
+            AttributeType::Normal => Self::default_with_size(size),
+            AttributeType::Color => Self::default_with_size(size),
+            AttributeType::TextureCoordinate => Self::default_with_size(size),
+            _ => Self::default_with_size(size),
+            
+        }
+    }
 }
 
 
@@ -64,6 +88,7 @@ impl ConfigType for Config {
 pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, F> 
 {
 	att: &'encoder Attribute,
+    #[allow(unused)]
 	cfg: Config,
     writer: &'writer mut F,
     parents: &'encoder[&'parents Attribute],
@@ -137,7 +162,10 @@ impl<'parents, 'encoder, 'writer, F> AttributeEncoder<'parents, 'encoder, 'write
             NdVector<N, T>: Vector + Portable,
     {
         let cfg = Config {
-            group_cfgs: vec![GroupConfig::default_with_size( self.att.len() )],
+            group_cfgs: vec![GroupConfig::default_for(
+                self.att.get_attribute_type(),
+                self.att.len()
+            )],
         };
         let mut gm: GroupManager<'encoder, NdVector<N, T>> = GroupManager::compose_groups(&self.parents, cfg);
         gm.split_unpredicted_values();
@@ -192,13 +220,16 @@ impl<'encoder, Data> Group<'encoder, Data>
         impossible_to_predict
     }
 
-    fn predict(&mut self, values_up_till_now: &[Data]) -> Data {
-        self.prediction
-            .predict(values_up_till_now)
-    }
-
-    fn prediction_transform(&mut self, att_val: Data, prediction: Data) {
-        self.transform.map_with_tentative_metadata(att_val, prediction);
+    fn predict_and_transform(&mut self, ranges: &Vec<ops::Range<usize>>, attribute: &Attribute) {
+        for i in ranges.iter().cloned().flatten() {
+            let prediction = self.prediction.predict(
+                unsafe { &attribute.as_slice_unchecked()[0..i] }
+            );
+            self.transform.map_with_tentative_metadata(
+                attribute.get::<Data>(i),
+                prediction
+            );
+        }
     }
 
     fn squeeze_transformed_data<F>(&mut self, writer: &mut F)
@@ -266,10 +297,12 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
         self.groups.push(group);
     }
 
+    #[allow(dead_code)]
     fn partition_iter(&self) -> impl Iterator<Item = (ops::Range<usize>, &Group<'encoder, Data>)> {
         PartitionGroupIter::new(&self.groups, &self.partition)
     }
 
+    #[allow(dead_code)]
     fn partition_iter_mut(&mut self) -> impl Iterator<Item = (ops::Range<usize>, &mut Group<'encoder, Data>)> {
         PartitionGroupIterMut::new(&mut self.groups, &self.partition)
     }
@@ -293,14 +326,34 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
         // write att type
         let att_type = attribute.get_attribute_type().get_id() as u64;
         writer((8, att_type));
+        #[cfg(feature = "evaluation")]
+        eval::write_json_pair(
+            "attribute type", 
+            serde_json::to_value(attribute.get_attribute_type()).unwrap(), 
+            writer
+        );
 
-        // write length
+        // write the attribbute length
         let length = attribute.len() as u64;
         writer((64, length));
+        // for evaluation, write the data size in bytes
+        #[cfg(feature = "evaluation")]
+        eval::write_json_pair(
+            "data size in bytes",
+            // data size in bytes
+            serde_json::to_value(length * std::mem::size_of::<Data>() as u64).unwrap(), 
+            writer
+        );
 
         // write component type
         let component_type = attribute.get_component_type().get_id() as u64;
         writer((8, component_type));
+        #[cfg(feature = "evaluation")]
+        eval::write_json_pair(
+            "component type", 
+            serde_json::to_value(attribute.get_component_type()).unwrap(), 
+            writer
+        );
 
         // write number of components
         let num_components = attribute.get_num_components() as u64;
@@ -308,6 +361,12 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
             return Err(Err::UnsupportedNumComponents(num_components as usize));
         }
         writer((8, num_components));
+        #[cfg(feature = "evaluation")]
+        eval::write_json_pair(
+            "number of components", 
+            serde_json::to_value(num_components).unwrap(), 
+            writer
+        );
 
         // write parents
         let num_parents = attribute.get_parents().len() as u64;
@@ -315,6 +374,13 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
             return Err(Err::TooManyParents(num_parents as usize));
         }
         writer((8, num_parents));
+        #[cfg(feature = "evaluation")]
+        eval::write_json_pair(
+            "number of parents", 
+            serde_json::to_value(num_parents).unwrap(), 
+            writer
+        );
+        
         for parent in attribute.get_parents() {
             let parent_id = parent.as_usize();
             if parent_id >= 1 << 16 {
@@ -323,32 +389,23 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
                 writer((16, parent_id as u64));
             }
         }
+        #[cfg(feature = "evaluation")]
+        {
+            let parents = attribute.get_parents();
+            eval::write_json_pair(
+                "parents", 
+                serde_json::to_value(parents).unwrap(), 
+                writer
+            );
+        }
 
         debug_write!("End of Attribute Metadata", writer);
-
-        let mut predictions = Vec::new();
-        predictions.reserve(attribute.len());
         
         // Prediction
         for (ranges, group) in self.partition.iter().zip(self.groups.iter_mut()) {
-            for att_val_idx in ranges.iter().cloned().flatten() {
-                let prediction = group.predict(unsafe {
-                    &attribute.as_slice_unchecked()[0..att_val_idx]
-                });
-                predictions.push(prediction);
-            }
+            group.predict_and_transform(ranges, attribute);
         }
 
-        // Prediction Transform
-        let mut prediction_it = predictions.into_iter();
-        for (range, group) in self.partition.iter().zip(self.groups.iter_mut()) {
-            for att_val_idx in range.iter().cloned().flatten() {
-                let att_val = attribute.get::<Data>(att_val_idx);
-                let prediction_val = prediction_it.next().unwrap();
-                group.prediction_transform(att_val, prediction_val);
-            }
-        }
-        
         debug_write!("Start of Transform Metadata", writer);
         // write number of groups
         let num_groups = self.groups.len() as u64;
@@ -359,7 +416,19 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
         // Squeeze the transformed data and write it
         let mut transform_outputs = Vec::new();
         transform_outputs.reserve(self.groups.len());
-        for mut group in std::mem::take(&mut self.groups) {
+
+
+        #[cfg(feature = "evaluation")]
+        eval::array_scope_begin("groups", writer);
+
+        for (mut group, _ranges) in std::mem::take(&mut self.groups).into_iter().zip(self.partition.iter()) {
+            #[cfg(feature = "evaluation")]
+            {
+                eval::scope_begin("group", writer);
+                eval::write_json_pair("prediction", group.prediction.get_type().to_string().into(), writer);
+                eval::write_json_pair("indices", format!("{:?}", _ranges).into(), writer);
+            }
+
             // write prediction id
             let prediction_id = group.prediction.get_type().get_id() as u64;
             if prediction_id >= 1 << 4 {
@@ -375,27 +444,40 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
             }
             writer((4, transform_id));
 
+            
+            #[cfg(feature = "evaluation")]
+            eval::scope_begin("transform", writer);
             group.squeeze_transformed_data(writer);
-
+            #[cfg(feature = "evaluation")]
+            eval::scope_end(writer);
+            
+            #[cfg(feature = "evaluation")]
+            eval::scope_begin("portabilization", writer);
             transform_outputs.push(group.get_transform_output(writer));
+            #[cfg(feature = "evaluation")]
+            eval::scope_end(writer);
+
+            #[cfg(feature = "evaluation")]
+            eval::scope_end(writer);
+            
             debug_write!("End of Prediction Transform Metadata", writer);
         }
+
+        #[cfg(feature = "evaluation")]
+        eval::array_scope_end(writer);
+
         debug_write!("End of Transform Metadata", writer);
 
-        
-
-
-        for (range, idx) in self.partition_group_idx_iter() {
+        for (range, gp_idx) in self.partition_group_idx_iter() {
             debug_write!("Start of a Range", writer);
-            writer((8, idx as u64));
+            writer((8, gp_idx as u64));
             let range_size = range.end - range.start;
             // ToDo: Reduce the size by realizing the fact that range size is always less than the attrubute size.
             writer((64, range_size as u64));
             for _ in range {
-                transform_outputs[idx].next().unwrap().write(writer);
+                transform_outputs[gp_idx].next().unwrap().write(writer);
             }
         }
-
         Ok(())
     }
 }

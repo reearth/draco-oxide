@@ -69,34 +69,3 @@ pub enum Err {
     MetadataError(#[from] metadata::Err),
 }
 
-pub(crate) fn decode_string<F>(stream_in: &mut F) -> String
-    where F: FnMut(u8)-> u64
-{
-    let mut bytes = Vec::new();
-    let len = stream_in(64) as usize;
-    for _ in 0..len {
-        bytes.push(stream_in(8) as u8);
-    }
-    String::from_utf8(bytes).unwrap()
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::core::buffer;
-    use crate::encode::encode_string;
-    
-    #[test]
-    fn test_encode_string() {
-        let mut buff_writer = buffer::writer::Writer::new();
-        let mut writer = |input| buff_writer.next(input);
-        encode_string("Hello World!😀", &mut writer);
-        let data: buffer::Buffer = buff_writer.into();
-
-        let mut buff_reader = data.into_reader();
-        let mut reader = |size| buff_reader.next(size);
-        let result = decode_string(&mut reader);
-        
-        assert_eq!(result, "Hello World!😀");
-    }
-}

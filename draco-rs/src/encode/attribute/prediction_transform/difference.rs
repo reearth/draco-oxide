@@ -5,13 +5,14 @@ use crate::shared::attribute::Portable;
 use super::{FinalMetadata, PredictionTransformImpl};
 use crate::core::shared::Max;
 
+#[cfg(feature = "evaluation")]
+use crate::eval;
 
 pub struct Difference<Data> 
     where Data: Vector + Portable
 {
     cfg: super::Config,
     out: Vec<Data>,
-    final_metadata: FinalMetadata<Data>,
     metadata: Data,
 }
 
@@ -31,7 +32,6 @@ impl<Data> Difference<Data>
         Self {
             cfg,
             out: Vec::new(),
-            final_metadata: FinalMetadata::Global(metadata.clone()),
             metadata,
         }
     }
@@ -64,6 +64,18 @@ impl<Data> PredictionTransformImpl<Data> for Difference<Data>
                 *v -= self.metadata
             );
         let final_metadata = FinalMetadata::Global(self.metadata);
+
+        #[cfg(feature = "evaluation")]
+        {
+            eval::write_json_pair("transform  type", "Difference".into(), writer);
+            eval::write_json_pair("metadata type", "Global".into(), writer);
+            eval::write_json_pair("metadata", self.metadata.into(), writer);
+            eval::array_scope_begin("transformed data", writer);
+            for &x in self.out.iter() {
+                eval::write_arr_elem(x.into(), writer);
+            }
+            eval::array_scope_end(writer);
+        }
 
         // write metadata
         WritableFormat::from(final_metadata).write(writer);

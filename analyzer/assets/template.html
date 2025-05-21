@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Mesh Compression</title>
+  <style>
+    body { 
+      margin: 10; 
+      font-family: sans-serif; 
+      flex-direction: column; 
+      height: 100vh; 
+      overflow: auto; /* Allow scrolling if content overflows */
+    }
+    details { 
+      padding: 1em; 
+      background: #f8f8f8; 
+      border-bottom: 1px solid #ddd; 
+      max-height: none; /* Allow details to expand fully */
+      overflow: visible; /* Ensure content is not clipped */
+    }
+    .viewer-container { 
+      display: flex; 
+      height: calc(100vh - 200px); /* Reduce the height of the container */
+      overflow: auto; /* Allow scrolling if content overflows */
+    }
+    .viewer { 
+      flex: 1; 
+      position: relative; 
+      max-width: 45%; /* Limit the width of each viewer */
+      margin: 0 10px; /* Add spacing between viewers */
+    }
+    canvas { 
+      width: 80%; 
+      height: 80%; 
+      display: block; 
+    }
+    summary { 
+      cursor: pointer; 
+      font-weight: bold; 
+    }
+    details > details { 
+      margin-left: 1em; 
+    }
+    .plot-container {
+      margin-top: 2px;
+      width: 100%; /* Ensure it takes the full width of the parent */
+      height: auto; /* Allow height to adjust dynamically */
+      max-height: 800px; /* Set a larger maximum height */
+      overflow: auto; /* Allow scrolling if content overflows */
+    }
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px;
+      background: #f0f0f0;
+      border-bottom: 1px solid #ccc;
+    }
+  </style>
+  <script src="https://cdn.plot.ly/plotly-2.20.0.min.js"></script>
+</head>
+<body>
+  <h1 style="padding: 0.5em; margin: 0; background: #eee; border-bottom: 1px solid #ccc;">Mesh Compression Report</h1>
+
+  <div class="controls">
+    <label>
+      <input type="checkbox" id="toggle_normals">
+      Show Normals
+    </label>
+    <label>
+      <input type="checkbox" id="toggle_clers_symbols">
+      Show Clers Symbols
+    </label>
+    <label>
+      <input type="range" id="face_slider" min="0" max="100" value="100" step="1">
+      <span id="face_slider_label">Faces: 100</span>
+    </label>
+  </div>
+
+  <div class="viewer-container">
+    <div class="viewer" id="original_view"></div>
+    <div class="viewer" id="result_view"></div>
+  </div>
+  
+  
+  <link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
+  <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+
+  <pre id="jsonCode"></pre>
+  <script>
+    // Function to create a tree-like structure with <details> and <summary>
+    function createJsonTree(data, parentElement) {
+      const fragment = document.createDocumentFragment();
+      if (typeof data === 'object' && data !== null) {
+        for (const key in data) {
+          const value = data[key];
+          if (Array.isArray(value) && isArrayOf2DOr3DArrays(value)) {
+            const field = document.createElement('div');
+            field.textContent = `${key}: `;
+            const plotContainer = document.createElement('div');
+            plotContainer.className = 'plot-container';
+            field.appendChild(plotContainer);
+            fragment.appendChild(field);
+            plotArray(value, plotContainer);
+          } else if (typeof value === 'object' && value !== null && !isLowDimensionalArray(value)) {
+            const details = document.createElement('details');
+            const summary = document.createElement('summary');
+            summary.textContent = key;
+            details.appendChild(summary);
+            createJsonTree(value, details);
+            fragment.appendChild(details);
+          } else {
+            if (typeof value === "string") {
+              const truncatedField = createTruncatedTextElement(key, value);
+              fragment.appendChild(truncatedField);
+            } else {
+              const field = document.createElement('div');
+              field.textContent = `${key}: ${value}`;
+              fragment.appendChild(field);
+            }
+          }
+        }
+      } else {
+        const textNode = document.createTextNode(data);
+        fragment.appendChild(textNode);
+      }
+      parentElement.appendChild(fragment);
+    }
+
+    // Add this helper function:
+    function createTruncatedTextElement(key, text) {
+      const container = document.createElement('div');
+      const label = document.createElement('strong');
+      label.textContent = `${key}: `;
+      container.appendChild(label);
+
+      const lines = text.split(/\r?\n/);
+      let linesShown = 5;
+
+      const displaySpan = document.createElement('span');
+      displaySpan.style.whiteSpace = 'pre-wrap';
+
+      // Declare showMoreBtn before updateDisplay is called
+      const showMoreBtn = document.createElement('button');
+      showMoreBtn.textContent = "Show more";
+      showMoreBtn.style.marginLeft = "5px";
+      showMoreBtn.addEventListener('click', () => {
+        linesShown += 5;
+        updateDisplay();
+      });
+
+      function updateDisplay() {
+        displaySpan.textContent = lines.slice(0, linesShown).join('\n');
+        if (linesShown >= lines.length) {
+          showMoreBtn.style.display = "none";
+        }
+      }
+
+      // Initial display
+      updateDisplay();
+
+      container.appendChild(displaySpan);
+      if (lines.length > 5) {
+        container.appendChild(showMoreBtn);
+      }
+
+      return container;
+    }
+
+    // Function to check if an array is array of 2D or 3D arrays
+    function isArrayOf2DOr3DArrays(array) {
+      return Array.isArray(array) && [0].length === 2 || array[0].length === 3;
+    }
+
+    // Function to check if an array is low dimensional
+    function isLowDimensionalArray(array) {
+      return typeof array[0] === 'number' && array.length < 5;
+    }
+
+    // Function to plot 2D or 3D arrays using Plotly.js
+    function plotArray(array, container) {
+      const containerWidth = container.offsetWidth; // Get container width
+      const containerHeight = container.offsetHeight || 300; // Default height if not set
+
+      if (array[0].length === 3) {
+        // 'array' is an array of 3D Vectors (Scatter Plot)
+        const data = [{
+          x: array.map(v => v[0]),
+          y: array.map(v => v[1]),
+          z: array.map(v => v[2]),
+          mode: 'markers',
+          type: 'scatter3d',
+          marker: {
+            size: 1,
+            color: 'red',
+            opacity: 0.5,
+          }
+        }];
+        const layout = {
+          autosize: true,
+          width: containerWidth,
+          height: containerHeight,
+          scene: {
+            xaxis: { title: 'X' },
+            yaxis: { title: 'Y' },
+            zaxis: { title: 'Z' },
+          },
+          margin: {
+            l: 0,
+            r: 0,
+            b: 0,
+            t: 0
+          }
+        };
+        Plotly.newPlot(container, data, layout, { responsive: true });
+      } else if (array[0].length === 2) {
+        // 2D Array (Heatmap)
+        const data = [{
+          z: array,
+          type: 'heatmap'
+        }];
+        const layout = {
+          autosize: true,
+          width: containerWidth,
+          height: containerHeight
+        };
+        Plotly.newPlot(container, data, layout, { responsive: true });
+      }
+    }
+
+    // Fetch the JSON data and render it as a tree
+    fetch("./eval.json")
+      .then(res => res.json())
+      .then(data => {
+        const container = document.getElementById("jsonCode");
+        createJsonTree(data, container);
+      })
+      .catch(err => {
+        console.error("Failed to load JSON:", err);
+      });
+  </script>
+
+  <script type="module">
+    import { setupComparison } from './viewer.js';
+    setupComparison('./original.obj', './result.obj');
+  </script>
+</body>
+</html>

@@ -14,6 +14,22 @@ pub(crate) enum Symbol {
     H(usize), // Number of vertices in the handle.
 }
 
+impl Symbol {
+    #[inline]
+    /// Returns the symbol as a character together with the metadata if it is a hole or handle.
+    pub(crate) fn as_char(&self) -> (char, Option<usize>) {
+        match self {
+            Symbol::C => ('C', None),
+            Symbol::R => ('R', None),
+            Symbol::L => ('L', None),
+            Symbol::E => ('E', None),
+            Symbol::S => ('S', None),
+            Symbol::M(n_vertices) => ('M', Some(*n_vertices)),
+            Symbol::H(n_vertices) => ('H', Some(*n_vertices)),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum SymbolEncodingConfig {
 	/// The default binary representations for the CLERS symbols, defined

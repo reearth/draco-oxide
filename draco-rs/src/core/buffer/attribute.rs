@@ -1,4 +1,7 @@
 use std::{ptr, mem};
+use serde::ser::SerializeSeq;
+use serde::Serialize;
+
 use crate::core::shared::DataValue;
 use crate::core::attribute::ComponentDataType;
 use crate::core::shared::Vector;
@@ -12,25 +15,18 @@ pub(crate) struct AttributeBuffer {
     /// The number of values of the attribute.
     len: usize,
 
-    /// pointer of the last element.
+    /// pointer to the last element.
+    #[allow(unused)]
     last: *mut u8,
 
+    /// component type of the attribute.
     component_type: ComponentDataType,
 
     num_components: usize,
 }
 
-impl AttributeBuffer {
-    pub fn new(component_type: ComponentDataType, num_components: usize) -> Self {
-        Self {
-            data: RawBuffer::new(),
-            len: 0,
-            last: ptr::null_mut(),
-            component_type,
-            num_components
-        }
-    }
 
+impl AttributeBuffer {
     fn as_ptr(&self) -> *mut u8 {
         self.data.as_ptr()
     }
@@ -80,6 +76,7 @@ impl AttributeBuffer {
         self.num_components
     }
 
+    #[allow(unused)]
     pub(crate) fn push<Data>(&mut self, data: Data) 
         where 
             Data: Vector,
@@ -126,22 +123,6 @@ impl AttributeBuffer {
         }
 
         ptr::write(self.last as *mut Data, data);
-    }
-
-    fn push_value_unchecked<Data>(&mut self, value: Data) 
-        where Data: DataValue
-    {
-        let size = mem::size_of::<Data>();
-
-        debug_assert!(!self.last.is_null());
-        debug_assert_eq!(self.last, unsafe{ self.data.as_ptr().add(self.len * size) });
-        debug_assert!(self.len * size <= isize::MAX as usize);
-
-        unsafe {
-            ptr::write(self.last as *mut Data, value);
-        }
-
-        self.last = unsafe { self.last.add(size) };
     }
 
 	#[inline(always)]
@@ -192,6 +173,7 @@ impl AttributeBuffer {
         )
     }
 
+    #[allow(unused)]
     pub unsafe fn into_vec<Data>(self) -> Vec<Data> 
         where Data: Vector,
     {
@@ -236,6 +218,102 @@ impl AttributeBuffer {
             self.as_ptr(),
             self.len * self.num_components * self.component_type.size(),
         )
+    }
+
+    /// #Safety
+    /// This function assumes that the permutation is welll-defined in the sense that
+    /// (1) it has the same length as the buffer,
+    /// (2) its elements are distinct.
+    pub fn permute(&mut self, permutation: &[usize]) {
+        debug_assert_eq!(self.len, permutation.len(), "Permutation length does not match the buffer length");
+        debug_assert!(
+            {
+                let mut p = permutation.to_vec();
+                p.sort();
+                p.into_iter().enumerate().all(|(i, x)| i == x)
+            },
+            "Permutation is not a valid permutation: This violates the safety contract of the function, so need to get resolved immediately",
+        );
+        let mut tmp_att = self.clone();
+
+        let elem_size = self.num_components * self.component_type.size();
+        for (i, &new_idx) in permutation.iter().enumerate() {
+            // Copy the value at self[i] to tmp_att[new_idx]
+            // We need to copy the raw bytes for each element.
+            let src = unsafe { self.as_ptr().add(i * elem_size) };
+            let dst = unsafe { tmp_att.as_ptr().add(new_idx * elem_size) };
+            unsafe {
+                std::ptr::copy_nonoverlapping(src, dst, elem_size);
+            }
+        }
+        mem::swap(self, &mut tmp_att);
+    }
+}
+
+
+impl Serialize for AttributeBuffer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_seq(Some(self.len))?;
+        match self.component_type {
+            ComponentDataType::U8 => {
+                match self.num_components {
+                    1 => s.serialize_element(unsafe{ self.as_slice::<[u8;1]>() }),
+                    2 => s.serialize_element(unsafe{ self.as_slice::<[u8;2]>() }),
+                    3 => s.serialize_element(unsafe{ self.as_slice::<[u8;3]>() }),
+                    4 => s.serialize_element(unsafe{ self.as_slice::<[u8;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::U16 => {
+                match self.num_components {
+                    1 => s.serialize_element(unsafe{ self.as_slice::<[u16;1]>() }),
+                    2 => s.serialize_element(unsafe{ self.as_slice::<[u16;2]>() }),
+                    3 => s.serialize_element(unsafe{ self.as_slice::<[u16;3]>() }),
+                    4 => s.serialize_element(unsafe{ self.as_slice::<[u16;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::U32 => {
+                match self.num_components {
+                    1 => s.serialize_element(unsafe{ self.as_slice::<[u32;1]>() }),
+                    2 => s.serialize_element(unsafe{ self.as_slice::<[u32;2]>() }),
+                    3 => s.serialize_element(unsafe{ self.as_slice::<[u32;3]>() }),
+                    4 => s.serialize_element(unsafe{ self.as_slice::<[u32;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::U64 => {
+                match self.num_components {
+                    1 => s.serialize_element(unsafe{ self.as_slice::<[u64;1]>() }),
+                    2 => s.serialize_element(unsafe{ self.as_slice::<[u64;2]>() }),
+                    3 => s.serialize_element(unsafe{ self.as_slice::<[u64;3]>() }),
+                    4 => s.serialize_element(unsafe{ self.as_slice::<[u64;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::F32 => {
+                match self.num_components {
+                    1 => s.serialize_element(unsafe{ self.as_slice::<[f32;1]>() }),
+                    2 => s.serialize_element(unsafe{ self.as_slice::<[f32;2]>() }),
+                    3 => s.serialize_element(unsafe{ self.as_slice::<[f32;3]>() }),
+                    4 => s.serialize_element(unsafe{ self.as_slice::<[f32;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::F64 => {
+                match self.num_components {
+                    1 => s.serialize_element(unsafe{ self.as_slice::<[f64;1]>() }),
+                    2 => s.serialize_element(unsafe{ self.as_slice::<[f64;2]>() }),
+                    3 => s.serialize_element(unsafe{ self.as_slice::<[f64;3]>() }),
+                    4 => s.serialize_element(unsafe{ self.as_slice::<[f64;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+        }?;
+        s.end()
     }
 }
 
@@ -579,5 +657,25 @@ mod tests {
         // check if the data is correct
         let answer = AttributeBuffer::from(data);
         assert_eq!(att, answer, "The attribute buffer is not equal to the original");
+    }
+
+
+    #[test]
+    fn test_permute() {
+        let data = vec![
+            NdVector::from([1f32, 2.0, 3.0]), 
+            NdVector::from([4f32, 5.0, 6.0]), 
+            NdVector::from([7f32, 8.0, 9.0])
+        ];
+        let mut att = AttributeBuffer::from(data);
+        let permutation = vec![2, 1, 0];
+        att.permute(&permutation);
+        let expected_data = vec![
+            NdVector::from([7f32, 8.0, 9.0]), 
+            NdVector::from([4f32, 5.0, 6.0]), 
+            NdVector::from([1f32, 2.0, 3.0])
+        ];
+        let expected_att = AttributeBuffer::from(expected_data);
+        assert_eq!(att, expected_att);
     }
 }

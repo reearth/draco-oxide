@@ -140,6 +140,7 @@ impl_max!(u8, u16, u32, u64);
 
 pub trait DataValue: 
     Clone + Copy + fmt::Debug + PartialEq + PartialOrd
+    + Into<serde_json::Value> 
     + Abs + Max
     + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Output=Self> + ops::Div<Output=Self>
     + ops::AddAssign + ops::SubAssign + ops::MulAssign + ops::DivAssign
@@ -294,6 +295,14 @@ impl<const N: usize, T> fmt::Debug for NdVector<N, T>
     }
 }
 
+impl<const N: usize,T> From<NdVector<N,T>> for serde_json::Value 
+    where [T; N]: Into<serde_json::Value>
+{
+    fn from(vector: NdVector<N,T>) -> Self {
+        vector.data.into()
+    }
+}
+
 
 use std::ops::Index;
 use std::ops::IndexMut;
@@ -303,6 +312,7 @@ impl_ndvector_ops!();
 
 pub trait Vector:
     Clone + Copy + fmt::Debug + PartialEq
+    + Into<serde_json::Value> 
     + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Self::Component, Output=Self> + ops::Div<Self::Component, Output=Self> 
     + ops::AddAssign + ops::SubAssign + ops::Mul<Self::Component, Output=Self> + ops::Div<Self::Component, Output=Self>
     + ElementWiseMul<Output = Self> + ElementWiseDiv<Output = Self>

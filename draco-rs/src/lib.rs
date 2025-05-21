@@ -33,3 +33,6 @@ pub mod prelude {
     pub use crate::encode::{self, encode};
     pub use crate::decode::{self, decode};
 }
+
+#[cfg(any(test, feature = "evaluation"))]
+pub mod eval;

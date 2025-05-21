@@ -45,7 +45,8 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshMultiParallelogramPr
         let mut vertices_without_parallelogram: Vec<ops::Range<usize>> = Vec::new();
 
         for face in self.faces {
-            debug_assert!(face.is_sorted());
+            let mut face = *face;
+            face.sort();
             let num_unvisited_vertices = face.iter()
                 .filter(|&&v| v>=is_already_encoded.len() || !is_already_encoded[v])
                 .count();
@@ -69,8 +70,7 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshMultiParallelogramPr
                 }
             } else if num_unvisited_vertices == 2 {
                 let unvisited_vertices = face.into_iter()
-                    .filter(|&&v| v>=is_already_encoded.len() || !is_already_encoded[v])
-                    .copied()
+                    .filter(|&v| v>=is_already_encoded.len() || !is_already_encoded[v])
                     .collect::<Vec<_>>();
                 let idx1 = unvisited_vertices[0];
                 let idx2 = unvisited_vertices[1];
@@ -81,7 +81,7 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshMultiParallelogramPr
                     vertices_without_parallelogram.push(idx2..idx2+1);
                 }
             }
-            for &v in face {
+            for v in face {
                 if v >= is_already_encoded.len() {
                     is_already_encoded.resize(v + 1, false);
                 }
@@ -268,7 +268,7 @@ mod test {
             [15,16,20], [16,20,21], [16,17,21], [17,21,22], [17,18,22], [18,22,23], [18,19,23], [19,23,24]
         ];
         faces.sort();
-        let mut points = {
+        let points = {
             let n_points = 25;
             let mut points = Vec::new();
             for i in 0..n_points {
@@ -280,7 +280,7 @@ mod test {
             points
         };
 
-        let atts = vec![
+        let mut atts = vec![
             Attribute::from_faces(
                 AttributeId::new(0),
                 faces.to_vec(),
@@ -295,16 +295,17 @@ mod test {
                 ],
             ),
         ];
-        let atts = vec![
-            &atts[0],
-            &atts[1],
-        ];
 
         let mut encoder = Edgebreaker::new(Config::default());
         let mut buff_writer = Writer::<MsbFirst>::new();
         let mut writer = |input: (u8, u64)| buff_writer.next(input);
-        let rerult = encoder.encode_connectivity(&mut faces, &mut points, &mut writer);
+        let rerult = encoder.encode_connectivity(&mut faces, &mut [&mut atts[1]], &mut writer);
         assert!(rerult.is_ok());
+
+        let atts = vec![
+            &atts[0],
+            &atts[1],
+        ];
 
         let mut mesh_prediction = MeshMultiParallelogramPrediction::<NdVector<3, f32>>::new(&*atts);
         let mut seq = vec![0..points.len()];

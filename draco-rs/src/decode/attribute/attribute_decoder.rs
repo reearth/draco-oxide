@@ -119,7 +119,6 @@ impl<'parents, 'stream_in, F> AttributeDecoder<'parents, 'stream_in, F>
             T: DataValue + Copy,
             NdVector<N, T>: Vector + Portable,
     {
-
         // get groups
         debug_expect!("Start of Transform Metadata", self.stream_in);
         let num_groups = (self.stream_in)(8) as usize;

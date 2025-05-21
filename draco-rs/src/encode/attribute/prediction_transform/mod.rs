@@ -6,6 +6,9 @@ pub mod oct_reflection;
 pub mod oct_difference;
 use crate::encode::attribute::portabilization::PortabilizationImpl;
 
+#[cfg(feature = "evaluation")]
+use crate::eval;
+
 use std::{
 	cmp,
 	fmt
@@ -237,7 +240,16 @@ impl<Data> PredictionTransformImpl<Data> for NoPredictionTransform<Data>
 		).portabilize()
 	}
 
-	fn squeeze<F>(&mut self, _writer: &mut F) 
+	fn squeeze<F>(&mut self, writer: &mut F) 
 		where F: FnMut((u8,u64))  
-	{}
+	{
+		#[cfg(feature = "evaluation")]
+        {
+            eval::array_scope_begin("transformed data", writer);
+            for &x in self.out.iter() {
+                eval::write_arr_elem(x.into(), writer);
+            }
+            eval::array_scope_end(writer);
+        }
+	}
 }

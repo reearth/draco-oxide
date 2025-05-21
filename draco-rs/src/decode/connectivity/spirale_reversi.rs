@@ -9,7 +9,7 @@ use crate::shared::connectivity::edgebreaker::symbol_encoder::{
 use std::mem;
 
 use crate::shared::connectivity::edgebreaker::{
-    orientation_of_next_face, NUM_CONNECTED_COMPONENTS_SLOT, NUM_FACES_SLOT
+    edge_shared_by, orientation_of_next_face, NUM_CONNECTED_COMPONENTS_SLOT, NUM_FACES_SLOT
 };
 
 #[derive(thiserror::Error, Debug, Clone)]
@@ -64,6 +64,7 @@ impl SpiraleReversi {
         let mut num_faces = Vec::new();
         mem::swap(&mut num_faces, &mut self.num_faces);
         for _ in 0..self.num_connected_components {
+            let sign_of_first_face = reader(1) == 1;
             // get the number of faces = number of symbols.
             let num_faces = reader(NUM_FACES_SLOT);
             self.num_decoded_vertices += 2;
@@ -72,15 +73,18 @@ impl SpiraleReversi {
                 self.num_decoded_vertices-2,
                 self.num_decoded_vertices-1
             ];
-            for i in 0..num_faces {
+            for _ in 0..num_faces {
                 self.spirale_reversi_recc::<SE, F>(reader);
             }
+            self.recover_orientation(sign_of_first_face);
         }
     }
 
     #[inline]
     fn spirale_reversi_recc<SE: SymbolEncoder, F: FnMut(u8)->u64>(&mut self, reader: &mut F) {
-        match SE::decode_symbol(reader) {
+        let symbol = SE::decode_symbol(reader);
+        assert!(!self.faces.contains(&[35,36,41]));
+        match symbol {
             Symbol::C => {
                 let right_vertex = self.active_edge[0];
                 // ToDo: Optimize this
@@ -402,14 +406,16 @@ impl SpiraleReversi {
                 new_face.sort();
                 self.faces.push(new_face);
 
-                // renumber the vertices
+                // renumber the vertices: we merge the vertex 'self.active_edge[0]' with 'curr_vertex'.
+                let smaller = cmp::min(curr_vertex, self.active_edge[0]);
+                let larger = cmp::max(curr_vertex, self.active_edge[0]);
                 for face in &mut self.faces {
                     let mut is_face_updated = false;
                     for vertex in &mut *face {
-                        if *vertex == self.active_edge[0] {
-                            *vertex = curr_vertex;
+                        if *vertex == larger {
+                            *vertex = smaller;
                             is_face_updated = true;
-                        } else if *vertex > self.active_edge[0] {
+                        } else if *vertex > larger {
                             *vertex -= 1;
                         }
                     }
@@ -419,30 +425,31 @@ impl SpiraleReversi {
                 }
                 for edge in &mut self.active_edge_stack {
                     for vertex in edge.iter_mut() {
-                        if *vertex == self.active_edge[0] {
-                            *vertex = curr_vertex;
-                        } else if *vertex > self.active_edge[0] {
+                        if *vertex == larger {
+                            *vertex = smaller;
+                        } else if *vertex > larger {
                             *vertex -= 1;
                         }
                     }
                 }
-                if self.active_edge[1] > self.active_edge[0] {
+                assert!(self.active_edge[1] != larger);
+                if self.active_edge[1] > larger {
                     self.active_edge[1] -= 1;
                 }
                 for edge in &mut self.boundary_edges {
                     for vertex in edge.iter_mut() {
-                        if *vertex == self.active_edge[0] {
-                            *vertex = curr_vertex;
-                        } else if *vertex > self.active_edge[0] {
+                        if *vertex == larger {
+                            *vertex = smaller;
+                        } else if *vertex > larger {
                             *vertex -= 1;
                         }
                     }
                     edge.sort();
                 }
                 self.boundary_edges.sort();
-                if next_vertex == self.active_edge[0] {
-                    next_vertex = curr_vertex;
-                } else if next_vertex > self.active_edge[0] {
+                if next_vertex == larger {
+                    next_vertex = smaller;
+                } else if next_vertex > larger {
                     next_vertex -= 1;
                 }
 
@@ -456,10 +463,10 @@ impl SpiraleReversi {
                 self.boundary_edges.insert(idx, new_edge);
 
                 self.num_decoded_vertices -= 1;
-                self.active_edge = [self.active_edge[1], next_vertex];
+                // self.active_edge = [self.active_edge[1], next_vertex];
+                self.active_edge[0] = next_vertex;
             },
             Symbol::H(metadata) => {
-                unimplemented!();
                 let mut new_face = [
                     self.active_edge[0],
                     self.active_edge[1],
@@ -670,6 +677,46 @@ impl SpiraleReversi {
         }
         true
     }
+
+    fn recover_orientation(&mut self, sign_of_first_face: bool) {
+        if self.faces.is_empty() {
+            return;
+        }
+        // records the sign of the faces. 'None' if the face is not visited.
+        let mut sign_of_faces = vec![None; self.faces.len()];
+        let mut face_stack = vec![self.faces.len()-1];
+        sign_of_faces[self.faces.len()-1] = Some(sign_of_first_face);
+        while let Some(face_idx) = face_stack.pop() {
+            let face = self.faces[face_idx];
+
+            // ToDo: Optimize this.
+            let adjacent_faces = (0..self.faces.len())
+                .rev()
+                .filter(|i| sign_of_faces[*i].is_none())
+                .filter_map(|i| edge_shared_by(&face, &self.faces[i]).map(|e| (e,i)))
+                .take(2)
+                .collect::<Vec<_>>();
+
+            for (shared_edge, adj_face_idx) in adjacent_faces {
+                sign_of_faces[adj_face_idx] = Some(
+                    orientation_of_next_face(
+                        face, 
+                        sign_of_faces[face_idx].unwrap(), 
+                        shared_edge, 
+                        self.faces[adj_face_idx]
+                    )
+                );
+                face_stack.push(adj_face_idx);
+            }
+        }
+
+        for (i, s) in sign_of_faces.into_iter().enumerate() {
+            let s = s.unwrap();
+            if !s {
+                self.faces[i].swap(1, 2);
+            }
+        }
+    }
 }
 
 impl ConnectivityDecoder for SpiraleReversi {
@@ -695,9 +742,10 @@ impl ConnectivityDecoder for SpiraleReversi {
     }
 }
 
-
+#[cfg(not(feature = "evaluation"))]
 #[cfg(test)]
 mod tests {
+    use crate::core::attribute::AttributeId;
     use crate::core::buffer::{writer, Buffer};
     use crate::encode::connectivity::edgebreaker::Config;
     use crate::encode::connectivity::{edgebreaker, ConnectivityEncoder};
@@ -706,65 +754,73 @@ mod tests {
         NdVector,
         Vector
     };
+    use crate::prelude::{Attribute, AttributeType};
     use super::*;
     use crate::decode::connectivity::ConnectivityDecoder;
 
-    #[test]
-    fn simplest() {
-        let mut faces = vec![
-            [0,1,2],
-            [1,2,3]
-        ];
-        let  mut points = vec![NdVector::<3,f32>::zero(); 4];
+
+    fn manual_test(
+        mut original_faces: Vec<[VertexIdx; 3]>, 
+        points: Vec<NdVector<3,f32>>, 
+        expected_faces: Vec<[VertexIdx; 3]>) 
+    {
+        let mut point_att = Attribute::from(AttributeId::new(0), points, AttributeType::Position, Vec::new());
         let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
-        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        assert!(edgebreaker.init(&mut [&mut point_att], &mut original_faces).is_ok());
         let mut buff_writer = writer::Writer::new();
         let mut writer = |input| buff_writer.next(input);
-        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        assert!(edgebreaker.encode_connectivity(&mut original_faces, &mut [&mut point_att], &mut writer).is_ok());
         let buffer: Buffer = buff_writer.into();
         let mut buff_reader = buffer.into_reader();
         let mut reader = |input| buff_reader.next(input);
         let mut spirale_reversi = SpiraleReversi::new();
         let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
 
-        assert_eq!(decoded_faces.as_ref().unwrap(), &vec![
+        let decoded_faces = match decoded_faces {
+            Ok(faces) => faces,
+            Err(e) => panic!("Failed to decode faces: {:?}", e),
+        };
+        assert_eq!(&decoded_faces, &expected_faces);
+        assert_eq!(original_faces, decoded_faces);
+    }
+
+    #[test]
+    fn simplest() {
+        let original_faces = vec![
             [0,1,2],
+            [1,2,3]
+        ];
+        let points = vec![NdVector::<3,f32>::zero(); 4];
+
+        let expected_faces = vec![
+            [0,2,1],
             [0,1,3]
-        ]);
-        assert_eq!(faces, &*decoded_faces.unwrap());
+        ];
+
+        manual_test(original_faces, points, expected_faces);
     }
 
     #[test]
     fn test_split() {
-        let mut faces = vec![
+        let original_faces = vec![
             [0,1,2],
             [0,2,4],
             [0,4,5],
             [2,3,4]
         ];
-        // positions do not matter
-        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
-
-        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
-        assert!(edgebreaker.init(&mut points, &faces).is_ok());
-        let mut buff_writer = writer::Writer::new();
-        let mut writer = |input| buff_writer.next(input);
-        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
-        let buffer: Buffer = buff_writer.into();
-        let mut reader = buffer.into_reader();
-        let mut reader = |input| reader.next(input);
-        let mut spirale_reversi = SpiraleReversi::new();
-        let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
-
-        assert_eq!(decoded_faces.as_ref().unwrap(), &vec![
-            [0,1,2], [1,3,4], [0,1,3], [0,3,5]
-        ]);
-        assert_eq!(faces, &*decoded_faces.unwrap());
+        let points = vec![NdVector::<3,f32>::zero(); original_faces.iter().flatten().max().unwrap()+1];
+        let expected_faces = vec![
+            [0,2,1], 
+            [1,4,3], 
+            [0,1,3], 
+            [0,3,5]
+        ];
+        manual_test(original_faces, points, expected_faces);
     }
 
     #[test]
     fn test_disc() {
-        let mut faces = vec![
+        let original_faces = vec![
             [0,1,4],
             [0,3,4],
             [1,2,5],
@@ -781,41 +837,29 @@ mod tests {
             [9,10,11]
         ];
         // positions do not matter
-        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
-
-        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
-        assert!(edgebreaker.init(&mut points, &faces).is_ok());
-        let mut buff_writer = writer::Writer::new();
-        let mut writer = |input| buff_writer.next(input);
-        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
-        let buffer: Buffer = buff_writer.into();
-        let mut buff_reader = buffer.into_reader();
-        let mut reader = |input| buff_reader.next(input);
-        let mut spirale_reversi = SpiraleReversi::new();
-        let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
-
-        assert_eq!(decoded_faces.as_ref().unwrap(), &vec![
-            [0,1,2],
-            [1,3,4],
-            [0,1,3],
-            [0,3,5],
-            [0,5,6],
-            [5,6,7],
-            [6,7,8],
-            [0,6,8],
-            [0,2,8],
-            [2,8,9],
-            [2,9,10],
-            [2,10,11],
-            [1,2,11],
+        let points = vec![NdVector::<3,f32>::zero(); original_faces.iter().flatten().max().unwrap()+1];
+        let exptected_faces = vec![
+            [0,1,2], 
+            [1,3,4], 
+            [0,3,1], 
+            [0,5,3], 
+            [0,6,5], 
+            [5,6,7], 
+            [6,8,7], 
+            [0,8,6], 
+            [0,2,8], 
+            [2,9,8], 
+            [2,10,9], 
+            [2,11,10], 
+            [1,11,2], 
             [1,4,11]
-        ]);
-        assert_eq!(faces, &*decoded_faces.unwrap());
+        ];
+        manual_test(original_faces, points, exptected_faces);
     }
 
     #[test]
     fn test_long_split() {
-        let mut faces = vec![
+        let original_faces = vec![
             [0,1,2],
             [0,2,3],
             [0,3,4],
@@ -823,95 +867,100 @@ mod tests {
             [1,5,6]
         ];
         // positions do not matter
-        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
+        let points = vec![NdVector::<3,f32>::zero(); original_faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
-        assert!(edgebreaker.init(&mut points, &faces).is_ok());
-        let mut buff_writer = writer::Writer::new();
-        let mut writer = |input| buff_writer.next(input);
-        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
-        let buffer: Buffer = buff_writer.into();
-        let mut buff_reader = buffer.into_reader();
-        let mut reader = |input| buff_reader.next(input);
-        let mut spirale_reversi = SpiraleReversi::new();
-        let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
-
-        assert_eq!(decoded_faces.as_ref().unwrap(), &vec![
-            [0,1,2], 
+        let expected_faces = vec![
+            [0,2,1], 
             [0,1,3], 
-            [4,5,6], 
+            [4,6,5], 
             [3,4,5], 
             [0,3,5]
-        ]);
-        assert_eq!(faces, &*decoded_faces.unwrap());
+        ];
+
+        manual_test(original_faces, points, expected_faces);
     }
 
     #[test]
     fn test_hole() {
-        let mut faces = [
+        let original_faces = vec![
             [9,23,24], [8,9,23], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
             [8,22,23], [7,8,22], [1,7,8], [0,1,7], [0,1,2], [0,2,3], [2,3,13], [3,13,14],
             [7,21,22], [6,7,21], [0,6,7], [0,5,6], [0,3,5], [3,4,5], [3,4,14], [4,14,15],
             [6,20,21], [6,19,20], [5,6,19], [5,18,19], [4,5,18], [4,17,18], [4,15,17], [15,16,17]
         ];
-        faces.sort();
 
         // positions do not matter
-        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
+        let points = vec![NdVector::<3,f32>::zero(); original_faces.iter().flatten().max().unwrap()+1];
 
-        let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
-        assert!(edgebreaker.init(&mut points, &faces).is_ok());
-        let mut buff_writer = writer::Writer::new();
-        let mut writer = |input| buff_writer.next(input);
-        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
-        let buffer: Buffer = buff_writer.into();
-        let mut buff_reader = buffer.into_reader();
-        let mut reader = |input| buff_reader.next(input);
-        let mut spirale_reversi = SpiraleReversi::new();
-        let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
+        let expected_faces = vec![
+            [0,1,2], [3,4,5], [4,6,7], [3,6,4], [3,8,6], [3,9,8], [8,9,10], [9,11,10], 
+            [10,11,12], [11,13,12], [1,13,11], [1,14,13], [0,14,1], [0,15,14], [15,16,17], [0,16,15],
+            [0,18,16], [0,2,18], [2,19,18], [20,21,22], [19,21,20], [2,21,19], [2,23,21], [1,23,2], 
+            [1,11,23], [9,23,11], [9,24,23], [3,24,9], [3,5,24], [5,22,24], [21,24,22], [21,23,24]
+        ];
 
-        assert_eq!(decoded_faces.as_ref().unwrap(), 
-            &vec![
-                [0,1,2], [3,4,5], [4,6,7], [3,4,6], [3,6,8], [3,8,9], [8,9,10], [9,10,11], 
-                [10,11,12], [11,12,13], [1,11,13], [1,13,14], [0,1,14], [0,14,15], [15,16,17], [0,15,16], 
-                [0,16,18], [0,2,18], [2,18,19], [20,21,22], [19,20,21], [2,19,21], [2,21,23], [1,2,23],
-                [1,11,23], [9,11,23], [9,23,24], [3,9,24], [3,5,24], [5,22,24], [21,22,24], [21,23,24]
-            ]
-        );
-        // assert_eq!(faces, &*decoded_faces);
+        manual_test(original_faces, points, expected_faces);
     }
 
     // #[test]
     fn test_handle() {
         // create torus in order to test the handle symbol.
-        let mut faces = [
+        let original_faces = vec![
             [9,12,13], [8,9,13], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
             [8,13,14], [7,8,14], [1,7,8], [0,1,7], [0,1,2], [0,2,3], [2,3,13], [3,13,14],
             [7,14,15], [6,7,15], [0,6,7], [0,5,6], [0,3,5], [3,4,5], [3,4,14], [4,14,15],
             [6,12,15], [6,9,12], [5,6,9], [5,9,10], [4,5,10], [4,10,11], [4,11,15], [11,12,15]
         ];
-        faces.sort();
 
         // positions do not matter
-        let mut points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
+        let points = vec![NdVector::<3,f32>::zero(); original_faces.iter().flatten().max().unwrap()+1];
 
+        let expected_faces = vec![
+            [0,1,2], [1,3,4], [0,1,3], [0,3,5], [2,6,7], [4,7,8], [6,7,8], [5,6,8], 
+            [5,8,9], [0,5,9], [0,9,10], [0,2,10], [2,7,10], [7,10,11], [4,7,11], [3,4,11], 
+            [3,11,12], [3,5,12], [5,6,12], [6,12,13], [2,6,13], [1,2,13], [1,13,14], [1,4,14], 
+            [4,8,14], [8,9,14], [9,14,15], [9,10,15], [10,11,15], [11,12,15], [12,13,15], [13,14,15]
+        ];
+
+        manual_test(original_faces, points, expected_faces);
+    }
+
+    // This test is disabled because it takes too long to run.
+    // #[test]
+    #[allow(unused)]
+    fn test_with_large_mesh() {
+        let (bunny,_) = tobj::load_obj(
+            format!("tests/data/bunny.obj"), 
+            &tobj::GPU_LOAD_OPTIONS
+        ).unwrap();
+        let bunny = &bunny[0];
+        let mesh = &bunny.mesh;
+
+        let mut faces = mesh.indices.chunks(3)
+            .map(|x| [x[0] as usize, x[1] as usize, x[2] as usize])
+            .collect::<Vec<_>>();
+
+        let points = mesh.positions.chunks(3)
+            .map(|x| NdVector::<3,f32>::from([x[0], x[1], x[2]]))
+            .collect::<Vec<_>>();
+
+        let mut point_att = Attribute::from(AttributeId::new(0), points, AttributeType::Position, Vec::new());
         let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
-        assert!(edgebreaker.init(&mut points, &faces).is_ok());
+        assert!(edgebreaker.init(&mut [&mut point_att], &mut faces).is_ok());
         let mut buff_writer = writer::Writer::new();
         let mut writer = |input| buff_writer.next(input);
-        assert!(edgebreaker.encode_connectivity(&mut faces, &mut points, &mut writer).is_ok());
+        assert!(edgebreaker.encode_connectivity(&mut faces, &mut [&mut point_att], &mut writer).is_ok());
         let buffer: Buffer = buff_writer.into();
         let mut buff_reader = buffer.into_reader();
         let mut reader = |input| buff_reader.next(input);
         let mut spirale_reversi = SpiraleReversi::new();
         let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
 
-        assert_eq!(decoded_faces.as_ref().unwrap(), &vec![
-            [0,1,2], [1,3,4], [0,1,3], [0,3,5], [2,6,7], [4,7,8], [6,7,8], [5,6,8], 
-            [5,8,9], [0,5,9], [0,9,10], [0,2,10], [2,7,10], [7,10,11], [4,7,11], [3,4,11], 
-            [3,11,12], [3,5,12], [5,6,12], [6,12,13], [2,6,13], [1,2,13], [1,13,14], [1,4,14], 
-            [4,8,14], [8,9,14], [9,14,15], [9,10,15], [10,11,15], [11,12,15], [12,13,15], [13,14,15]
-        ]);
-        assert_eq!(faces, &*decoded_faces.unwrap());
+        let decoded_faces = match decoded_faces {
+            Ok(faces) => faces,
+            Err(e) => panic!("Failed to decode faces: {:?}", e),
+        };
+
+        assert_eq!(faces, decoded_faces);
     }
 }
