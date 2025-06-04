@@ -1,14 +1,20 @@
+use crate::core::bit_coder::ByteWriter;
+
 #[remain::sorted]
 #[derive(thiserror::Error, Debug)]
 pub enum Err {
     
 }
 
-pub fn encode_metadata<F>(
+pub fn encode_metadata<W>(
     _mesh: &crate::core::mesh::Mesh,
-    _writer: &mut F,
+    writer: &mut W,
 ) -> Result<(), Err>     
-    where F: FnMut((u8, u64)),
+    where W: ByteWriter,
 {
+    // Write Encoder
+    writer.write_u32(0);
+
+    // ToDo: Implement metadata encoding
     Ok(())
 }

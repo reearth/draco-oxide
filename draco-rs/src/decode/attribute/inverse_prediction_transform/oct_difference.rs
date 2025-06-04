@@ -7,6 +7,7 @@ use crate::encode::attribute::prediction_transform::geom::{
 use crate::core::shared::{
     NdVector, Vector
 };
+use crate::prelude::ByteReader;
 
 pub struct OctahedronDifferenceInverseTransform<Data> 
     where Data: Vector,
@@ -25,10 +26,10 @@ where
     type Correction = NdVector<2,f64>;
     type Metadata = ();
 
-    fn new<F>(stream_in: &mut F) -> Result<Self, super::Err>
-        where F: FnMut(u8) -> u64 
+    fn new<R>(reader: &mut R) -> Result<Self, super::Err>
+        where R: ByteReader
     {
-        let deportabilization = Deportabilization::new(stream_in)?;
+        let deportabilization = Deportabilization::new(reader)?;
         Ok(
             Self {
                 _marker: std::marker::PhantomData,
@@ -37,10 +38,10 @@ where
         )
     }
 
-    fn inverse<F>(&self, pred: Self::Data, stream_in: &mut F) -> Self::Data 
-        where F: FnMut(u8) -> u64
+    fn inverse<R>(&self, pred: Self::Data, reader: &mut R) -> Self::Data 
+        where R: ByteReader
     {
-        let crr = self.deportabilization.deportabilize_next(stream_in);
+        let crr = self.deportabilization.deportabilize_next(reader);
         // Safety:
         // We made sure that the data is three dimensional.
         debug_assert!(

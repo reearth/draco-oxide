@@ -1,3 +1,4 @@
+use std::vec::IntoIter;
 use std::{
     ops, vec
 };
@@ -6,7 +7,7 @@ use crate::core::attribute::ComponentDataType;
 use crate::core::shared::{DataValue, NdVector};
 use crate::core::attribute::Attribute;
 use crate::debug_write;
-use crate::prelude::{AttributeType, ConfigType};
+use crate::prelude::{AttributeType, ByteWriter, ConfigType};
 use crate::shared::attribute::Portable;
 use crate::utils::splice_disjoint_indices;
 use thiserror::Error;
@@ -85,21 +86,21 @@ impl ConfigType for Config {
     }
 }
 
-pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, F> 
+pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, W> 
 {
 	att: &'encoder Attribute,
     #[allow(unused)]
 	cfg: Config,
-    writer: &'writer mut F,
+    writer: &'writer mut W,
     parents: &'encoder[&'parents Attribute],
 }
 
-impl<'parents, 'encoder, 'writer, F> AttributeEncoder<'parents, 'encoder, 'writer, F>
+impl<'parents, 'encoder, 'writer, W> AttributeEncoder<'parents, 'encoder, 'writer, W>
     where 
-        F: FnMut((u8, u64)),
+        W: ByteWriter,
         'parents: 'encoder,
 {
-	pub(super) fn new(att: &'encoder Attribute, parents: &'encoder[&'parents Attribute], writer: &'writer mut F, cfg: Config) -> Self {
+	pub(super) fn new(att: &'encoder Attribute, parents: &'encoder[&'parents Attribute], writer: &'writer mut W, cfg: Config) -> Self {
         AttributeEncoder { att, cfg, writer, parents }
     }
 	
@@ -180,7 +181,6 @@ use crate::shared::attribute::prediction_scheme::{self, PredictionScheme};
 use crate::encode::attribute::portabilization;
 use crate::core::shared::Vector;
 use super::prediction_transform::{self, PredictionTransform};
-use super::WritableFormat;
 use crate::encode::attribute::prediction_transform::PredictionTransformImpl;
 
 struct Group<'encoder, Data>
@@ -232,14 +232,14 @@ impl<'encoder, Data> Group<'encoder, Data>
         }
     }
 
-    fn squeeze_transformed_data<F>(&mut self, writer: &mut F)
-        where F: FnMut((u8, u64))
+    fn squeeze_transformed_data<W>(&mut self, writer: &mut W)
+        where W: ByteWriter
     {
         self.transform.squeeze(writer)
     }
 
-    fn get_transform_output<F>(self, writer: &mut F) -> vec::IntoIter<WritableFormat>
-        where F: FnMut((u8, u64))
+    fn take_output<W>(self, writer: &mut W) -> IntoIter<IntoIter<u8>>
+        where W: ByteWriter
     {
         self.transform.out(writer)
     }
@@ -311,8 +311,8 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
         PartitionGroupIdxIter::new(&self.partition)
     }    
 
-    fn compress<const WRITE_NOW: bool, F>(&mut self, attribute: &Attribute, writer: &mut F) -> Result<(), Err>
-        where F: FnMut((u8, u64))
+    fn compress<const WRITE_NOW: bool, W>(&mut self, attribute: &Attribute, writer: &mut W) -> Result<(), Err>
+        where W: ByteWriter
     {
         debug_write!("Start of Attribute Metadata", writer);
         // write id
@@ -320,12 +320,12 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
         if id >= 1 << 16 {
             return Err(Err::InvalidAttributeId(id));
         } else {
-            writer((16, id as u64));
+            writer.write_u16(id as u16);
         };
 
         // write att type
         let att_type = attribute.get_attribute_type().get_id() as u64;
-        writer((8, att_type));
+        writer.write_u8(att_type as u8);
         #[cfg(feature = "evaluation")]
         eval::write_json_pair(
             "attribute type", 
@@ -335,7 +335,7 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
 
         // write the attribbute length
         let length = attribute.len() as u64;
-        writer((64, length));
+        writer.write_u64(length);
         // for evaluation, write the data size in bytes
         #[cfg(feature = "evaluation")]
         eval::write_json_pair(
@@ -346,8 +346,8 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
         );
 
         // write component type
-        let component_type = attribute.get_component_type().get_id() as u64;
-        writer((8, component_type));
+        let component_type = attribute.get_component_type().get_id() as u8;
+        writer.write_u8(component_type);
         #[cfg(feature = "evaluation")]
         eval::write_json_pair(
             "component type", 
@@ -356,11 +356,11 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
         );
 
         // write number of components
-        let num_components = attribute.get_num_components() as u64;
+        let num_components = attribute.get_num_components();
         if num_components >= 1 << 8 {
             return Err(Err::UnsupportedNumComponents(num_components as usize));
         }
-        writer((8, num_components));
+        writer.write_u8(num_components as u8);
         #[cfg(feature = "evaluation")]
         eval::write_json_pair(
             "number of components", 
@@ -369,11 +369,11 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
         );
 
         // write parents
-        let num_parents = attribute.get_parents().len() as u64;
+        let num_parents = attribute.get_parents().len();
         if num_parents >= 1 << 8 {
             return Err(Err::TooManyParents(num_parents as usize));
         }
-        writer((8, num_parents));
+        writer.write_u8(num_parents as u8);
         #[cfg(feature = "evaluation")]
         eval::write_json_pair(
             "number of parents", 
@@ -386,7 +386,7 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
             if parent_id >= 1 << 16 {
                 return Err(Err::InvalidAttributeId(parent_id));
             } else {
-                writer((16, parent_id as u64));
+                writer.write_u16(parent_id as u16);
             }
         }
         #[cfg(feature = "evaluation")]
@@ -408,11 +408,11 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
 
         debug_write!("Start of Transform Metadata", writer);
         // write number of groups
-        let num_groups = self.groups.len() as u64;
+        let num_groups = self.groups.len();
         if num_groups >= 1 << 8 {
-            return Err(Err::TooManyEncodingGroups(num_groups as usize));
+            return Err(Err::TooManyEncodingGroups(num_groups));
         }
-        writer((8, num_groups));
+        writer.write_u8(num_groups as u8);
         // Squeeze the transformed data and write it
         let mut transform_outputs = Vec::new();
         transform_outputs.reserve(self.groups.len());
@@ -430,19 +430,19 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
             }
 
             // write prediction id
-            let prediction_id = group.prediction.get_type().get_id() as u64;
+            let prediction_id = group.prediction.get_type().get_id();
             if prediction_id >= 1 << 4 {
                 return Err(Err::InvalidPredictionSchemeId(prediction_id as usize));
             }
-            writer((4, prediction_id));
+            writer.write_u8(prediction_id);
 
             debug_write!("Start of Prediction Transform Metadata", writer);
             // write transform id
-            let transform_id = group.transform.get_type().get_id() as u64;
+            let transform_id = group.transform.get_type().get_id();
             if transform_id >= 1 << 4 {
                 return Err(Err::InvalidPredictionSchemeId(transform_id as usize));
             }
-            writer((4, transform_id));
+            writer.write_u8(transform_id);
 
             
             #[cfg(feature = "evaluation")]
@@ -453,7 +453,7 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
             
             #[cfg(feature = "evaluation")]
             eval::scope_begin("portabilization", writer);
-            transform_outputs.push(group.get_transform_output(writer));
+            transform_outputs.push(group.take_output(writer));
             #[cfg(feature = "evaluation")]
             eval::scope_end(writer);
 
@@ -470,12 +470,12 @@ impl <'parents, 'encoder, Data> GroupManager<'encoder, Data>
 
         for (range, gp_idx) in self.partition_group_idx_iter() {
             debug_write!("Start of a Range", writer);
-            writer((8, gp_idx as u64));
+            writer.write_u8(gp_idx as u8);
             let range_size = range.end - range.start;
             // ToDo: Reduce the size by realizing the fact that range size is always less than the attrubute size.
-            writer((64, range_size as u64));
+            writer.write_u64(range_size as u64);
             for _ in range {
-                transform_outputs[gp_idx].next().unwrap().write(writer);
+                transform_outputs[gp_idx].next().unwrap().for_each(|byte| writer.write_u8(byte));
             }
         }
         Ok(())

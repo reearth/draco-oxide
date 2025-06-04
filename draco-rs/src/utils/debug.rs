@@ -4,7 +4,7 @@ macro_rules! debug_write {
         #[cfg(debug_assertions)]
         {
             for byte in $msg.as_bytes() {
-                $writer((8, *byte as u64));
+                $writer.write_u8(*byte);
             }
         }
     };
@@ -12,12 +12,12 @@ macro_rules! debug_write {
 
 #[macro_export]
 macro_rules! debug_expect {
-    ($msg:literal, $stream_in:expr) => {
+    ($msg:literal, $reader:expr) => {
         #[cfg(debug_assertions)]
         {
             for byte in $msg.as_bytes() {
                 assert!(
-                    *byte == $stream_in(8) as u8,
+                    *byte == $reader.read_u8().unwrap(),
                     "Expected {:?}, but did not match.",
                     $msg
                 );

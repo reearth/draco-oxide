@@ -4,6 +4,7 @@ use super::InversePredictionTransformImpl;
 use crate::core::shared::{DataValue, NdVector, Vector}; 
 use crate::decode::attribute::portabilization::{Deportabilization, DeportabilizationImpl};
 use crate::encode::attribute::prediction_transform::geom::*;
+use crate::prelude::ByteReader;
 use crate::shared::attribute::Portable;
 
 pub(crate) struct OctahedronReflectionInverseTransform<Data> 
@@ -24,11 +25,11 @@ impl<Data> InversePredictionTransformImpl for OctahedronReflectionInverseTransfo
 
     const ID: usize = 4;
 
-    fn new<F>(stream_in: &mut F) -> Result<Self, crate::decode::attribute::inverse_prediction_transform::Err> 
-        where F: FnMut(u8) -> u64 
+    fn new<R>(reader: &mut R) -> Result<Self, crate::decode::attribute::inverse_prediction_transform::Err> 
+        where R: ByteReader
     {
-        let deportabilization = Deportabilization::new(stream_in)?;
-        let metadata = Data::read_from_bits(stream_in);
+        let deportabilization = Deportabilization::new(reader)?;
+        let metadata = Data::read_from(reader)?;
         Ok(
             Self {
                 metadata,
@@ -37,10 +38,10 @@ impl<Data> InversePredictionTransformImpl for OctahedronReflectionInverseTransfo
         )
     }
 
-    fn inverse<F>(&self, mut pred: Self::Data, stream_in: &mut F) -> Self::Data 
-        where F: FnMut(u8)->u64
+    fn inverse<R>(&self, mut pred: Self::Data, reader: &mut R) -> Self::Data 
+        where R: ByteReader
     {
-        let crr = self.deportabilization.deportabilize_next(stream_in);
+        let crr = self.deportabilization.deportabilize_next(reader);
         // Safety:
         // We made sure that the data is three dimensional.
         debug_assert!(

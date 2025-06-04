@@ -1,12 +1,11 @@
 pub mod attribute;
-pub mod reader;
-pub mod writer;
+// pub mod reader;
+// pub mod writer;
 
 use std::{
     alloc, fmt, ptr
 };
 
-use reader::Reader;
 
 pub trait OrderConfig {
     const IS_MSB_FIRST: bool;
@@ -53,11 +52,6 @@ impl<Order: OrderConfig> Buffer <Order> {
     /// returns the number of bits stored in the buffer.
     pub fn len(&self) -> usize {
         self.len
-    }
-
-    /// returns the reader for the buffer.
-	pub fn into_reader(self) -> Reader<Order> {
-        Reader::new(self.data, self.len)
     }
 
     /// returns the data as a slice of u8.
@@ -138,115 +132,5 @@ impl fmt::Debug for RawBuffer {
             write!(f, "{:02x} ", unsafe{ *self.data.as_ptr().add(n) })?;
         }
         Ok(())
-    }
-}
-
-
-#[cfg(test)]
-mod tests {
-    use crate::core::buffer::*;
-
-    #[test]
-    fn test_writer_reader_msb_first() {
-        let mut writer = writer::Writer::<MsbFirst>::new();
-        writer.next((7, 0b0111010));
-        let buffer: Buffer<_> = writer.into();
-        assert_eq!(buffer.len(), 7);
-        let mut reader: Reader<_> = buffer.into_reader();
-        assert_eq!(reader.next(7), 0b0111010);
-
-        let mut writer = writer::Writer::<MsbFirst>::new();
-        writer.next((8, 0b10111010));
-        let buffer: Buffer<_> = writer.into();
-        assert_eq!(buffer.len(), 8);
-        let mut reader: Reader<_> = buffer.into_reader();
-        assert_eq!(reader.next(8), 0b10111010);
-
-        let mut writer = writer::Writer::<MsbFirst>::new();
-        writer.next((9, 0b110111010));
-        let buffer: Buffer<_> = writer.into();
-        assert_eq!(buffer.len(), 9);
-        let mut reader: Reader<_> = buffer.into_reader();
-        assert_eq!(reader.next(9), 0b110111010);
-        
-        let mut writer = writer::Writer::<MsbFirst>::new();
-        writer.next((9, 0b101010100));
-        writer.next((8, 0b10101010));
-        writer.next((7, 0b0101010));
-        writer.next((6, 0b111100));
-        writer.next((5, 0b00001));
-        writer.next((4, 0b1100));
-        let buffer: Buffer<_> = writer.into();
-        assert_eq!(buffer.len(), 9+8+7+6+5+4);
-        let mut reader: Reader<_> = buffer.into_reader();
-        assert_eq!(reader.next(9), 0b101010100);
-        assert_eq!(reader.next(8), 0b10101010);
-        assert_eq!(reader.next(7), 0b0101010);
-        assert_eq!(reader.next(6), 0b111100);
-        assert_eq!(reader.next(5), 0b00001);
-        assert_eq!(reader.next(4), 0b1100);
-        
-        let mut writer = writer::Writer::<MsbFirst>::new();
-        writer.next((11, 0b10111010110));
-        let buffer: Buffer<_> = writer.into();
-        assert_eq!(buffer.len(), 11);
-        let mut reader = buffer.into_reader();
-        assert_eq!(reader.next(2), 0b10);
-        assert_eq!(reader.next(1), 0b1);
-        assert_eq!(reader.next(3), 0b110);
-        assert_eq!(reader.next(3), 0b101);
-        assert_eq!(reader.next(2), 0b10);
-
-    }
-
-    #[test]
-    fn test_writer_reader_lsb_first() {
-        let mut writer = writer::Writer::<LsbFirst>::new();
-        writer.next((9, 0b101010100));
-        writer.next((8, 0b10101010));
-        writer.next((7, 0b0101010));
-        writer.next((6, 0b111100));
-        writer.next((5, 0b00001));
-        writer.next((4, 0b1100));
-        let buffer: Buffer<_> = writer.into();
-        assert_eq!(buffer.len(), 9+8+7+6+5+4);
-        let mut reader = buffer.into_reader();
-        assert_eq!(reader.next(9), 0b101010100);
-        assert_eq!(reader.next(8), 0b10101010);
-        assert_eq!(reader.next(7), 0b0101010);
-        assert_eq!(reader.next(6), 0b111100);
-        assert_eq!(reader.next(5), 0b00001);
-        assert_eq!(reader.next(4), 0b1100);
-
-        let mut writer = writer::Writer::<LsbFirst>::new();
-        writer.next((10, 0b1010101010));
-        let buffer: Buffer<_> = writer.into();
-        assert_eq!(buffer.len(), 10);
-        let mut reader = buffer.into_reader();
-        for _ in 0..5 {
-            assert_eq!(reader.next(2), 0b10);
-        }
-    }
-
-    #[test]
-    fn test_writer_reader_unchecked() {
-        let mut writer = writer::Writer::<LsbFirst>::with_cap(9+8+7+6+5+4);
-        unsafe{
-            writer.next_unchecked((9, 0b10101010<<1));
-            writer.next_unchecked((8, 0b10101010));
-            writer.next_unchecked((7, 0b0101010));
-            writer.next_unchecked((6, 0b111100));
-            writer.next_unchecked((5, 0b00001));
-            writer.next_unchecked((4, 0b1100));
-            let buffer: Buffer<_> = writer.into();
-            assert_eq!(buffer.len(), 9+8+7+6+5+4);
-            let mut reader = buffer.into_reader();
-            assert_eq!(reader.next_unchecked(9), 0b10101010<<1);
-            assert_eq!(reader.next_unchecked(8), 0b10101010);
-            assert_eq!(reader.next_unchecked(7), 0b0101010);
-            assert_eq!(reader.next_unchecked(6), 0b111100);
-            assert_eq!(reader.next_unchecked(5), 0b00001);
-            assert_eq!(reader.next_unchecked(4), 0b1100);
-        }
     }
 }

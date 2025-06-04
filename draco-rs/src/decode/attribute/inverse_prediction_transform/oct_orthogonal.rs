@@ -1,7 +1,7 @@
 use super::InversePredictionTransformImpl;
 use crate::core::shared::{DataValue, NdVector, Vector};
 use crate::decode::attribute::portabilization::Deportabilization;
-use crate::encode::attribute::prediction_transform::geom::*;
+use crate::prelude::ByteReader;
 use crate::shared::attribute::Portable;
 
 pub(crate) struct OctahedronOrthogonalInverseTransform<Data> 
@@ -22,10 +22,10 @@ where
     type Correction = NdVector<2,f64>;
     type Metadata = ();
 
-    fn new<F>(stream_in: &mut F) -> Result<Self, super::Err>
-        where F: FnMut(u8) -> u64 
+    fn new<R>(reader: &mut R) -> Result<Self, super::Err>
+        where R: ByteReader
     {
-        let deportabilization = Deportabilization::new(stream_in)?;
+        let deportabilization = Deportabilization::new(reader)?;
         Ok(
             Self {
                 _marker: std::marker::PhantomData,
@@ -34,8 +34,8 @@ where
         )
     }
 
-    fn inverse<F>(&self, mut pred: Self::Data, stream_in: &mut F) -> Self::Data 
-        where F: FnMut(u8) -> u64,
+    fn inverse<R>(&self, mut pred: Self::Data, reader: &mut R) -> Self::Data 
+        where R: ByteReader
     {
         unimplemented!();
 

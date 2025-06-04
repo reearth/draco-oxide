@@ -1,13 +1,18 @@
-use crate::core::mesh::metadata::Metadata;
+use crate::core::{bit_coder::ReaderErr, mesh::metadata::Metadata}; 
+use crate::prelude::ByteReader;
 
 
 #[derive(thiserror::Error, Debug)]
 pub enum Err {
-
+    #[error("Not enough data to decode metadata.")]
+    NotEnoughData(#[from] ReaderErr),
 }
 
-pub fn decode_metadata<F>(_stream_in: &mut F) -> Result<Metadata, Err>
-    where F: FnMut(u8) -> u64,
+pub fn decode_metadata<W>(_reader: &mut W) -> Result<Metadata, Err>
+    where W: ByteReader,
 {
+    // Read Decoder
+    _reader.read_u32()?;
+
     Ok(Metadata::new())
 }

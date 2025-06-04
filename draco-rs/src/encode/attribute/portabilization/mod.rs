@@ -1,18 +1,18 @@
 pub mod quantization_rect_array;
-pub mod quantization_rect_spiral;
-pub mod quantization_spherical;
 pub mod to_bits;
 
-use crate::{core::shared::{ConfigType, Vector}, debug_write, shared::attribute::Portable};
-use super::WritableFormat;
+use std::vec::IntoIter;
+
+use crate::core::shared::{ConfigType, Vector};
+use crate::debug_write;
+use crate::core::bit_coder::ByteWriter;
+use crate::shared::attribute::Portable;
 
 #[enum_dispatch::enum_dispatch(PortabilizationImpl)]
 pub enum Portabilization<Data>
     where Data: Vector + Portable,
 {
     QuantizationRectangleArray(quantization_rect_array::QuantizationRectangleArray<Data>),
-    QuantizationRectangleSpiral(quantization_rect_spiral::QuantizationRectangleSpiral<Data>),
-    QuantizationSpherical(quantization_spherical::QuantizationSpherical<Data>),
     ToBits(to_bits::ToBits<Data>),
 }
 
@@ -23,8 +23,8 @@ impl<Data> Portabilization<Data>
     /// writes the metadata to the stream.
     // enum_dispatch does not support associated functions, we explicitly write the
     // constructor.
-    pub fn new<F>(att_vals: Vec<Data>, cfg: Config, writer: &mut F) -> Self
-        where F: FnMut((u8, u64))
+    pub fn new<W>(att_vals: Vec<Data>, cfg: Config, writer: &mut W) -> Self
+        where W: ByteWriter
     {
         debug_write!("Start of Portabilization Metadata", writer);
         cfg.type_.write_id(writer);
@@ -32,16 +32,6 @@ impl<Data> Portabilization<Data>
             PortabilizationType::QuantizationRectangleArray => {
                 Portabilization::QuantizationRectangleArray(
                     quantization_rect_array::QuantizationRectangleArray::new(att_vals, cfg, writer)
-                )
-            },
-            PortabilizationType::QuantizationRectangleSpiral => {
-                Portabilization::QuantizationRectangleSpiral(
-                    quantization_rect_spiral::QuantizationRectangleSpiral::new(att_vals, cfg, writer)
-                )
-            },
-            PortabilizationType::QuantizationSpherical => {
-                Portabilization::QuantizationSpherical(
-                    quantization_spherical::QuantizationSpherical::new(att_vals, cfg, writer)
                 )
             },
             PortabilizationType::ToBits => {
@@ -59,15 +49,13 @@ impl<Data> Portabilization<Data>
 pub trait PortabilizationImpl
 {
     /// portabilizes the whole data.
-    fn portabilize(self) -> std::vec::IntoIter<WritableFormat>;
+    fn portabilize(self) -> IntoIter<IntoIter<u8>>;
 }
 
 #[remain::sorted]
 #[derive(Clone, Copy, Debug)]
 pub enum PortabilizationType {
     QuantizationRectangleArray,
-    QuantizationRectangleSpiral,
-    QuantizationSpherical,
     ToBits,
 }
 
@@ -75,17 +63,15 @@ impl PortabilizationType {
     pub(crate) fn get_id(&self) -> u8 {
         match self {
             PortabilizationType::QuantizationRectangleArray => 0,
-            PortabilizationType::QuantizationRectangleSpiral => 1,
-            PortabilizationType::QuantizationSpherical => 2,
-            PortabilizationType::ToBits => 3,
+            PortabilizationType::ToBits => 1,
         }
     }
 
-    pub(crate) fn write_id<F>(&self, writer: &mut F) 
-        where F: FnMut((u8, u64)) 
+    pub(crate) fn write_id<W>(&self, writer: &mut W) 
+        where W: ByteWriter
     {
         let id = self.get_id();
-        writer((4, id as u64));
+        writer.write_u8(id);
     }
 }
 

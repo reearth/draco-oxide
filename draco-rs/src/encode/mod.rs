@@ -5,8 +5,9 @@ pub(crate) mod attribute;
 pub(crate) mod entropy;
 
 use crate::core::mesh::Mesh;
-use crate::debug_write;
+use crate::{debug_write, shared};
 use crate::core::shared::ConfigType;
+use crate::core::bit_coder::ByteWriter;
 use thiserror::Error;
 
 #[cfg(feature = "evaluation")]
@@ -20,6 +21,8 @@ pub trait EncoderConfig {
 pub struct Config {
     connectivity_encoder_cfg: connectivity::Config,
     attribute_encoder_cfg: attribute::Config,
+    geometry_type: header::EncodedGeometryType,
+    encoder_method: shared::connectivity::Encoder,
 }
 
 impl ConfigType for Config {
@@ -27,6 +30,8 @@ impl ConfigType for Config {
         Self {
             connectivity_encoder_cfg: connectivity::Config::default(),
             attribute_encoder_cfg: attribute::Config::default(),
+            geometry_type: header::EncodedGeometryType::TrianglarMesh,
+            encoder_method: shared::connectivity::Encoder::Edgebreaker,
         }
     }
 }
@@ -45,14 +50,14 @@ pub enum Err {
 }
 
 
-pub fn encode<F>(mut mesh: Mesh, writer: &mut F, cfg: Config) -> Result<Mesh, Err> 
-    where F: FnMut((u8, u64))
+pub fn encode<W>(mut mesh: Mesh, writer: &mut W, cfg: Config) -> Result<Mesh, Err> 
+    where W: ByteWriter
 {
     #[cfg(feature = "evaluation")]
     eval::scope_begin("compression info", writer);
     
     // Encode header
-    header::encode_header(writer)
+    header::encode_header(writer, &cfg)
         .map_err(|r| Err::HeaderError(r))?;
 
     debug_write!("Header done, now starting metadata.", writer);

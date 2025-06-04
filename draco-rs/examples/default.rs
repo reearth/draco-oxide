@@ -33,17 +33,11 @@ fn main() {
         builder.build().unwrap()
     };
 
-    let mut buff_writer = buffer::writer::Writer::new();
-    let mut bit_counter: usize = 0;
-    let mut writer = |input: (u8, u64)| {
-        bit_counter += input.0 as usize;
-        // println!("bit_counter = {}  writing {} bits", bit_counter, input.0);
-        buff_writer.next(input);
-    };
+    let mut writer = Vec::new();
     println!("Encoding...");
     encode(original_mesh.clone(), &mut writer, encode::Config::default()).unwrap();
     println!("Encoding done.");
-    let data: Buffer = buff_writer.into();
+    let data = writer.into_iter();
 
     let mut file = std::fs::File::create(
         format!("draco-rs/examples/outputs/{}_compressed.draco", MESH_NAME)
@@ -51,13 +45,7 @@ fn main() {
     let out = data.as_slice();
     file.write_all(out).unwrap();
 
-    let mut buff_reader = data.into_reader();
-    let mut bit_counter: usize = 0;
-    let mut reader = |size| {
-        bit_counter += size as usize;
-        // println!("bit_counter = {}  reading {} bits", bit_counter, size);
-        buff_reader.next(size)
-    };
+    let mut reader = data.into_iter();
     println!("Decoding...");
     let mesh = decode(&mut reader, decode::Config::default()).unwrap();
     println!("Decoding done.");

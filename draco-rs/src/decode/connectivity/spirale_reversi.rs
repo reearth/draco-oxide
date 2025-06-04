@@ -1,22 +1,27 @@
 use std::cmp;
+use crate::core::bit_coder::ReaderErr;
+use crate::debug_expect;
 use crate::decode::connectivity::ConnectivityDecoder;
 use crate::core::shared::VertexIdx;
+use crate::shared::attribute::Portable;
 
+use crate::prelude::{BitReader, ByteReader};
 use crate::shared::connectivity::edgebreaker::symbol_encoder::{
-    Balanced, CrLight, Rans, Symbol, SymbolEncoder, SymbolEncodingConfig
+    CrLight, Rans, Symbol, SymbolEncoder, SymbolEncodingConfig
 };
+use crate::utils::bit_coder::leb128_read;
 
 use std::mem;
 
 use crate::shared::connectivity::edgebreaker::{
-    edge_shared_by, orientation_of_next_face, NUM_CONNECTED_COMPONENTS_SLOT, NUM_FACES_SLOT
+    edge_shared_by, orientation_of_next_face, Orientation, TopologySplit
 };
 
-#[derive(thiserror::Error, Debug, Clone)]
+#[derive(thiserror::Error, Debug)]
 #[remain::sorted]
 pub enum Err {
-    #[error("Stream input returned with None, though more data was expected.")]
-    NotEnoughData,
+    #[error("Not enough data to decode connectivity")]
+    NotEnoughData(#[from] ReaderErr)
 }
 
 
@@ -31,6 +36,7 @@ pub(crate)struct SpiraleReversi {
     boundary_edges: Vec<[usize; 2]>,
     prev_face: [usize;3],
     orientation: Vec<bool>,
+    topology_splits: Vec<TopologySplit>,
 }
 
 impl SpiraleReversi {
@@ -45,6 +51,7 @@ impl SpiraleReversi {
             boundary_edges: Vec::new(),
             prev_face: [0,1,2],
             orientation: Vec::new(),
+            topology_splits: Vec::new(),
         }
     }
 
@@ -59,29 +66,60 @@ impl SpiraleReversi {
         self.prev_face = [0,1,2];
     }
 
-    fn spirale_reversi_impl<SE: SymbolEncoder, F: FnMut(u8)->u64>(&mut self, reader: &mut F) {
+    fn read_topology_splits<R: ByteReader>(&mut self, reader: &mut R) -> Result<(), Err> {
+        let num_topology_splits = leb128_read(reader)? as u32;
+        let mut last_idx = 0;
+        for _ in 0..num_topology_splits {
+            let source_symbol_idx = leb128_read(reader)? as usize + last_idx;
+            let split_symbol_idx = source_symbol_idx - leb128_read(reader)? as usize;
+            let topology_split = TopologySplit {
+                source_symbol_idx,
+                split_symbol_idx,
+                source_edge_orientation: Orientation::Right, // this value is temporary
+            };
+            self.topology_splits.push(topology_split);
+            last_idx = source_symbol_idx;
+        }
+
+        let mut reader: BitReader<_> = BitReader::spown_from(reader).unwrap();
+        for split_mut in self.topology_splits.iter_mut() {
+            // update the orientation of the topology split.
+            split_mut.source_edge_orientation = match reader.read_bits(1)? {
+                0 => Orientation::Left,
+                1 => Orientation::Right, 
+                _ => unreachable!(),
+            };
+        }
+        
+        Ok(())
+    }
+        
+
+    fn spirale_reversi_impl<SE: SymbolEncoder, R: ByteReader>(&mut self, reader: &mut R) {
         // move the value in order to avoid the borrow checker.
         let mut num_faces = Vec::new();
         mem::swap(&mut num_faces, &mut self.num_faces);
         for _ in 0..self.num_connected_components {
-            let sign_of_first_face = reader(1) == 1;
+            let sign_of_first_face = bool::read_from(reader).unwrap();
             // get the number of faces = number of symbols.
-            let num_faces = reader(NUM_FACES_SLOT);
+            let num_faces = reader.read_u64().unwrap() as usize;
             self.num_decoded_vertices += 2;
             self.active_edge_stack.clear();
             self.active_edge = [
                 self.num_decoded_vertices-2,
                 self.num_decoded_vertices-1
             ];
+            debug_expect!("Start of Symbols", reader);
+            let mut reader = BitReader::spown_from(reader).unwrap();
             for _ in 0..num_faces {
-                self.spirale_reversi_recc::<SE, F>(reader);
+                self.spirale_reversi_recc::<SE, R>(&mut reader);
             }
             self.recover_orientation(sign_of_first_face);
         }
     }
 
-    #[inline]
-    fn spirale_reversi_recc<SE: SymbolEncoder, F: FnMut(u8)->u64>(&mut self, reader: &mut F) {
+
+    fn spirale_reversi_recc<SE: SymbolEncoder, R: ByteReader>(&mut self, reader: &mut BitReader<R>) {
         let symbol = SE::decode_symbol(reader);
         assert!(!self.faces.contains(&[35,36,41]));
         match symbol {
@@ -344,297 +382,297 @@ impl SpiraleReversi {
                     self.boundary_edges
                 );
             },
-            Symbol::M(n_vertices) => {
-                // a hole starting and ending at 'self.active_edge[0]' must get created.
-                let mut prev_vertex = self.active_edge[0];
-                let mut curr_vertex = *self.boundary_edges.iter()
-                    .filter(|e| e.contains(&self.active_edge[0]))
-                    .find(|&&e| !e.contains(&self.active_edge[1]))
-                    .unwrap()
-                    .iter().find(|&&v| v != self.active_edge[0]).unwrap();
-                let mut boundary_to_remove = vec![
-                    self.boundary_edges.binary_search(
-                        &[cmp::min(prev_vertex, curr_vertex), cmp::max(prev_vertex, curr_vertex)]
-                    ).unwrap()
-                ];
-                for _ in 0..n_vertices-1 {
-                    let next_vertex = *self.boundary_edges.iter()
-                        .filter(|e| e.contains(&curr_vertex))
-                        .find(|&&e| !e.contains(&prev_vertex))
-                        .unwrap()
-                        .iter().find(|&&v| v != curr_vertex).unwrap();
+            // Symbol::M(n_vertices) => {
+            //     // a hole starting and ending at 'self.active_edge[0]' must get created.
+            //     let mut prev_vertex = self.active_edge[0];
+            //     let mut curr_vertex = *self.boundary_edges.iter()
+            //         .filter(|e| e.contains(&self.active_edge[0]))
+            //         .find(|&&e| !e.contains(&self.active_edge[1]))
+            //         .unwrap()
+            //         .iter().find(|&&v| v != self.active_edge[0]).unwrap();
+            //     let mut boundary_to_remove = vec![
+            //         self.boundary_edges.binary_search(
+            //             &[cmp::min(prev_vertex, curr_vertex), cmp::max(prev_vertex, curr_vertex)]
+            //         ).unwrap()
+            //     ];
+            //     for _ in 0..n_vertices-1 {
+            //         let next_vertex = *self.boundary_edges.iter()
+            //             .filter(|e| e.contains(&curr_vertex))
+            //             .find(|&&e| !e.contains(&prev_vertex))
+            //             .unwrap()
+            //             .iter().find(|&&v| v != curr_vertex).unwrap();
                 
-                    prev_vertex = curr_vertex;
-                    curr_vertex = next_vertex;
-                    boundary_to_remove.push(
-                        self.boundary_edges.binary_search(
-                            &[cmp::min(prev_vertex, curr_vertex), cmp::max(prev_vertex, curr_vertex)]
-                        ).unwrap()
-                    );
-                }
-                // find the next vertex once more to get the active edge.
-                let mut next_vertex = *self.boundary_edges.iter()
-                    .filter(|e| e.contains(&curr_vertex))
-                    .find(|&&e| !e.contains(&prev_vertex))
-                    .unwrap()
-                    .iter().find(|&&v| v != curr_vertex).unwrap();
-                // remove the active edge from the boundary edges.
-                boundary_to_remove.sort();
-                for idx in boundary_to_remove.iter().rev() {
-                    self.boundary_edges.remove(*idx);
-                }
-                let removed_edge = [
-                    cmp::min(self.active_edge[0], self.active_edge[1]),
-                    cmp::max(self.active_edge[0], self.active_edge[1]),
-                ];
-                self.boundary_edges.remove(
-                    self.boundary_edges.binary_search(&removed_edge).unwrap()
-                );
-                let removed_edge = [
-                    cmp::min(curr_vertex, next_vertex),
-                    cmp::max(curr_vertex, next_vertex),
-                ];
-                self.boundary_edges.remove(
-                    self.boundary_edges.binary_search(&removed_edge).unwrap()
-                );
+            //         prev_vertex = curr_vertex;
+            //         curr_vertex = next_vertex;
+            //         boundary_to_remove.push(
+            //             self.boundary_edges.binary_search(
+            //                 &[cmp::min(prev_vertex, curr_vertex), cmp::max(prev_vertex, curr_vertex)]
+            //             ).unwrap()
+            //         );
+            //     }
+            //     // find the next vertex once more to get the active edge.
+            //     let mut next_vertex = *self.boundary_edges.iter()
+            //         .filter(|e| e.contains(&curr_vertex))
+            //         .find(|&&e| !e.contains(&prev_vertex))
+            //         .unwrap()
+            //         .iter().find(|&&v| v != curr_vertex).unwrap();
+            //     // remove the active edge from the boundary edges.
+            //     boundary_to_remove.sort();
+            //     for idx in boundary_to_remove.iter().rev() {
+            //         self.boundary_edges.remove(*idx);
+            //     }
+            //     let removed_edge = [
+            //         cmp::min(self.active_edge[0], self.active_edge[1]),
+            //         cmp::max(self.active_edge[0], self.active_edge[1]),
+            //     ];
+            //     self.boundary_edges.remove(
+            //         self.boundary_edges.binary_search(&removed_edge).unwrap()
+            //     );
+            //     let removed_edge = [
+            //         cmp::min(curr_vertex, next_vertex),
+            //         cmp::max(curr_vertex, next_vertex),
+            //     ];
+            //     self.boundary_edges.remove(
+            //         self.boundary_edges.binary_search(&removed_edge).unwrap()
+            //     );
 
-                let mut new_face = [
-                    curr_vertex,
-                    self.active_edge[1],
-                    next_vertex
-                ];
-                new_face.sort();
-                self.faces.push(new_face);
+            //     let mut new_face = [
+            //         curr_vertex,
+            //         self.active_edge[1],
+            //         next_vertex
+            //     ];
+            //     new_face.sort();
+            //     self.faces.push(new_face);
 
-                // renumber the vertices: we merge the vertex 'self.active_edge[0]' with 'curr_vertex'.
-                let smaller = cmp::min(curr_vertex, self.active_edge[0]);
-                let larger = cmp::max(curr_vertex, self.active_edge[0]);
-                for face in &mut self.faces {
-                    let mut is_face_updated = false;
-                    for vertex in &mut *face {
-                        if *vertex == larger {
-                            *vertex = smaller;
-                            is_face_updated = true;
-                        } else if *vertex > larger {
-                            *vertex -= 1;
-                        }
-                    }
-                    if is_face_updated {
-                        face.sort();
-                    }
-                }
-                for edge in &mut self.active_edge_stack {
-                    for vertex in edge.iter_mut() {
-                        if *vertex == larger {
-                            *vertex = smaller;
-                        } else if *vertex > larger {
-                            *vertex -= 1;
-                        }
-                    }
-                }
-                assert!(self.active_edge[1] != larger);
-                if self.active_edge[1] > larger {
-                    self.active_edge[1] -= 1;
-                }
-                for edge in &mut self.boundary_edges {
-                    for vertex in edge.iter_mut() {
-                        if *vertex == larger {
-                            *vertex = smaller;
-                        } else if *vertex > larger {
-                            *vertex -= 1;
-                        }
-                    }
-                    edge.sort();
-                }
-                self.boundary_edges.sort();
-                if next_vertex == larger {
-                    next_vertex = smaller;
-                } else if next_vertex > larger {
-                    next_vertex -= 1;
-                }
+            //     // renumber the vertices: we merge the vertex 'self.active_edge[0]' with 'curr_vertex'.
+            //     let smaller = cmp::min(curr_vertex, self.active_edge[0]);
+            //     let larger = cmp::max(curr_vertex, self.active_edge[0]);
+            //     for face in &mut self.faces {
+            //         let mut is_face_updated = false;
+            //         for vertex in &mut *face {
+            //             if *vertex == larger {
+            //                 *vertex = smaller;
+            //                 is_face_updated = true;
+            //             } else if *vertex > larger {
+            //                 *vertex -= 1;
+            //             }
+            //         }
+            //         if is_face_updated {
+            //             face.sort();
+            //         }
+            //     }
+            //     for edge in &mut self.active_edge_stack {
+            //         for vertex in edge.iter_mut() {
+            //             if *vertex == larger {
+            //                 *vertex = smaller;
+            //             } else if *vertex > larger {
+            //                 *vertex -= 1;
+            //             }
+            //         }
+            //     }
+            //     assert!(self.active_edge[1] != larger);
+            //     if self.active_edge[1] > larger {
+            //         self.active_edge[1] -= 1;
+            //     }
+            //     for edge in &mut self.boundary_edges {
+            //         for vertex in edge.iter_mut() {
+            //             if *vertex == larger {
+            //                 *vertex = smaller;
+            //             } else if *vertex > larger {
+            //                 *vertex -= 1;
+            //             }
+            //         }
+            //         edge.sort();
+            //     }
+            //     self.boundary_edges.sort();
+            //     if next_vertex == larger {
+            //         next_vertex = smaller;
+            //     } else if next_vertex > larger {
+            //         next_vertex -= 1;
+            //     }
 
 
-                // add the new edge to the boundary edges
-                let new_edge = [
-                    cmp::min(next_vertex, self.active_edge[1]),
-                    cmp::max(next_vertex, self.active_edge[1]),
-                ];
-                let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
-                self.boundary_edges.insert(idx, new_edge);
+            //     // add the new edge to the boundary edges
+            //     let new_edge = [
+            //         cmp::min(next_vertex, self.active_edge[1]),
+            //         cmp::max(next_vertex, self.active_edge[1]),
+            //     ];
+            //     let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
+            //     self.boundary_edges.insert(idx, new_edge);
 
-                self.num_decoded_vertices -= 1;
-                // self.active_edge = [self.active_edge[1], next_vertex];
-                self.active_edge[0] = next_vertex;
-            },
-            Symbol::H(metadata) => {
-                let mut new_face = [
-                    self.active_edge[0],
-                    self.active_edge[1],
-                    self.num_decoded_vertices
-                ];
-                new_face.sort();
-                self.faces.push(new_face);
+            //     self.num_decoded_vertices -= 1;
+            //     // self.active_edge = [self.active_edge[1], next_vertex];
+            //     self.active_edge[0] = next_vertex;
+            // },
+            // Symbol::H(metadata) => {
+            //     let mut new_face = [
+            //         self.active_edge[0],
+            //         self.active_edge[1],
+            //         self.num_decoded_vertices
+            //     ];
+            //     new_face.sort();
+            //     self.faces.push(new_face);
                 
-                // remove the active edge from the boundary edges.
-                let removed_edge = [
-                    cmp::min(self.active_edge[0], self.active_edge[1]),
-                    cmp::max(self.active_edge[0], self.active_edge[1]),
-                ];
-                self.boundary_edges.remove(
-                    self.boundary_edges.binary_search(&removed_edge).unwrap_err()
-                );
+            //     // remove the active edge from the boundary edges.
+            //     let removed_edge = [
+            //         cmp::min(self.active_edge[0], self.active_edge[1]),
+            //         cmp::max(self.active_edge[0], self.active_edge[1]),
+            //     ];
+            //     self.boundary_edges.remove(
+            //         self.boundary_edges.binary_search(&removed_edge).unwrap_err()
+            //     );
 
-                let edges = {
-                    let mut out = self.faces.iter().map(|face| [
-                        [face[0], face[1]],
-                        [face[1], face[2]],
-                        [face[0], face[2]]
-                    ]).flatten().collect::<Vec<_>>();
-                    out.sort();
-                    out
-                };
+            //     let edges = {
+            //         let mut out = self.faces.iter().map(|face| [
+            //             [face[0], face[1]],
+            //             [face[1], face[2]],
+            //             [face[0], face[2]]
+            //         ]).flatten().collect::<Vec<_>>();
+            //         out.sort();
+            //         out
+            //     };
 
-                let one_coboundary = {
-                    let mut one_coboundary = vec![Vec::new(); edges.len()];
-                    for (i,face) in self.faces.iter().enumerate() {
-                        debug_assert!(face.is_sorted());
-                        let boundary_edges = [
-                            [face[0], face[1]],
-                            [face[1], face[2]],
-                            [face[0], face[2]]
-                        ];
-                        for edge in boundary_edges.iter() {
-                            let edge_idx = edges.binary_search(edge).unwrap();
-                            one_coboundary[edge_idx].push(i);
-                        }
-                    }
-                    one_coboundary.iter_mut().for_each(|coboundary| coboundary.sort());
-                    one_coboundary
-                };
+            //     let one_coboundary = {
+            //         let mut one_coboundary = vec![Vec::new(); edges.len()];
+            //         for (i,face) in self.faces.iter().enumerate() {
+            //             debug_assert!(face.is_sorted());
+            //             let boundary_edges = [
+            //                 [face[0], face[1]],
+            //                 [face[1], face[2]],
+            //                 [face[0], face[2]]
+            //             ];
+            //             for edge in boundary_edges.iter() {
+            //                 let edge_idx = edges.binary_search(edge).unwrap();
+            //                 one_coboundary[edge_idx].push(i);
+            //             }
+            //         }
+            //         one_coboundary.iter_mut().for_each(|coboundary| coboundary.sort());
+            //         one_coboundary
+            //     };
 
-                // unpack the metadata
-                let index = self.faces.len()-1 - (metadata >> 1);
-                let is_right_not_left = metadata & 1 == 1;
+            //     // unpack the metadata
+            //     let index = self.faces.len()-1 - (metadata >> 1);
+            //     let is_right_not_left = metadata & 1 == 1;
 
-                let merge_face = self.faces[index];
-                let boundary_edges = [
-                    [merge_face[0], merge_face[1]], 
-                    [merge_face[1], merge_face[2]], 
-                    [merge_face[0], merge_face[2]]
-                ];
-                debug_assert!(merge_face.is_sorted());
-                let edges_of_valency_2 = boundary_edges
-                    .iter()
-                    .map(|edge| edges.binary_search(edge).unwrap())
-                    .filter(|&edge_idx| one_coboundary[edge_idx].len() == 2)
-                    .collect::<Vec<_>>();
+            //     let merge_face = self.faces[index];
+            //     let boundary_edges = [
+            //         [merge_face[0], merge_face[1]], 
+            //         [merge_face[1], merge_face[2]], 
+            //         [merge_face[0], merge_face[2]]
+            //     ];
+            //     debug_assert!(merge_face.is_sorted());
+            //     let edges_of_valency_2 = boundary_edges
+            //         .iter()
+            //         .map(|edge| edges.binary_search(edge).unwrap())
+            //         .filter(|&edge_idx| one_coboundary[edge_idx].len() == 2)
+            //         .collect::<Vec<_>>();
 
-                self.orientation = vec![false; self.faces.len()];
-                let mut visited_faces = vec![false; self.faces.len()];
-                let mut face_stack = vec![index];
-                while let Some(face_idx) = face_stack.pop() {
-                    if visited_faces[face_idx] {
-                        continue;
-                    }
+            //     self.orientation = vec![false; self.faces.len()];
+            //     let mut visited_faces = vec![false; self.faces.len()];
+            //     let mut face_stack = vec![index];
+            //     while let Some(face_idx) = face_stack.pop() {
+            //         if visited_faces[face_idx] {
+            //             continue;
+            //         }
 
-                    if face_idx == self.faces.len()-1 {
-                        break;
-                    }
+            //         if face_idx == self.faces.len()-1 {
+            //             break;
+            //         }
 
-                    visited_faces[face_idx] = true;
-                    let face = self.faces[face_idx];
-                    let boundary_edges = [
-                        [face[0], face[1]], 
-                        [face[1], face[2]], 
-                        [face[0], face[2]]
-                    ];
-                    let adjacent_faces = boundary_edges.iter()
-                        .map(|edge| edges.binary_search(edge).unwrap())
-                        .filter_map(|edge_idx| {
-                            let face_indices = &one_coboundary[edge_idx];
-                            if face_indices.len() == 2 {
-                                let adj_face_idx = *face_indices.iter()
-                                    .find(|&&idx| idx != face_idx)
-                                    .unwrap();
-                                Some((edge_idx, adj_face_idx))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    for (common_edge_idx, adj_face_idx) in adjacent_faces {
-                        self.orientation[adj_face_idx] = orientation_of_next_face(
-                            face, 
-                            self.orientation[face_idx], 
-                            edges[common_edge_idx], 
-                            self.faces[adj_face_idx]
-                        );
+            //         visited_faces[face_idx] = true;
+            //         let face = self.faces[face_idx];
+            //         let boundary_edges = [
+            //             [face[0], face[1]], 
+            //             [face[1], face[2]], 
+            //             [face[0], face[2]]
+            //         ];
+            //         let adjacent_faces = boundary_edges.iter()
+            //             .map(|edge| edges.binary_search(edge).unwrap())
+            //             .filter_map(|edge_idx| {
+            //                 let face_indices = &one_coboundary[edge_idx];
+            //                 if face_indices.len() == 2 {
+            //                     let adj_face_idx = *face_indices.iter()
+            //                         .find(|&&idx| idx != face_idx)
+            //                         .unwrap();
+            //                     Some((edge_idx, adj_face_idx))
+            //                 } else {
+            //                     None
+            //                 }
+            //             })
+            //             .collect::<Vec<_>>();
+            //         for (common_edge_idx, adj_face_idx) in adjacent_faces {
+            //             self.orientation[adj_face_idx] = orientation_of_next_face(
+            //                 face, 
+            //                 self.orientation[face_idx], 
+            //                 edges[common_edge_idx], 
+            //                 self.faces[adj_face_idx]
+            //             );
 
-                        face_stack.push(adj_face_idx);
-                    }
+            //             face_stack.push(adj_face_idx);
+            //         }
 
-                }
+            //     }
 
-                let merge_edge = if edges_of_valency_2.len() ==2 {
-                    let idx = boundary_edges.iter()
-                        .map(|edge| edges.binary_search(edge).unwrap())
-                        .find(|edge_idx| !edges_of_valency_2.contains(edge_idx))
-                        .unwrap();
-                    edges[idx]
-                } else {
-                    debug_assert!(edges_of_valency_2.len() == 1, "edges_of_valency_2: {:?}", edges_of_valency_2);
-                    let edge_of_valency_2 = edges_of_valency_2[0];
-                    let next_vertex = *self.faces[index].iter()
-                        .find(|&v| !edges[edge_of_valency_2].contains(v))
-                        .unwrap();
-                    if is_right_not_left ^ self.orientation[index] {
-                        [edges[edge_of_valency_2][1], next_vertex]
-                    } else {
-                        [edges[edge_of_valency_2][0], next_vertex]
-                    }
-                };
+            //     let merge_edge = if edges_of_valency_2.len() ==2 {
+            //         let idx = boundary_edges.iter()
+            //             .map(|edge| edges.binary_search(edge).unwrap())
+            //             .find(|edge_idx| !edges_of_valency_2.contains(edge_idx))
+            //             .unwrap();
+            //         edges[idx]
+            //     } else {
+            //         debug_assert!(edges_of_valency_2.len() == 1, "edges_of_valency_2: {:?}", edges_of_valency_2);
+            //         let edge_of_valency_2 = edges_of_valency_2[0];
+            //         let next_vertex = *self.faces[index].iter()
+            //             .find(|&v| !edges[edge_of_valency_2].contains(v))
+            //             .unwrap();
+            //         if is_right_not_left ^ self.orientation[index] {
+            //             [edges[edge_of_valency_2][1], next_vertex]
+            //         } else {
+            //             [edges[edge_of_valency_2][0], next_vertex]
+            //         }
+            //     };
 
-                // merge merge_edge[0] and 'num_decoded_vertices'
-                debug_assert!(self.faces.last_mut().unwrap()[2] == self.num_decoded_vertices);
-                self.faces.last_mut().unwrap()[2] = merge_edge[0];
+            //     // merge merge_edge[0] and 'num_decoded_vertices'
+            //     debug_assert!(self.faces.last_mut().unwrap()[2] == self.num_decoded_vertices);
+            //     self.faces.last_mut().unwrap()[2] = merge_edge[0];
 
-                // merge merge_edge[1] and active_edge[0]
-                let [min, max] = if merge_edge[1] < self.active_edge[0] {
-                    [merge_edge[1], self.active_edge[0]]
-                } else {
-                    [self.active_edge[0], merge_edge[1]]
-                };
-                for face in &mut self.faces {
-                    for vertex in face.iter_mut() {
-                        if *vertex == max {
-                            *vertex = min;
-                        } else if *vertex > max {
-                            *vertex -= 1;
-                        }
-                    }
-                }
-                if self.active_edge[1] == max {
-                    self.active_edge[1] = min;
-                } else if self.active_edge[1] > max {
-                    self.active_edge[1] -= 1;
-                }
+            //     // merge merge_edge[1] and active_edge[0]
+            //     let [min, max] = if merge_edge[1] < self.active_edge[0] {
+            //         [merge_edge[1], self.active_edge[0]]
+            //     } else {
+            //         [self.active_edge[0], merge_edge[1]]
+            //     };
+            //     for face in &mut self.faces {
+            //         for vertex in face.iter_mut() {
+            //             if *vertex == max {
+            //                 *vertex = min;
+            //             } else if *vertex > max {
+            //                 *vertex -= 1;
+            //             }
+            //         }
+            //     }
+            //     if self.active_edge[1] == max {
+            //         self.active_edge[1] = min;
+            //     } else if self.active_edge[1] > max {
+            //         self.active_edge[1] -= 1;
+            //     }
 
                 
-                self.num_decoded_vertices -= 1;
-                self.active_edge[0] = self.faces.last_mut().unwrap()[2];
+            //     self.num_decoded_vertices -= 1;
+            //     self.active_edge[0] = self.faces.last_mut().unwrap()[2];
 
-                for face in &mut self.faces {
-                    face.sort();
-                }
+            //     for face in &mut self.faces {
+            //         face.sort();
+            //     }
 
-                // add the new edge to the boundary edges
-                let new_edge = [
-                    cmp::min(self.active_edge[0], self.active_edge[1]),
-                    cmp::max(self.active_edge[0], self.active_edge[1]),
-                ];
-                let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
-                self.boundary_edges.insert(idx, new_edge);
-            }
+            //     // add the new edge to the boundary edges
+            //     let new_edge = [
+            //         cmp::min(self.active_edge[0], self.active_edge[1]),
+            //         cmp::max(self.active_edge[0], self.active_edge[1]),
+            //     ];
+            //     let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
+            //     self.boundary_edges.insert(idx, new_edge);
+            // }
         }
     }
 
@@ -720,18 +758,17 @@ impl SpiraleReversi {
 }
 
 impl ConnectivityDecoder for SpiraleReversi {
-    fn decode_connectivity<F>(&mut self, reader: &mut F) -> Result<Vec<[VertexIdx; 3]>, super::Err> 
-        where F: FnMut(u8) -> u64
+    fn decode_connectivity<R>(&mut self, reader: &mut R) -> Result<Vec<[VertexIdx; 3]>, super::Err> 
+        where R: ByteReader
     {
         self.init();
         let symbol_encoding = SymbolEncodingConfig::get_symbol_encoding(reader);
-        self.num_connected_components = reader(NUM_CONNECTED_COMPONENTS_SLOT) as usize;
+        self.num_connected_components = reader.read_u8().unwrap() as usize; // ToDo: handle error properly.
 
         // unwrap the symbol encoding config here so that the spirale reversi does not 
         // need to unwrap config during each iteration.
         match symbol_encoding {
             SymbolEncodingConfig::CrLight => self.spirale_reversi_impl::<CrLight, _>(reader),
-            SymbolEncodingConfig::Balanced => self.spirale_reversi_impl::<Balanced, _>(reader),
             SymbolEncodingConfig::Rans => self.spirale_reversi_impl::<Rans, _>(reader),
         }
 
@@ -746,13 +783,10 @@ impl ConnectivityDecoder for SpiraleReversi {
 #[cfg(test)]
 mod tests {
     use crate::core::attribute::AttributeId;
-    use crate::core::buffer::{writer, Buffer};
     use crate::encode::connectivity::edgebreaker::Config;
     use crate::encode::connectivity::{edgebreaker, ConnectivityEncoder};
     use crate::core::shared::{
-        ConfigType,
-        NdVector,
-        Vector
+        ConfigType, NdVector, Vector
     };
     use crate::prelude::{Attribute, AttributeType};
     use super::*;
@@ -767,12 +801,9 @@ mod tests {
         let mut point_att = Attribute::from(AttributeId::new(0), points, AttributeType::Position, Vec::new());
         let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
         assert!(edgebreaker.init(&mut [&mut point_att], &mut original_faces).is_ok());
-        let mut buff_writer = writer::Writer::new();
-        let mut writer = |input| buff_writer.next(input);
+        let mut writer = Vec::new();
         assert!(edgebreaker.encode_connectivity(&mut original_faces, &mut [&mut point_att], &mut writer).is_ok());
-        let buffer: Buffer = buff_writer.into();
-        let mut buff_reader = buffer.into_reader();
-        let mut reader = |input| buff_reader.next(input);
+        let mut reader = writer.into_iter();
         let mut spirale_reversi = SpiraleReversi::new();
         let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
 
@@ -947,12 +978,9 @@ mod tests {
         let mut point_att = Attribute::from(AttributeId::new(0), points, AttributeType::Position, Vec::new());
         let mut edgebreaker = edgebreaker::Edgebreaker::new(Config::default());
         assert!(edgebreaker.init(&mut [&mut point_att], &mut faces).is_ok());
-        let mut buff_writer = writer::Writer::new();
-        let mut writer = |input| buff_writer.next(input);
+        let mut writer = Vec::new();
         assert!(edgebreaker.encode_connectivity(&mut faces, &mut [&mut point_att], &mut writer).is_ok());
-        let buffer: Buffer = buff_writer.into();
-        let mut buff_reader = buffer.into_reader();
-        let mut reader = |input| buff_reader.next(input);
+        let mut reader = writer.into_iter();
         let mut spirale_reversi = SpiraleReversi::new();
         let decoded_faces = spirale_reversi.decode_connectivity(&mut reader);
 

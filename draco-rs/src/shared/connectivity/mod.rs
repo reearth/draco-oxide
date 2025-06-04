@@ -10,18 +10,18 @@ pub(crate) enum Encoder {
 
 impl Encoder {
     /// returns the id of the encoder.
-    pub(crate) fn id(&self) -> u64 {
+    pub(crate) fn get_id(&self) -> u64 {
         match self {
-            Encoder::Edgebreaker => 0,
-            Encoder::Sequential => 1,
+            Encoder::Sequential => 0,
+            Encoder::Edgebreaker => 1,
         }
     }
 
     /// returns the encoder from the id.
     pub(crate) fn from_id(id: u64) -> Self {
         match id {
-            0 => Encoder::Edgebreaker,
-            1 => Encoder::Sequential,
+            0 => Encoder::Sequential,
+            1 => Encoder::Edgebreaker,
             _ => panic!("Unknown encoder id: {}", id),
         }
     }

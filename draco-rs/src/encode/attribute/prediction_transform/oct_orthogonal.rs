@@ -1,5 +1,7 @@
+use std::vec::IntoIter;
+
 use crate::core::shared::{DataValue, NdVector, Vector}; 
-use crate::encode::attribute::WritableFormat;
+use crate::prelude::ByteWriter;
 use crate:: shared::attribute::Portable;
 use super::{
     geom::*, 
@@ -79,14 +81,14 @@ impl<Data> PredictionTransformImpl<Data> for OctahedronOrthogonalTransform<Data>
         self.out.push( orig - pred );
     }
 
-    fn squeeze<F>(&mut self, _writer: &mut F) 
-        where F: FnMut((u8, u64)) 
+    fn squeeze<W>(&mut self, _writer: &mut W) 
+        where W: ByteWriter
     {
         unimplemented!()
     }
 
-    fn out<F>(self, _writer: &mut F) -> std::vec::IntoIter<WritableFormat>
-        where F:FnMut((u8,u64)) 
+    fn out<W>(self, _writer: &mut W) -> IntoIter<IntoIter<u8>>
+        where W: ByteWriter 
     {
         unimplemented!()
     }

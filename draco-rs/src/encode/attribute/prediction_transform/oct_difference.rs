@@ -1,16 +1,17 @@
+use std::vec::IntoIter;
+
 use crate::core::shared::{DataValue, NdVector, Vector};
 use crate::encode::attribute::portabilization::{Portabilization, PortabilizationImpl};
-use crate::encode::attribute::WritableFormat;
+use crate::prelude::ByteWriter;
 use super::geom::octahedral_transform;
 
-use super::{FinalMetadata, PredictionTransformImpl};
+use super::PredictionTransformImpl;
 
 
 pub struct OctahedronDifferenceTransform<Data> 
     where Data: Vector
 {
     cfg: super::portabilization::Config,
-    final_metadata: FinalMetadata<()>,
     out: Vec<NdVector<2,f64>>,
     _marker: std::marker::PhantomData<Data>,
 }
@@ -22,7 +23,6 @@ impl<Data> OctahedronDifferenceTransform<Data>
         Self {
             cfg: cfg.portabilization,
             out: Vec::new(),
-            final_metadata: FinalMetadata::Global(()),
             _marker: std::marker::PhantomData,
         }
     }
@@ -45,14 +45,13 @@ impl<Data> PredictionTransformImpl<Data> for OctahedronDifferenceTransform<Data>
         self.out.push( orig - pred );
     }
 
-    fn squeeze<F>(&mut self, _writer: &mut F)
-        where F: FnMut((u8, u64))
+    fn squeeze<W>(&mut self, _writer: &mut W)
     {
-        self.final_metadata = FinalMetadata::Global(());
+
     }
 
-    fn out<F>(self, writer: &mut F) -> std::vec::IntoIter<WritableFormat>
-        where F: FnMut((u8, u64))
+    fn out<W>(self, writer: &mut W) -> IntoIter<IntoIter<u8>>
+        where W: ByteWriter
     {
         Portabilization::new(
             self.out,

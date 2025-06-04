@@ -1,8 +1,10 @@
+use std::vec::IntoIter;
+
 use crate::core::shared::{DataValue, Vector};
 use crate::encode::attribute::portabilization::{Portabilization, PortabilizationImpl};
-use crate::encode::attribute::WritableFormat;
+use crate::prelude::ByteWriter;
 use crate::shared::attribute::Portable;
-use super::{FinalMetadata, PredictionTransformImpl};
+use super::PredictionTransformImpl;
 use crate::core::shared::Max;
 
 #[cfg(feature = "evaluation")]
@@ -28,7 +30,6 @@ impl<Data> Difference<Data>
                 *metadata.get_unchecked_mut(i) = Data::Component::MAX_VALUE;
             }
         }
-
         Self {
             cfg,
             out: Vec::new(),
@@ -44,7 +45,7 @@ impl<Data> PredictionTransformImpl<Data> for Difference<Data>
 {
 
     fn map_with_tentative_metadata(&mut self, orig: Data, pred: Data) {
-       let corr = orig - pred;
+        let corr = orig - pred;
         self.out.push(corr);
         // update metadata
         for i in 0..Data::NUM_COMPONENTS {
@@ -56,14 +57,13 @@ impl<Data> PredictionTransformImpl<Data> for Difference<Data>
         }
     }
 
-    fn squeeze<F>(&mut self, writer: &mut F)
-        where F: FnMut((u8, u64))
+    fn squeeze<W>(&mut self, writer: &mut W)
+        where W: ByteWriter
     {
         self.out.iter_mut()
             .for_each(|v|
                 *v -= self.metadata
             );
-        let final_metadata = FinalMetadata::Global(self.metadata);
 
         #[cfg(feature = "evaluation")]
         {
@@ -78,11 +78,11 @@ impl<Data> PredictionTransformImpl<Data> for Difference<Data>
         }
 
         // write metadata
-        WritableFormat::from(final_metadata).write(writer);
+        self.metadata.write_to(writer);
     }
 
-    fn out<F>(self, writer: &mut F) -> std::vec::IntoIter<WritableFormat>
-        where F: FnMut((u8, u64))
+    fn out<W>(self, writer: &mut W) -> IntoIter<IntoIter<u8>>
+        where W: ByteWriter
     {
         Portabilization::new(
             self.out,

@@ -128,8 +128,58 @@ impl Attribute {
 		self.buffer.as_slice_mut::<Data>()
 	}
 
+	/// permutes the data in the buffer according to the given indices, i.e. 
+	/// i-th element in the buffer will be moved to indices[i]-th position.
 	pub fn permute(&mut self, indices: &[usize]) {
-		self.buffer.permute(indices);
+		assert!(
+			indices.len() == self.len(),
+			"Indices length must match the buffer length: indices.len() = {}, self.len() = {}",
+			indices.len(),
+			self.len()
+		);
+		assert!(
+			indices.iter().all(|&i| i < self.len()),
+			"All indices must be within the buffer length: indices = {:?}, self.len() = {}",
+			indices,
+			self.len()
+		);
+		unsafe {
+			self.buffer.permute_unchecked(indices);
+		}
+	}
+
+	/// permutes the data in the buffer according to the given indices, i.e. 
+	/// i-th element in the buffer will be moved to indices[i]-th position.
+	/// # Safety:
+	/// This function assumes that the indices are valid, i.e. they are within the bounds of the buffer.
+	pub fn permute_unchecked(&mut self, indices: &[usize]) {
+		debug_assert!(
+			indices.len() == self.len(),
+			"Indices length must match the buffer length: indices.len() = {}, self.len() = {}",
+			indices.len(),
+			self.len()
+		);
+		debug_assert!(
+			indices.iter().all(|&i| i < self.len()),
+			"All indices must be within the buffer length: indices = {:?}, self.len() = {}",
+			indices,
+			self.len()
+		);
+		unsafe {
+			self.buffer.permute_unchecked(indices);
+		}
+	}
+
+	/// swaps the elements at indices `i` and `j` in the buffer.
+	pub fn swap(&mut self, i: usize, j: usize) {
+		assert!(
+			i < self.len() && j < self.len(),
+			"Indices out of bounds: i = {}, j = {}, len = {}",
+			i, j, self.len()
+		);
+		unsafe {
+			self.buffer.swap_unchecked(i, j);
+		}
 	}
 }
 

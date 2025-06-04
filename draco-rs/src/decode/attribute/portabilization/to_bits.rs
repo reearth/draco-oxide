@@ -1,4 +1,4 @@
-use crate::{core::shared::DataValue, prelude::Vector, shared::attribute::Portable};
+use crate::{core::shared::DataValue, prelude::{ByteReader, Vector}, shared::attribute::Portable};
 use super::DeportabilizationImpl;
 
 pub(crate) struct ToBits<Data> {
@@ -10,8 +10,8 @@ impl<Data> ToBits<Data>
         Data: Vector + Portable,
         Data::Component: DataValue,
 {
-    pub(crate) fn new<F>(_stream_in: &mut F) -> Self 
-        where F: FnMut(u8)->u64
+    pub(crate) fn new<R>(_reader: &mut R) -> Self 
+        where R: ByteReader
     {
         // there is no metadata to read.
         Self {
@@ -25,17 +25,16 @@ impl<Data> DeportabilizationImpl<Data> for ToBits<Data>
         Data: Vector + Portable,
         Data::Component: DataValue,
 {
-    fn deportabilize_next<F>(&self, stream_in: &mut F) -> Data 
-        where F: FnMut(u8) -> u64
+    fn deportabilize_next<R>(&self, reader: &mut R) -> Data 
+        where R: ByteReader
     {
-        Data::read_from_bits(stream_in)
+        Data::read_from(reader).unwrap() // TODO: handle error properly
     }
 }
 
 
 #[cfg(all(test, not(feature = "evaluation")))]
 mod tests {
-    use crate::core::buffer;
     use crate::core::shared::NdVector;
     use crate::decode::attribute::portabilization::Deportabilization;
     use crate::encode::attribute::portabilization::{Portabilization, PortabilizationImpl, PortabilizationType, Resolution}; 
@@ -56,16 +55,13 @@ mod tests {
             resolution: Resolution::DivisionSize(1), // does not matter
         };
 
-        let mut buff_writer = buffer::writer::Writer::new();
-        let mut writer = |input| buff_writer.next(input);
+        let mut writer = Vec::new();
         Portabilization::new(data.clone(), cfg, &mut writer)
             .portabilize()
             .into_iter()
-            .for_each(|x| x.write(&mut writer));
+            .for_each(|x| x.for_each(|d| d.write_to(&mut writer)));
 
-        let buffer: buffer::Buffer = buff_writer.into();
-        let mut buff_reader = buffer.into_reader();
-        let mut reader = |size| buff_reader.next(size);
+        let mut reader = writer.into_iter();
         let dequant = Deportabilization::new(&mut reader).unwrap();
         for i in 0..data.len() {
             let dequant_data: NdVector<3,f32> = dequant.deportabilize_next(&mut reader);

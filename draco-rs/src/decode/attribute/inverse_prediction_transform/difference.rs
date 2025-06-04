@@ -3,7 +3,7 @@ use crate::decode::attribute::portabilization::{
     Deportabilization, 
     DeportabilizationImpl
 };
-use crate::encode::attribute::prediction_transform::FinalMetadata;
+use crate::prelude::ByteReader;
 use crate::shared::attribute::Portable;
 
 use super::InversePredictionTransformImpl;
@@ -25,16 +25,11 @@ impl<Data> InversePredictionTransformImpl for DifferenceInverseTransform<Data>
 
     const ID: usize = 1;
 
-    fn new<F>(stream_in: &mut F) -> Result<Self, super::Err> 
-        where F: FnMut(u8)->u64
+    fn new<R>(reader: &mut R) -> Result<Self, super::Err> 
+        where R: ByteReader
     {
-        let metadata = FinalMetadata::<Data>::read_from_bits(stream_in);
-        let metadata = if let FinalMetadata::Global(m) = metadata {
-            m
-        } else {
-            panic!("Expected global metadata for difference inverse transform");
-        };
-        let deportabilization = Deportabilization::new(stream_in)?;
+        let metadata = Data::read_from(reader).unwrap(); // TODO: handle error properly
+        let deportabilization = Deportabilization::new(reader)?;
         Ok (
             Self {
                 metadata,
@@ -43,14 +38,14 @@ impl<Data> InversePredictionTransformImpl for DifferenceInverseTransform<Data>
         )
     }
 
-    fn inverse<F>(
+    fn inverse<R>(
         &self,
         pred: Self::Data,
-        stream_in: &mut F,
+        reader: &mut R,
     ) -> Self::Data 
-        where F: FnMut(u8)->u64
+        where R: ByteReader
     {
-        let corr = self.deportabilization.deportabilize_next(stream_in);
+        let corr = self.deportabilization.deportabilize_next(reader);
         pred + corr + self.metadata
     }
 }

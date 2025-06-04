@@ -8,7 +8,9 @@ use crate::encode::attribute::portabilization::PortabilizationImpl;
 
 #[cfg(feature = "evaluation")]
 use crate::eval;
+use crate::prelude::ByteWriter;
 
+use std::vec::IntoIter;
 use std::{
 	cmp,
 	fmt
@@ -18,7 +20,6 @@ use crate::core::shared::{ConfigType, Vector};
 use crate::shared::attribute::Portable;
 
 use super::portabilization::{self, Portabilization};
-use crate::encode::attribute::WritableFormat;
 
 #[remain::sorted]
 #[enum_dispatch::enum_dispatch(PredictionTransformImpl<Data>)]
@@ -75,87 +76,12 @@ pub(crate) trait PredictionTransformImpl<Data> {
 	/// and the transformed data, or doing some trade-off's between the tentative
 	/// metadata and the transformed data to decide the global metadata that will 
 	/// be encoded to buffer.
-	fn squeeze<F>(&mut self, writer: &mut F) 
-		where F: FnMut((u8, u64));
+	fn squeeze<W>(&mut self, writer: &mut W) 
+		where W: ByteWriter;
 
-	fn out<F>(self, writer: &mut F) -> std::vec::IntoIter<WritableFormat>
-		where F: FnMut((u8, u64));
-}
-
-
-#[derive(Clone)]
-/// The final metadata is either local or global. Local metadata
-/// is stored for each attribute value, while global metadata is stored
-/// once for the entire attribute.
-pub(crate) enum FinalMetadata<T> {
-	Local(Vec<T>),
-	Global(T)
-}
-
-impl<T> FinalMetadata<T> 
-	where T: Portable,
-{
-	pub(crate) fn read_from_bits<F>(stream_in: &mut F) -> Self 
-		where F: FnMut(u8)->u64
-	{
-		if stream_in(1)==0 {
-			let len = stream_in(64) as usize;
-			let mut out = Vec::with_capacity(len);
-			for _ in 0..len {
-				let v = T::read_from_bits(stream_in);
-				out.push(v);
-			}
-			FinalMetadata::Local(out)
-		} else {
-			let out = T::read_from_bits(stream_in);
-			FinalMetadata::Global(out)
-		}
-	}
-}
-
-impl<T> From<FinalMetadata<T>> for WritableFormat 
-	where WritableFormat: From<T>
-{
-	fn from(data: FinalMetadata<T>) -> Self {
-		let mut out = WritableFormat::new();
-		match data {
-			FinalMetadata::Local(x) => {
-				out.push((1,0));
-				out.push((64, x.len() as u64));
-				for v in x {
-					out.append(&mut <WritableFormat as From<T>>::from(v));
-				}
-			},
-			FinalMetadata::Global(x) => {
-				out.push((1,1));
-				out.append(&mut <WritableFormat as From<T>>::from(x));
-			},
-		}
-		out
-	}
-}
-
-impl<T> fmt::Debug for FinalMetadata<T> 
-	where T: fmt::Debug
-{
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			FinalMetadata::Local(x) => write!(f, "Local({:?})", x),
-			FinalMetadata::Global(x) => write!(f, "Global({:?})", x),
-		}
-	}
-}
-
-impl<T> cmp::PartialEq for FinalMetadata<T> 
-	where T: cmp::PartialEq
-{
-	fn eq(&self, other: &Self) -> bool {
-		match (self, other) {
-			(FinalMetadata::Local(x), FinalMetadata::Local(y)) => x == y,
-			(FinalMetadata::Global(x), FinalMetadata::Global(y)) => x == y,
-			_ => false,
-		}
-	}
+	/// Returns the final data after portabilizing.
+	fn out<W>(self, writer: &mut W) -> IntoIter<IntoIter<u8>> 
+		where W: ByteWriter;
 }
 
 
@@ -224,14 +150,12 @@ impl<Data> PredictionTransformImpl<Data> for NoPredictionTransform<Data>
 	where 
 		Data: Vector + Portable,
 {
-
-
 	fn map_with_tentative_metadata(&mut self, orig: Data, _pred: Data) {
 		self.out.push(orig);
 	}
 
-	fn out<F>(self, writer: &mut F) -> std::vec::IntoIter<WritableFormat> 
-		where F: FnMut((u8, u64))
+	fn out<W>(self, writer: &mut W) -> IntoIter<IntoIter<u8>>
+		where W: ByteWriter
 	{
 		Portabilization::new(
 		self.out,
@@ -240,8 +164,8 @@ impl<Data> PredictionTransformImpl<Data> for NoPredictionTransform<Data>
 		).portabilize()
 	}
 
-	fn squeeze<F>(&mut self, writer: &mut F) 
-		where F: FnMut((u8,u64))  
+	fn squeeze<W>(&mut self, writer: &mut W) 
+		where W: ByteWriter
 	{
 		#[cfg(feature = "evaluation")]
         {

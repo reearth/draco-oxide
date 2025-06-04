@@ -1,5 +1,6 @@
 pub mod geom;
 pub(crate) mod debug;
+pub(crate) mod bit_coder;
 
 pub(crate) fn splice_disjoint_indices(set_of_subseqs: Vec<Vec<std::ops::Range<usize>>>) -> Vec<std::ops::Range<usize>> {
     let mut spliced = set_of_subseqs.into_iter()

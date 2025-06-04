@@ -33,11 +33,14 @@ pub fn impl_ndvector_ops_for_dim(input: TokenStream) -> TokenStream {
     let indices_partial_eq = (0..n).map(|i| {
         quote! { result &= self.data.get_unchecked(#i).eq(rhs.data.get_unchecked(#i)); }
     });
-    let indices_portable_to_bits = (0..n).map(|i| {
-        quote! { result.push((*self.data.get_unchecked(#i)).to_bits()); }
+    let indices_portable_to_bytes = (0..n).map(|i| {
+        quote! { result.extend((*self.data.get_unchecked(#i)).to_bytes()); }
     });
-    let indices_portable_read_from_bits = (0..n).map(|i| {
-        quote! { *data.get_unchecked_mut(#i) = Data::from_bits(stream_in((std::mem::size_of::<Data>() as u8) << 3)); }
+    let indices_portable_write_to = (0..n).map(|i| {
+        quote! { result.push((*self.data.get_unchecked(#i)).write_to(writer)); }
+    });
+    let indices_portable_read_from = (0..n).map(|i| {
+        quote! { *data.get_unchecked_mut(#i) = Data::read_from(reader)?; }
     });
 
     let expanded = quote! {
@@ -174,20 +177,27 @@ pub fn impl_ndvector_ops_for_dim(input: TokenStream) -> TokenStream {
         impl<Data> Portable for NdVector<#n, Data> 
             where Data: DataValue
         {
-            fn to_bits(&self) -> Vec<(u8, u64)> {
-                let mut result = Vec::with_capacity(#n);
-                unsafe{ #(#indices_portable_to_bits)* }
+            fn to_bytes(self) -> Vec<u8> {
+                let mut result = Vec::with_capacity(#n * size_of::<Data>());
+                unsafe { #(#indices_portable_to_bytes)* }
                 result
             }
+            
+            fn write_to<W>(self, writer: &mut W) 
+                where W: ByteWriter
+            {
+                let mut result = Vec::with_capacity(#n);
+                unsafe{ #(#indices_portable_write_to)* }
+            }
 
-            fn read_from_bits<F>(stream_in: &mut F) -> Self 
-                where F: FnMut(u8) -> u64
+            fn read_from<R>(reader: &mut R) -> Result<Self, ReaderErr>
+                where R: ByteReader
             {
                 let mut data = [Data::zero(); #n];
-                unsafe { #(#indices_portable_read_from_bits)* }
-                Self {
+                unsafe { #(#indices_portable_read_from)* }
+                Ok(Self {
                     data,
-                }
+                })
             }
         }
 

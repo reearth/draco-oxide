@@ -5,16 +5,15 @@ pub(crate) mod prediction_transform;
 #[cfg(feature = "evaluation")]
 use crate::eval;
 
-use crate::prelude::ConfigType; 
-use crate::shared::attribute::Portable;
+use crate::prelude::{ByteWriter, ConfigType}; 
 use crate::core::mesh::Mesh;
 
-pub fn encode_attributes<F>(
+pub fn encode_attributes<W>(
     mesh: &Mesh,
-    writer: &mut F,
+    writer: &mut W,
     cfg: Config,
 ) -> Result<(), Err> 
-    where F: FnMut((u8, u64))
+    where W: ByteWriter
 {
     #[cfg(feature = "evaluation")]
     eval::scope_begin("attributes", writer);
@@ -22,7 +21,7 @@ pub fn encode_attributes<F>(
     let (_,non_conn_atts) = mesh.take_splitted_attributes();
 
     // Write the number of attributes
-    writer((16, non_conn_atts.len() as u64)); 
+    writer.write_u16(non_conn_atts.len() as u16); 
     #[cfg(feature = "evaluation")]
     eval::write_json_pair("attributes count", non_conn_atts.len().into(), writer);
 
@@ -64,89 +63,6 @@ pub fn encode_attributes<F>(
     }
 
     Ok(())
-}
-
-pub(crate) struct WritableFormat {
-    data: Vec<(u8, u64)>, // (size, data)
-}
-
-impl WritableFormat {
-    pub fn new() -> Self {
-        Self {
-            data: Vec::new(),
-        }
-    }
-    
-    pub fn append(&mut self, other: &WritableFormat) {
-        self.data.extend_from_slice(&other.data);
-    }
-
-    #[inline]
-    pub fn push(&mut self, input: (u8, u64)) {
-        self.data.push(input);
-    }
-    
-    #[inline]
-    pub fn from_vec(data: Vec<(u8, u64)>) -> Self {
-        Self { data }
-    }
-    
-    pub fn write<F>(self, writer: &mut F)
-        where F: FnMut((u8, u64))
-    {
-        for (size, data) in self.data.into_iter() {
-            writer((size, data));
-        }
-    }
-
-    #[allow(unused)]
-    pub fn into_iter(self) -> IntoWritableFormatIter {
-        IntoWritableFormatIter::new(self.data)
-    }
-}
-
-impl<T> From<T> for WritableFormat 
-    where T: Portable
-{
-    fn from(data: T) -> Self {
-        WritableFormat::from_vec(
-            data.to_bits()
-        )
-    }
-}
-
-impl From<()> for WritableFormat {
-    fn from(_: ()) -> Self {
-        WritableFormat::new()
-    }
-}
-
-
-pub struct IntoWritableFormatIter {
-    data: std::vec::IntoIter<(u8, u64)>,
-}
-
-impl IntoWritableFormatIter {
-    fn new(data: Vec<(u8, u64)>) -> Self {
-        Self {
-            data: data.into_iter(),
-        }
-    }
-
-    #[allow(unused)]
-    fn write_next<F>(&mut self, writer: &mut F)
-        where F: FnMut((u8, u64))
-    {
-        writer(self.data.next().unwrap());
-    }
-}
-
-impl Iterator for IntoWritableFormatIter {
-    type Item = (u8, u64);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.data.next()
-    }
 }
 
 

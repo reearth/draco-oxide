@@ -1,5 +1,6 @@
 use std::io::Write;
-use draco::{eval::EvalWriter, prelude::*};
+use draco::eval::EvalWriter;
+use draco::prelude::*;
 
 const MESH_NAME: &str = "sphere";
 
@@ -29,14 +30,8 @@ fn test_eval() {
         builder.build().unwrap()
     };
     
-    let mut buff_writer = buffer::writer::Writer::new();
-    let mut writer = |input: (u8, u64)| {
-        buff_writer.next(input);
-    };
-    let mut eval_writer = EvalWriter::new(&mut writer);
-    let mut writer = |input: (u8, u64)| {
-        eval_writer.write(input);
-    };
+    let mut buffer = Vec::new();
+    let mut writer = EvalWriter::new(&mut buffer);
     println!("Encoding...");
     encode(original_mesh.clone(), &mut writer, encode::Config::default()).unwrap();
     println!("Encoding done.");
@@ -45,26 +40,19 @@ fn test_eval() {
     let mut eval_file = std::fs::File::create(
     format!("tests/outputs/{}_eval.json", MESH_NAME)
     ).unwrap();
-    let data = eval_writer.get_result();
+    let data = writer.get_result();
     let data = serde_json::to_string_pretty(&data).unwrap();
     eval_file.write_all(data.as_bytes()).unwrap();
 
 
-    let data: Buffer = buff_writer.into();
-
     let mut file = std::fs::File::create(
         format!("tests/outputs/{}_compressed.draco", MESH_NAME)
     ).unwrap();
-    let out = data.as_slice();
+    let out = buffer.as_slice();
     file.write_all(out).unwrap();
 
-    let mut buff_reader = data.into_reader();
-    let mut bit_counter: usize = 0;
-    let mut reader = |size| {
-        bit_counter += size as usize;
-        // println!("bit_counter = {}  reading {} bits", bit_counter, size);
-        buff_reader.next(size)
-    };
+    let mut reader = buffer.into_iter();
+
     println!("Decoding...");
     let mesh = decode(&mut reader, decode::Config::default()).unwrap();
     println!("Decoding done.");

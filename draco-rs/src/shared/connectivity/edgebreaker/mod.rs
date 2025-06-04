@@ -40,6 +40,23 @@ pub(crate) fn edge_shared_by(f1: &[usize; 3], f2: &[usize; 3]) -> Option<[usize;
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TopologySplit {
+    pub source_symbol_idx: usize,
+    pub split_symbol_idx: usize,
+    pub source_edge_orientation: Orientation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Orientation {
+    Left,
+    Right,
+}
+
+pub(crate) enum Traversal {
+    
+}
+
 pub(crate) const SYMBOL_ENCODING_CONFIG_SLOT: u8 = 4;
 pub(crate) const NUM_CONNECTED_COMPONENTS_SLOT: u8 = 8;
 pub(crate) const NUM_FACES_SLOT: u8 = 32;

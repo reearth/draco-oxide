@@ -224,7 +224,7 @@ impl AttributeBuffer {
     /// This function assumes that the permutation is welll-defined in the sense that
     /// (1) it has the same length as the buffer,
     /// (2) its elements are distinct.
-    pub fn permute(&mut self, permutation: &[usize]) {
+    pub unsafe fn permute_unchecked(&mut self, permutation: &[usize]) {
         debug_assert_eq!(self.len, permutation.len(), "Permutation length does not match the buffer length");
         debug_assert!(
             {
@@ -247,6 +247,21 @@ impl AttributeBuffer {
             }
         }
         mem::swap(self, &mut tmp_att);
+    }
+
+    /// Swaps the elements at indices `i` and `j` in the buffer without checking the bounds.
+    /// # Safety
+    /// This function assumes that `i` and `j` are within the bounds of the buffer.
+    pub unsafe fn swap_unchecked(&mut self, i: usize, j: usize) {
+        debug_assert!(i < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", i, self.len);
+        debug_assert!(j < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", j, self.len);
+
+        let elem_size = self.num_components * self.component_type.size();
+        let ptr_i = unsafe { self.as_ptr().add(i * elem_size) };
+        let ptr_j = unsafe { self.as_ptr().add(j * elem_size) };
+        unsafe {
+            std::ptr::copy_nonoverlapping(ptr_i, ptr_j, elem_size);
+        }
     }
 }
 
@@ -669,7 +684,9 @@ mod tests {
         ];
         let mut att = AttributeBuffer::from(data);
         let permutation = vec![2, 1, 0];
-        att.permute(&permutation);
+        unsafe {
+            att.permute_unchecked(&permutation);
+        }
         let expected_data = vec![
             NdVector::from([7f32, 8.0, 9.0]), 
             NdVector::from([4f32, 5.0, 6.0]), 

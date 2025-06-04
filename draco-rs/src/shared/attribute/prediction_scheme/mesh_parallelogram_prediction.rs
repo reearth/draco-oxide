@@ -203,11 +203,12 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPredict
 	) -> Self::Data {
         let n_points = values_up_till_now.len();
 
-        // Find the the first opposite face.
+        // Find the the most recent opposite face.
         // 'diagonal' is the vertex opposite to 'n_points', and 'a' and 'b' are the other points such that 'a<b',
         // so that 'a', 'n_points', 'b', 'diagonal' form a parallelogram.
         let [a,b,diagonal] = self.faces.iter()
             .filter(|f| f.contains(&n_points))
+            .filter(|f| f.iter().all(|&v| v==n_points || v<n_points))
             .map(|&[a,b,c]| 
                 if a == n_points {
                     [b, c]
@@ -217,7 +218,7 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPredict
                     [a, b]
                 }
             )
-            .find_map(|[a,b]| {
+            .filter_map(|[a,b]| {
                 // Todo: This can be highly optimized.
                 if a >= n_points || b >= n_points {
                     return None;
@@ -235,6 +236,7 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPredict
                     None
                 }
             })
+            .last()
             .unwrap();
 
         let a_coord = values_up_till_now[a].clone();
@@ -251,8 +253,6 @@ mod test {
 
     use super::*;
     use crate::core::attribute::AttributeId;
-    use crate::core::buffer::writer::Writer;
-    use crate::core::buffer::MsbFirst;
     use crate::core::shared::{ConfigType, NdVector}; 
     use crate::encode::connectivity::{edgebreaker::{Config, Edgebreaker}, ConnectivityEncoder}; 
     use crate::shared::attribute::prediction_scheme::PredictionSchemeImpl;
@@ -384,8 +384,7 @@ mod test {
         );
 
         let mut encoder = Edgebreaker::new(Config::default());
-        let mut buff_writer = Writer::<MsbFirst>::new();
-        let mut writer = |input: (u8, u64)| buff_writer.next(input);
+        let mut writer = Vec::new();
         let result = encoder.encode_connectivity(&mut faces, &mut [&mut point_att], &mut writer);
         assert!(result.is_ok());
 

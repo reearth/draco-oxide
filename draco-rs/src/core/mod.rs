@@ -1,4 +1,5 @@
 pub mod attribute;
+pub mod bit_coder;
 pub mod buffer;
 pub mod mesh;
 pub mod point_cloud;

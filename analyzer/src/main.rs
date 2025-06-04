@@ -79,14 +79,12 @@ fn compress_and_decompress(original: &PathBuf, out_dir: &Path) -> io::Result<()>
     ).unwrap();
     let mesh = &original[0].mesh;
 
-    println!("normal= {:?}", mesh.normals);
-
     let faces = mesh.indices.chunks(3)
         .map(|x| [x[0] as usize, x[1] as usize, x[2] as usize])
         .collect::<Vec<_>>();
 
     let points = mesh.positions.chunks(3)
-        .map(|x| NdVector::from([x[0] as f32, x[1] as f32, x[2] as f32]))
+        .map(|x| NdVector::from([x[0] as f64, x[1] as f64, x[2] as f64]))
         .collect::<Vec<_>>();
 
     let normal = mesh.normals.chunks(3)
@@ -101,14 +99,8 @@ fn compress_and_decompress(original: &PathBuf, out_dir: &Path) -> io::Result<()>
         builder.build().unwrap()
     };
     
-    let mut buff_writer = buffer::writer::Writer::new();
-    let mut writer = |input: (u8, u64)| {
-        buff_writer.next(input);
-    };
-    let mut eval_writer = eval::EvalWriter::new(&mut writer);
-    let mut writer = |input: (u8, u64)| {
-        eval_writer.write(input);
-    };
+    let mut buffer = Vec::new();
+    let mut writer = eval::EvalWriter::new(&mut buffer);
     println!("Encoding...");
     let original_mesh = encode(original_mesh, &mut writer, encode::Config::default()).unwrap();
     println!("Encoding done.");
@@ -119,7 +111,7 @@ fn compress_and_decompress(original: &PathBuf, out_dir: &Path) -> io::Result<()>
     ).unwrap();
     let mut file_writer = std::io::BufWriter::new(&mut obj_file);
     for (point, normal) in 
-        original_mesh.get_attributes()[1].as_slice::<[f32; 3]>().iter().zip(
+        original_mesh.get_attributes()[1].as_slice::<[f64; 3]>().iter().zip(
             original_mesh.get_attributes()[2].as_slice::<[f32; 3]>().iter()
         ) 
     {
@@ -135,20 +127,13 @@ fn compress_and_decompress(original: &PathBuf, out_dir: &Path) -> io::Result<()>
     let mut eval_file = std::fs::File::create(
     out_dir.join("eval.json")
     ).unwrap();
-    let data = eval_writer.get_result();
+    let data = writer.get_result();
     let data = serde_json::to_string_pretty(&data).unwrap();
     eval_file.write_all(data.as_bytes()).unwrap();
 
 
-    let buffer: Buffer = buff_writer.into();
+    let mut reader = buffer.into_iter();
 
-    let mut buff_reader = buffer.into_reader();
-    let mut bit_counter: usize = 0;
-    let mut reader = |size| {
-        bit_counter += size as usize;
-        // println!("bit_counter = {}  reading {} bits", bit_counter, size);
-        buff_reader.next(size)
-    };
     println!("Decoding...");
     let mesh = decode(&mut reader, decode::Config::default()).unwrap();
     println!("Decoding done.");
@@ -188,7 +173,7 @@ fn compress_and_decompress(original: &PathBuf, out_dir: &Path) -> io::Result<()>
 
     writeln!(file_writer, "mtllib result.mtl").unwrap();
     for (point, normal) in 
-        mesh.get_attributes()[1].as_slice::<[f32; 3]>().iter().zip(
+        mesh.get_attributes()[1].as_slice::<[f64; 3]>().iter().zip(
             mesh.get_attributes()[2].as_slice::<[f32; 3]>().iter()
         ) 
     {

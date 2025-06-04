@@ -6,6 +6,7 @@ use crate::core::shared::{
 };
 use crate::decode::attribute::portabilization::{Deportabilization, DeportabilizationImpl};
 use crate::encode::attribute::prediction_transform::geom::*;
+use crate::prelude::ByteReader;
 use crate::shared::attribute::Portable;
 
 pub(crate) struct OrthogonalInverseTransform<Data> 
@@ -27,11 +28,11 @@ impl<Data> InversePredictionTransformImpl for OrthogonalInverseTransform<Data>
 
     const ID: usize = 5;
 
-    fn new<F>(stream_in: &mut F) -> Result<Self, super::Err> 
-        where F: FnMut(u8) -> u64 
+    fn new<R>(reader: &mut R) -> Result<Self, super::Err> 
+        where R: ByteReader
     {
-        let deportabilization = Deportabilization::new(stream_in)?;
-        let metadata = <bool as Portable>::read_from_bits(stream_in);
+        let deportabilization = Deportabilization::new(reader)?;
+        let metadata = <bool as Portable>::read_from(reader)?;
         
         Ok(
             Self {
@@ -42,10 +43,10 @@ impl<Data> InversePredictionTransformImpl for OrthogonalInverseTransform<Data>
         )
     }
 
-    fn inverse<F>(&self, pred: Self::Data, stream_in: &mut F) -> Self::Data 
-        where F: FnMut(u8)->u64
+    fn inverse<R>(&self, pred: Self::Data, reader: &mut R) -> Self::Data 
+        where R: ByteReader
     {
-        let crr = self.deportabilization.deportabilize_next(stream_in);
+        let crr = self.deportabilization.deportabilize_next(reader);
         
         let one = Data::Component::one();
         let pred_norm_squared = pred.dot(pred);

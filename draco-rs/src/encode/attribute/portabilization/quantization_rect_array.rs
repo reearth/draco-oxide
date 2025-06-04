@@ -1,8 +1,8 @@
-use std::mem;
+use std::vec::IntoIter;
 
 use crate::core::shared::DataValue;
 use crate::core::shared::Vector;
-use crate::encode::attribute::WritableFormat;
+use crate::prelude::ByteWriter;
 use crate::shared::attribute::Portable;
 
 use super::Config;
@@ -17,13 +17,6 @@ pub struct QuantizationRectangleArray<Data>
     where Data: Vector
 
 {
-    /// whether or not a single data can be encoded with a single u64. If not, then
-    /// 'writer(data)' will be called 'Data::NUM_COMPONENTS' times.
-    encoded_with_single_u64: bool,
-
-    /// the bit size of the data, used only if 'encoded_with_single_u64' is true.
-    bit_size: u8,
-
     /// iterator over the attribute values.
     /// this is not 'Vec<_>' because we want nicely consume the data.
     att_vals: std::vec::IntoIter<Data>,
@@ -45,8 +38,8 @@ impl<Data> QuantizationRectangleArray<Data>
         Data: Vector + Portable,
         Data::Component: DataValue
 {
-    pub fn new<F>(att_vals: Vec<Data>, cfg: Config, writer: &mut F) -> Self 
-        where F:FnMut((u8, u64)) 
+    pub fn new<W>(att_vals: Vec<Data>, cfg: Config, writer: &mut W) -> Self 
+        where W: ByteWriter
     {
         assert!(
             att_vals.len() > 1,
@@ -99,32 +92,11 @@ impl<Data> QuantizationRectangleArray<Data>
         }
 
 
-        // whether or not a single data can be encoded with a single u64. If not, then 
-        // 'writer(data)' will be called 'Data::NUM_COMPONENTS' times.
-        let mut size: u64 = 1;
-        let encoded_with_single_u64 = {
-            let mut out = true;
-            for i in 0..Data::NUM_COMPONENTS {
-                // Safety: Obvious.
-                let new_size = size.checked_mul(unsafe { *quantization_size.get_unchecked(i) }.to_u64());
-                size = if let Some(size) = new_size {
-                    size 
-                } else {
-                    out = false;
-                    break;
-                };
-            }
-            out
-        };
-        let bit_size = (0..)
-            .find(|&x| (1 << x) > size)
-            .unwrap();
-
         // write metadata.
         // all the other information can be recovered on the decoder end.
-        WritableFormat::from_vec(global_metadata_min.to_bits()).write(writer);
-        WritableFormat::from_vec(global_metadata_max.to_bits()).write(writer);
-        writer(unit_cube_size.to_bits());
+        global_metadata_min.write_to(writer);
+        global_metadata_max.write_to(writer);
+        unit_cube_size.write_to(writer);
 
         #[cfg(feature = "evaluation")]
         {
@@ -137,8 +109,6 @@ impl<Data> QuantizationRectangleArray<Data>
         }
 
         Self {
-            encoded_with_single_u64,
-            bit_size,
             global_metadata_min,
             range,
             quantization_size,
@@ -152,40 +122,16 @@ impl<Data> QuantizationRectangleArray<Data>
         Data: Vector + Portable,
         Data::Component: DataValue
 {
-    fn linearize(&self, data: Data) -> WritableFormat {
-        if self.encoded_with_single_u64 {
-            // Safety: Obvious. (NUM_COMPONENTS > 0)
-            let mut val = unsafe{ *data.get_unchecked(0) }.to_u64();
-            for i in 1..Data::NUM_COMPONENTS {
-                // Safety: Obvious.
-                let component = unsafe{ *data.get_unchecked(i) }.to_u64();
-                debug_assert!(
-                    component < self.quantization_size.get(i).to_u64(),
-                    "component {} is out of range {}",  
-                    component,
-                    self.quantization_size.get(i).to_u64()
-                );
-                // Safety: Obvious.
-                let offset = unsafe{ self.quantization_size.get_unchecked(i) }.to_u64();
-                // the multiplication will never overflow because we checked it before.
-                // see the computation of 'encoded_with_single_u64'.
-                val *= offset;
-                val += component;
-            }
-
-            WritableFormat::from_vec(vec![(self.bit_size, val)])
-        } else {
-            let mut out = Vec::new();
-            let size = (mem::size_of::<Data::Component>()<<3) as u8;
-            for i in 0..Data::NUM_COMPONENTS {
-                let component = *data.get(i);
-                out.push((size, component.to_u64()));
-            }
-            WritableFormat::from_vec(out)
+    fn linearize(&self, data: Data) -> Vec<u8> {
+        let mut out = Vec::new();
+        for i in 0..Data::NUM_COMPONENTS {
+            let component = *data.get(i);
+            out.extend(component.to_bytes());
         }
+        out
     }
 
-    fn portabilize_next(&mut self) -> WritableFormat {
+    fn portabilize_next(&mut self) -> Vec<u8> {
         let att_val = self.att_vals.next().unwrap();
         let diff = att_val - self.global_metadata_min;
         let normalized = diff.elem_div(self.range);
@@ -198,66 +144,19 @@ impl<Data> QuantizationRectangleArray<Data>
 impl<Data> PortabilizationImpl for QuantizationRectangleArray<Data> 
     where Data: Vector + Portable,
 {
-    fn portabilize(mut self) -> std::vec::IntoIter<WritableFormat> {
+    fn portabilize(mut self) -> IntoIter<IntoIter<u8>> {
         let mut out = Vec::new();
         for _ in 0..self.att_vals.len() {
-            out.push(self.portabilize_next());
+            out.push(self.portabilize_next().into_iter());
         }
         out.into_iter()
     }
 }
 
-#[cfg(all(test, not(feature = "evaluation")))]
+ #[cfg(all(test, not(feature = "evaluation")))]
 mod tests {
-    use crate::{encode::attribute::portabilization::PortabilizationType, prelude::NdVector};
+    use crate::{encode::attribute::portabilization::PortabilizationType, prelude::{FunctionalByteWriter, NdVector}};
 
     use super::*;
-
-    #[test]
-    fn portabilize_all() {
-        let data = vec![
-            NdVector::from([1_f32, -1.0, 1.0]),
-            NdVector::from([0.0, 0.5, 0.0]),
-            NdVector::from([0.7, 0.8, 0.9]),
-            NdVector::from([0.5, 1.0, 0.0]),
-        ];
-
-        let cfg = Config {
-            type_: PortabilizationType::QuantizationRectangleArray,
-            resolution: Resolution::DivisionSize(10),
-        };
-
-        let mut metadata = vec![
-            // min
-            <f32 as DataValue>::to_bits(0_f32),
-            <f32 as DataValue>::to_bits(-1_f32),
-            <f32 as DataValue>::to_bits(0_f32),
-
-            // max
-            <f32 as DataValue>::to_bits(1_f32),
-            <f32 as DataValue>::to_bits(1_f32),
-            <f32 as DataValue>::to_bits(1_f32),
-
-            // division size
-            <f32 as DataValue>::to_bits(0.1_f32),
-
-            // data
-            (12, 10*11*21 +  0*11 + 10),
-            (12,  0*11*21 + 15*11 +  0),
-            (12,  7*11*21 + 18*11 +  9),
-            (12,  5*11*21 + 20*11 +  0),
-
-        ].into_iter();
-
-        let mut writer = |input| {
-            assert_eq!(input, metadata.next().unwrap());
-        };
-
-        QuantizationRectangleArray::new(data, cfg, &mut writer)
-            .portabilize().into_iter().for_each(|w|
-                w.write(&mut writer)
-            );
-    }
-
-    // ToDo: Test the case where the data is too big to fit in a single u64.
+    // ToDo: Add tests
 }

@@ -1,6 +1,7 @@
 use nd_vector::impl_ndvector_ops;
 
 use super::attribute::ComponentDataType;
+use crate::core::bit_coder::ReaderErr;
 
 use core::fmt;
 use std::{
@@ -140,6 +141,7 @@ impl_max!(u8, u16, u32, u64);
 
 pub trait DataValue: 
     Clone + Copy + fmt::Debug + PartialEq + PartialOrd
+    + Portable
     + Into<serde_json::Value> 
     + Abs + Max
     + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Output=Self> + ops::Div<Output=Self>
@@ -152,8 +154,6 @@ pub trait DataValue:
     fn to_u64(self) -> u64;
     fn from_f64(data: f64) -> Self;
     fn to_f64(self) -> f64;
-    fn to_bits(self) -> (u8, u64);
-    fn from_bits(data: u64) -> Self;
 }
 
 macro_rules! impl_data_value {
@@ -186,13 +186,27 @@ macro_rules! impl_data_value {
                 fn to_f64(self) -> f64 {
                     self as f64
                 }
+            }
 
-                fn to_bits(self) -> (u8, u64) {
-                    ((mem::size_of::<Self>()<<3) as u8, self as u64)
+            impl Portable for $t {
+                fn to_bytes(self) -> Vec<u8> {
+                    self.to_le_bytes().to_vec()
                 }
 
-                fn from_bits(data: u64) -> Self {
-                    data as $t
+                fn write_to<W>(self, writer: &mut W) where W: ByteWriter {
+                    for b in self.to_le_bytes().iter() {
+                        writer.write_u8(*b);
+                    }
+                }
+
+                fn read_from<R>(reader: &mut R) -> Result<Self, ReaderErr> 
+                    where R: ByteReader
+                {
+                    let mut bytes = [0u8; mem::size_of::<Self>()];
+                    for i in 0..bytes.len() {
+                        bytes[i] = reader.read_u8()?;
+                    }
+                    Ok(Self::from_le_bytes(bytes))
                 }
             }
         )*
@@ -227,13 +241,28 @@ macro_rules! impl_data_value {
                 fn to_f64(self) -> f64 {
                     self as f64
                 }
+            }
 
-                fn to_bits(self) -> (u8, u64) {
-                    ((mem::size_of::<Self>()<<3) as u8, self.to_bits() as u64)
+            impl Portable for $t {
+                fn to_bytes(self) -> Vec<u8> {
+                    self.to_le_bytes().to_vec()
                 }
 
-                fn from_bits(data: u64) -> Self {
-                    <$t>::from_bits(data as $uint_t) as $t
+                fn write_to<W>(self, writer: &mut W) where W: ByteWriter {
+                    let bits = self.to_bits();
+                    for b in bits.to_le_bytes().iter() {
+                        writer.write_u8(*b);
+                    }
+                }
+
+                fn read_from<R>(reader: &mut R) -> Result<Self, ReaderErr> 
+                    where R: ByteReader
+                {
+                    let mut bytes = [0u8; mem::size_of::<Self>()];
+                    for i in 0..bytes.len() {
+                        bytes[i] = reader.read_u8()?;
+                    }
+                    Ok(Self::from_bits(<$uint_t>::from_le_bytes(bytes)))
                 }
             }
         )*
@@ -306,6 +335,7 @@ impl<const N: usize,T> From<NdVector<N,T>> for serde_json::Value
 
 use std::ops::Index;
 use std::ops::IndexMut;
+use crate::prelude::{ByteReader, ByteWriter};
 use crate::shared::attribute::Portable;
 impl_ndvector_ops!();
 

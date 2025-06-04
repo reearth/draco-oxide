@@ -25,11 +25,19 @@ pub use crate::core::mesh::{
 };
 
 pub mod prelude {
-    pub use crate::core::shared::{NdVector, Vector};
     pub use crate::core::attribute::{Attribute, AttributeType};
-    pub use crate::core::mesh::{Mesh, builder::MeshBuilder};
     pub use crate::core::buffer::{self, Buffer};
+    pub use crate::core::mesh::{Mesh, builder::MeshBuilder};
+    pub use crate::core::shared::{NdVector, Vector};
     pub use crate::core::shared::ConfigType;
+    pub use crate::core::bit_coder::{
+        BitReader, 
+        BitWriter, 
+        ByteReader, 
+        ByteWriter, 
+        FunctionalByteReader, 
+        FunctionalByteWriter
+    };
     pub use crate::encode::{self, encode};
     pub use crate::decode::{self, decode};
 }

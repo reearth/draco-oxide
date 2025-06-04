@@ -3,7 +3,7 @@ pub mod mesh_parallelogram_prediction;
 pub mod mesh_multi_parallelogram_prediction;
 pub mod derivative_prediction;
 
-use crate::core::{attribute::Attribute, shared::{ConfigType, Vector}};
+use crate::{core::{attribute::Attribute, shared::{ConfigType, Vector}}, prelude::ByteReader};
 
 /// PredictionScheme traits are not generic and the structs implementing the 
 /// trait are generic. This is so because some of the structs need to store
@@ -60,10 +60,10 @@ impl PredictionSchemeType {
 		}
 	}
 
-	pub(crate) fn from_id<F>(stream_in: &mut F) -> Result<Self, usize> 
-		where F: FnMut(u8) -> u64
+	pub(crate) fn read_from<R>(reader: &mut R) -> Result<Self, usize> 
+		where R: ByteReader
 	{
-		let id = stream_in(4);
+		let id = reader.read_u8().unwrap() as usize; // ToDo: handle error.
 		let out = match id {
 			0 => PredictionSchemeType::DeltaPrediction,
 			1 => PredictionSchemeType::DerivativePrediction,
@@ -125,10 +125,10 @@ impl<'parents, Data> PredictionScheme<'parents, Data>
 		}
 	}
 
-	pub(crate) fn new_from_stream<F>(stream_in: &mut F, parents: &[&'parents Attribute]) -> Result<Self, usize> 
-		where F: FnMut(u8) -> u64
+	pub(crate) fn read_from<R>(reader: &mut R, parents: &[&'parents Attribute]) -> Result<Self, usize> 
+		where R: ByteReader
 	{
-		let ty = PredictionSchemeType::from_id(stream_in)?;
+		let ty = PredictionSchemeType::read_from(reader)?;
 		Ok(Self::new(ty, parents))
 	}
 

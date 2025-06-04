@@ -1,18 +1,79 @@
 use crate::core::shared::VertexIdx;
 use crate::core::shared::ConfigType;
+use crate::debug_write;
 use crate::encode::connectivity::ConnectivityEncoder;
 use crate::prelude::Attribute;
+use crate::prelude::ByteWriter;
 use crate::shared::connectivity::sequential::index_size_from_vertex_count;
-use crate::shared::connectivity::sequential::{
-    NUM_POINTS_SLOT,
-    NUM_FACES_SLOT
-};
+use crate::shared::connectivity::sequential::Method;
+use crate::utils::bit_coder::leb128_write;
 
-pub(crate) struct Sequential;
+pub(crate) struct Sequential {
+    cfg: Config,
+}
 
 impl Sequential {
-    pub fn new(_config: Config) -> Self {
-        Self
+    pub fn new(config: Config) -> Self {
+        Self {
+            cfg: config,
+        }
+    }
+
+    fn encode_direct_indices<W>(
+        &mut self,
+        faces: &mut [[VertexIdx; 3]],
+        points: &mut[&mut Attribute], 
+        writer: &mut W
+    ) -> Result<(), Err> 
+        where  W: ByteWriter,
+    {
+        let index_size = match index_size_from_vertex_count(points.len()) {
+            Ok(index_size) => index_size as u8,
+            Err(err) => return Err(Err::SharedError(err)),
+        };
+        debug_write!("Start of indices", writer);
+        
+        if index_size == 21 {
+            // varint encoding
+            for face in faces {
+                leb128_write(face[0] as u64, writer);
+                leb128_write(face[1] as u64, writer);
+                leb128_write(face[2] as u64, writer);
+            }
+        } else {
+            // non-varint encoding
+            match index_size {
+                8 => for face in faces {
+                    writer.write_u8(face[0] as u8);
+                    writer.write_u8(face[1] as u8);
+                    writer.write_u8(face[2] as u8);
+                }
+                16 => for face in faces {
+                    writer.write_u16(face[0] as u16);
+                    writer.write_u16(face[1] as u16);
+                    writer.write_u16(face[2] as u16);
+                },
+                32 => for face in faces {
+                    writer.write_u32(face[0] as u32);
+                    writer.write_u32(face[1] as u32);
+                    writer.write_u32(face[2] as u32);
+                },
+                _ => unreachable!()
+            }
+        }
+        Ok(())
+    }
+
+    fn encode_compressed<R>(
+        &mut self,
+        _faces: &mut [[VertexIdx; 3]],
+        _points: &mut[&mut Attribute], 
+        _writer: &mut R
+    ) -> Result<(), Err> 
+        where  R: ByteWriter,
+    {
+        // ToDo: implement compressed encoding after implementing the rans coder.
+        unimplemented!()
     }
 }
 
@@ -20,39 +81,34 @@ impl ConnectivityEncoder for Sequential {
     type Err = Err;
     type Config = Config;
 
-    fn encode_connectivity<F>(
+    fn encode_connectivity<W>(
         &mut self, 
         faces: &mut [[VertexIdx; 3]],
         points: &mut[&mut Attribute], 
-        writer: &mut F
+        writer: &mut W
     ) -> Result<(), Err> 
-        where  F: FnMut((u8, u64)),
+        where  W: ByteWriter,
     {
-        let index_size = match index_size_from_vertex_count(points.len()) {
-            Ok(index_size) => index_size as u8,
-            Err(err) => return Err(Err::SharedError(err)),
-        };
-        
+        writer.write_u64(points.len() as u64);
+        writer.write_u64(faces.len() as u64);
+        let encoder_method_id = self.cfg.encoder_method.get_id();
+        writer.write_u8(encoder_method_id);
+        self.encode_direct_indices(faces, points, writer)?;
 
-        writer((NUM_POINTS_SLOT, points.len() as u64));
-        writer((NUM_FACES_SLOT, faces.len() as u64));
-        
-
-        for face in faces {
-            writer((index_size, face[0] as u64));
-            writer((index_size, face[1] as u64));
-            writer((index_size, face[2] as u64));
-        }
         Ok(())
     }
 }
 
 #[derive(Clone)]
-pub struct Config;
+pub struct Config {
+    pub encoder_method: Method,
+}
 
 impl ConfigType for Config {
     fn default() -> Self {
-        Config
+        Config {
+            encoder_method: Method::DirectIndices,
+        }
     }
 }
 
@@ -62,3 +118,4 @@ pub enum Err {
     #[error("Invalid vertex count")]
     SharedError(crate::shared::connectivity::sequential::Err),
 }
+

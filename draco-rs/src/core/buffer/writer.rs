@@ -1,11 +1,14 @@
+use crate::core::shared::{BitWriter, ByteWriter};
+
 use super::{
-	Buffer, OrderConfig, RawBuffer
+	Buffer, MsbFirst, OrderConfig, RawBuffer
 };
 
 /// Writes the data to the buffer by borrowing it mutably.
 /// Mostly used by the encoder.
 #[derive(Debug)]
-pub struct Writer<Order: OrderConfig> {
+#[repr(C)]
+pub struct Writer<Order: OrderConfig = MsbFirst, const BIT_CODER_ENABLED: bool = false> {
 	ptr: *mut u8,
 
 	/// the number of bits written to the buffer.
@@ -21,7 +24,7 @@ pub struct Writer<Order: OrderConfig> {
 	_phantom: std::marker::PhantomData<Order>,
 }
 
-impl<Order: OrderConfig> Into<Buffer<Order>> for Writer<Order> {
+impl<Order: OrderConfig, const BIT_CODER_ENABLED: bool> Into<Buffer<Order>> for Writer<Order, BIT_CODER_ENABLED> {
 	fn into(self) -> Buffer<Order> {
 		Buffer::<Order> {
 			data: self.buffer,
@@ -31,10 +34,11 @@ impl<Order: OrderConfig> Into<Buffer<Order>> for Writer<Order> {
 	}
 }
 
-impl<Order: OrderConfig> Writer<Order> {
+impl<Order: OrderConfig> BitWriter for Writer<Order, true> {
+	type ByteWriter = Writer<Order, false>;
 	/// write the 'size' bits of data at the current offset.
 	/// the input will be taken to be the first 'size' bits of 'value'.
-	pub fn next(&mut self, (size, value): (u8, u64)) {
+	fn write_bits(&mut self, (size, value): (u8, u64)) {
 		// this not an unsafe condition, but it is a good practice to avoid weird inputs.
 		assert!(size <= 64 && size > 0, "Invalid size: {}", size);
 
@@ -57,14 +61,62 @@ impl<Order: OrderConfig> Writer<Order> {
 			(size, value)
 		);
 
-		unsafe{ self.next_unchecked((size, value)) }
+		unsafe{ self.write_bits_unchecked((size, value)) }
 	}
 
+	fn into_byte_writer(&mut self) -> &mut Self::ByteWriter {
+		// clean up the current byte and reaturn byte writer.
+		if self.pos_in_curr_byte != 0 {
+			if self.num_bits + 8 >= self.buffer.cap << 3 {
+				self.buffer.double();
+			}
+			self.ptr = unsafe{ self.ptr.add(1) };
+			self.num_bits = self.num_bits + (8 - self.pos_in_curr_byte as usize);
+			self.pos_in_curr_byte = 0;
+		}
+		// Safety: we forced the memory layout of `Writer<Order, true>` and `Writer<Order, false>` to be the same.
+		unsafe {
+			&mut *(self as *mut Self as *mut Writer<Order, false>)
+		}
+	}
+}
+
+impl<Order: OrderConfig> ByteWriter for Writer<Order, false> {
+	type BitWriter = Writer<Order, true>;
+
+	fn write_byte(&mut self, data: u8) {
+		// Safety: we have ensured that the raw buffer has enough capacity to write a byte.
+		unsafe{
+			self.ptr.write(data);
+		}
+
+		while self.num_bits + 8 >= self.buffer.cap << 3 {
+			self.buffer.double();
+		}
+
+		// Safety: We have ensured that the raw buffer has enough capacity to write a byte.
+		unsafe {
+			self.ptr = self.ptr.add(1);
+		}
+
+		self.num_bits += 8;
+	}
+
+	fn into_bit_writer(&mut self) -> &mut Self::BitWriter {
+		let ptr = self as *mut Self;
+		// Safety: we forced the memory layout of `Writer<Order, true>` and `Writer<Order, false>` to be the same.
+		unsafe {
+			&mut *(ptr as *mut Writer<Order, true>)
+		}
+	}
+}
+
+impl<Order: OrderConfig> Writer<Order, true> {
 	/// write the 'size' bits of data at the current offset without checking the bounds.
 	/// the first 'size' bits will be taken from 'value' as an input.
 	/// Safety:  The caller must ensure that 'buffer' has allocated enough memory to store the data; 
 	/// i.e. 'buffer.cap' is greater than or equal to 'num_bits'+'size'.
-	pub unsafe fn next_unchecked(&mut self, (size, value): (u8, u64)) {
+	pub unsafe fn write_bits_unchecked(&mut self, (size, value): (u8, u64)) {
 		self.num_bits = self.num_bits.unchecked_add(size as usize);
 		
 		let mut offset = if Order::IS_MSB_FIRST{ size } else { 0 };
@@ -120,7 +172,9 @@ impl<Order: OrderConfig> Writer<Order> {
 		}
 		self.pos_in_curr_byte = if Order::IS_MSB_FIRST {offset} else {size.unchecked_sub(offset) & 7};
 	}
+}
 
+impl<Order: OrderConfig, const BIT_CODER_ENABLED: bool> Writer<Order, BIT_CODER_ENABLED> {
 	pub fn new() -> Self {
 		let buffer= RawBuffer::with_capacity(1);
 		Self {

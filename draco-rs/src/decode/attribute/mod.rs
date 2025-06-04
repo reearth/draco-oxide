@@ -3,7 +3,7 @@ pub(crate) mod inverse_prediction_transform;
 pub(crate) mod portabilization;
 
 use thiserror::Error;
-use crate::prelude::{Attribute, ConfigType};
+use crate::prelude::{Attribute, ByteReader, ConfigType};
 
 
 #[derive(Debug, Error)]
@@ -27,21 +27,20 @@ impl ConfigType for Config {
     }
 }
 
-pub fn decode_attributes<F>(
-    stream_in: &mut F,
-    cfg: Config,
+pub fn decode_attributes<W>(
+    reader: &mut W,
+    _cfg: Config,
     mut decoded_attributes: Vec<Attribute>,
 ) -> Result<Vec<Attribute>, Err>
-    where F: FnMut(u8) -> u64,
+    where W: ByteReader,
 {
     // Read the number of attributes
-    let num_attributes = stream_in(16);
+    let num_attributes = reader.read_u16().unwrap() as usize;
 
-    let mut cfg = cfg.decoder_cfgs.into_iter();
     for _ in 0..num_attributes {
         let decoder = attribute_decoder::AttributeDecoder::new_and_init(
             attribute_decoder::Config::default(),
-            stream_in,
+            reader,
             &decoded_attributes,
         )?;
         let att = decoder.decode().map_err(|err| {

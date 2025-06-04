@@ -4,44 +4,45 @@ use crate::core::attribute::{
     Attribute, AttributeId, AttributeType, ComponentDataType, MaybeInitAttribute 
 };
 
+use crate::core::bit_coder::ReaderErr;
 use crate::core::shared::{DataValue, NdVector, Vector};
 use crate::debug_expect;
-use crate::prelude::ConfigType;
+use crate::prelude::{ByteReader, ConfigType};
 use crate::shared::attribute::{prediction_scheme::PredictionScheme, Portable};
 
 use super::inverse_prediction_transform::InversePredictionTransform;
 
-pub(super) struct AttributeDecoder<'parents, 'stream_in, F> {
+pub(super) struct AttributeDecoder<'parents, 'reader, R> {
     att: MaybeInitAttribute,
 	cfg: Config,
-    stream_in: &'stream_in mut F,
+    reader: &'reader mut R,
     parents: Vec<&'parents Attribute>,
 }
 
-impl<'parents, 'stream_in, F> AttributeDecoder<'parents, 'stream_in, F> 
-    where F: FnMut(u8) -> u64,
+impl<'parents, 'reader, R> AttributeDecoder<'parents, 'reader, R> 
+    where R: ByteReader,
 {
     pub(super) fn new_and_init(
         cfg: Config,
-        stream_in: &'stream_in mut F,
+        reader: &'reader mut R,
         parents_pool: &'parents [Attribute],
     ) -> Result<Self, Err> {
-        debug_expect!("Start of Attribute Metadata", stream_in);
-        let id = AttributeId::new(stream_in(16) as usize);
-        let att_type = AttributeType::from_id(stream_in(8) as usize);
-        let len = stream_in(64) as usize;
-        let component_type = ComponentDataType::from_id(stream_in(8) as usize)
+        debug_expect!("Start of Attribute Metadata", reader);
+        let id = AttributeId::new(reader.read_u16()? as usize);
+        let att_type = AttributeType::from_id(reader.read_u8()? as usize);
+        let len = reader.read_u64()? as usize;
+        let component_type = ComponentDataType::from_id(reader.read_u8()? as usize)
             .map_err(|_| Err::ComponentUnwrapErr)?;
-        let num_components = stream_in(8) as usize;
-        let num_parents = stream_in(8) as usize;
+        let num_components = reader.read_u8()? as usize;
+        let num_parents = reader.read_u8()? as usize;
         let mut parents = Vec::with_capacity(num_parents);
         let mut parents_ids = Vec::with_capacity(num_parents);
         for _ in 0..num_parents {
-            let parent_id = stream_in(16) as usize;
+            let parent_id = reader.read_u16()? as usize;
             parents_ids.push(AttributeId::new(parent_id));
             parents.push(&parents_pool[parent_id]);
         }
-        debug_expect!("End of Attribute Metadata", stream_in);
+        debug_expect!("End of Attribute Metadata", reader);
 
         let att = MaybeInitAttribute::new(
             id,
@@ -56,7 +57,7 @@ impl<'parents, 'stream_in, F> AttributeDecoder<'parents, 'stream_in, F>
             Self {
                 att,
                 cfg,
-                stream_in,
+                reader,
                 parents,
             }
         )
@@ -120,23 +121,23 @@ impl<'parents, 'stream_in, F> AttributeDecoder<'parents, 'stream_in, F>
             NdVector<N, T>: Vector + Portable,
     {
         // get groups
-        debug_expect!("Start of Transform Metadata", self.stream_in);
-        let num_groups = (self.stream_in)(8) as usize;
+        debug_expect!("Start of Transform Metadata", self.reader);
+        let num_groups = self.reader.read_u8()? as usize;
         let mut groups: Vec<Group<'_, NdVector<N,T>>> = Vec::new();
         for _ in 0..num_groups {
-            let group = Group::new(self.stream_in, &self.parents)?;
+            let group = Group::new(self.reader, &self.parents)?;
             groups.push(group);
         }
-        debug_expect!("End of Transform Metadata", self.stream_in);
+        debug_expect!("End of Transform Metadata", self.reader);
 
         let mut num_encoded_values = 0;
         while num_encoded_values < self.att.len() {
-            debug_expect!("Start of a Range", self.stream_in);
-            let group_id = (self.stream_in)(8) as usize;
+            debug_expect!("Start of a Range", self.reader);
+            let group_id = self.reader.read_u8()? as usize;
             let group = &mut groups[group_id];
-            let range_size = (self.stream_in)(64) as usize;
+            let range_size = self.reader.read_u64()? as usize;
             let range = num_encoded_values..(num_encoded_values + range_size);
-            group.inverse(range, &mut self.att, self.stream_in);
+            group.inverse(range, &mut self.att, self.reader);
             num_encoded_values += range_size;
         }
         Ok(())
@@ -153,12 +154,12 @@ struct Group<'parents, Data>
 impl<'parents, Data> Group<'parents, Data> 
     where Data: Vector + Portable
 {
-    fn new<F>(stream_in: &mut F, parents: &'parents [&Attribute]) -> Result<Self, Err> 
-        where F: FnMut(u8) -> u64
+    fn new<R>(reader: &mut R, parents: &'parents [&Attribute]) -> Result<Self, Err> 
+        where R: ByteReader
     {
-        let prediction = PredictionScheme::new_from_stream(stream_in, parents)
+        let prediction = PredictionScheme::read_from(reader, parents)
             .map_err(|x| Err::InvalidPredictionSchemeId(x))?;
-        let inverse_transform = InversePredictionTransform::new(stream_in)
+        let inverse_transform = InversePredictionTransform::new(reader)
             .map_err(|err| Err::InvalidInversePredictionTransformId(err))?;
         
         Ok(
@@ -169,18 +170,18 @@ impl<'parents, Data> Group<'parents, Data>
         )
     }
 
-    fn inverse<F>(
+    fn inverse<R>(
         &mut self,
         range: ops::Range<usize>,
         att: &mut MaybeInitAttribute,
-        stream_in: &mut F
+        reader: &mut R
     )
-        where F: FnMut(u8) -> u64
+        where R: ByteReader
     {
         for idx in range {
             let slice =  unsafe{ &att.as_slice_unchecked::<Data>()[..idx] };
             let pred = self.prediction.predict(slice);
-            att.write(idx, self.inverse_transform.inverse(pred, stream_in));
+            att.write(idx, self.inverse_transform.inverse(pred, reader));
         }
     }
 }
@@ -209,4 +210,6 @@ pub enum Err {
     InvalidInversePredictionTransformId(#[from] super::inverse_prediction_transform::Err),
     #[error("Invalid Prediction Scheme ID: {0}")]
     InvalidPredictionSchemeId(usize),
+    #[error("Not enough data in stream.")]
+    NotEnoughData(#[from] ReaderErr),
 }

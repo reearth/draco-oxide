@@ -252,8 +252,6 @@ mod test {
 
     use super::*;
     use crate::core::attribute::AttributeId;
-    use crate::core::buffer::writer::Writer;
-    use crate::core::buffer::MsbFirst;
     use crate::core::shared::{ConfigType, NdVector}; 
     use crate::encode::connectivity::{edgebreaker::{Config, Edgebreaker}, ConnectivityEncoder}; 
     use crate::shared::attribute::prediction_scheme::PredictionSchemeImpl;
@@ -297,9 +295,8 @@ mod test {
         ];
 
         let mut encoder = Edgebreaker::new(Config::default());
-        let mut buff_writer = Writer::<MsbFirst>::new();
-        let mut writer = |input: (u8, u64)| buff_writer.next(input);
-        let rerult = encoder.encode_connectivity(&mut faces, &mut [&mut atts[1]], &mut writer);
+        let mut buffer = Vec::new();
+        let rerult = encoder.encode_connectivity(&mut faces, &mut [&mut atts[1]], &mut buffer);
         assert!(rerult.is_ok());
 
         let atts = vec![

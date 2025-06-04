@@ -1,6 +1,8 @@
+use std::vec::IntoIter;
+
 use crate::core::shared::DataValue;
 use crate::core::shared::Vector;
-use crate::encode::attribute::WritableFormat;
+use crate::prelude::ByteWriter;
 use crate::shared::attribute::Portable;
 
 #[cfg(feature = "evaluation")]
@@ -23,8 +25,8 @@ impl<Data> ToBits<Data>
         Data: Vector + Portable,
         Data::Component: DataValue
 {
-    pub fn new<F>(att_vals: Vec<Data>, _cfg: Config, writer: &mut F) -> Self 
-        where F:FnMut((u8, u64)) 
+    pub fn new<W>(att_vals: Vec<Data>, _cfg: Config, writer: &mut W) -> Self 
+        where W: ByteWriter 
     {
         #[cfg(feature = "evaluation")]
         eval::write_json_pair("portabilization", "ToBits".into(), writer);
@@ -37,9 +39,9 @@ impl<Data> ToBits<Data>
 impl<Data> PortabilizationImpl for ToBits<Data> 
     where Data: Vector + Portable,
 {
-    fn portabilize(self) -> std::vec::IntoIter<WritableFormat> {
+    fn portabilize(self) -> IntoIter<IntoIter<u8>> {
         self.att_vals.into_iter().map(|att_val| 
-            WritableFormat::from(att_val)
+            att_val.to_bytes().into_iter()
         ).collect::<Vec<_>>().into_iter()
     }
 }

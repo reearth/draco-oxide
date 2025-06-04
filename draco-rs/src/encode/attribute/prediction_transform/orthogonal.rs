@@ -1,7 +1,8 @@
 use std::marker::PhantomData;
+use std::vec::IntoIter;
 
 use crate::core::shared::{Abs, DataValue, NdVector, Vector};
-use crate::encode::attribute::WritableFormat;
+use crate::prelude::ByteWriter;
 use crate::shared::attribute::Portable;
 
 use super::PredictionTransformImpl;
@@ -94,12 +95,12 @@ impl<Data> PredictionTransformImpl<Data> for OrthogonalTransform<Data>
 
     }
 
-    fn out<F>(self, _writer: &mut F) -> std::vec::IntoIter<WritableFormat>where F:FnMut((u8,u64)) {
+    fn out<W>(self, _writer: &mut W) -> IntoIter<IntoIter<u8>> where W: ByteWriter {
         unimplemented!()
     }
 
-    fn squeeze<F>(&mut self, _writer: &mut F) 
-        where F:FnMut((u8,u64)) 
+    fn squeeze<W>(&mut self, _writer: &mut W) 
+        where W: ByteWriter 
     {
         unimplemented!()
     }

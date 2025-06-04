@@ -2,14 +2,17 @@ pub mod config;
 pub(crate) mod edgebreaker;
 pub(crate) mod sequential;
 
+use core::panic;
 use std::fmt::Debug;
 
+use crate::core::bit_coder::ByteWriter;
 use crate::core::shared::{
     ConfigType,
     VertexIdx,
 };
 use crate::core::attribute::AttributeType;
 use crate::core::mesh::Mesh;
+use crate::debug_write;
 use crate::prelude::Attribute;
 use crate::shared::connectivity::{EdgebreakerDecoder, Encoder, NUM_CONNECTIVITY_ATTRIBUTES_SLOT};
 
@@ -17,17 +20,17 @@ use crate::shared::connectivity::{EdgebreakerDecoder, Encoder, NUM_CONNECTIVITY_
 use crate::eval;
 
 /// entry point for encoding connectivity.
-pub fn encode_connectivity<F>(
+pub fn encode_connectivity<W>(
     mesh:&mut Mesh,
-    writer: &mut F,
+    writer: &mut W,
     cfg: Config,
 ) -> Result<(), Err>
-    where F: FnMut((u8, u64))
+    where W: ByteWriter
 {
     #[cfg(feature = "evaluation")]
     eval::scope_begin("connectivity info", writer);
 
-    // create the array of tuples (connectivity attribute (parent), position attribute (chilc) index)
+    // create the array of tuples (connectivity attribute (parent), position attribute (child) index)
     let conn_child_atts_indices = mesh.get_attributes()
         .iter()
         .enumerate()
@@ -50,7 +53,7 @@ pub fn encode_connectivity<F>(
     if conn_child_atts_indices.len() >= 1 << NUM_CONNECTIVITY_ATTRIBUTES_SLOT {
         return Err(Err::TooManyConnectivityAttributes);
     }
-    writer((NUM_CONNECTIVITY_ATTRIBUTES_SLOT, conn_child_atts_indices.len() as u64));
+    writer.write_u8(conn_child_atts_indices.len() as u8);
 
     for idx in conn_child_atts_indices {
         let mut atts = mesh.get_attributes_mut_by_indices(&idx);
@@ -71,14 +74,13 @@ pub fn encode_connectivity<F>(
     Ok(())
 }
 
-pub fn encode_connectivity_datatype_unpacked<F>(
+pub fn encode_connectivity_datatype_unpacked<W>(
     faces: &mut [[VertexIdx; 3]],
     children: &mut[&mut Attribute],
-    writer: &mut F,
+    writer: &mut W,
     cfg: Config,
 ) -> Result<(), Err>
-where
-    F: FnMut((u8, u64)),
+    where W: ByteWriter,
 {
     match cfg {
         Config::Edgebreaker(cfg) => {
@@ -86,9 +88,10 @@ where
             eval::scope_begin("edgebreaker", writer);
             
             // write the encoder id
-            writer((1,Encoder::Edgebreaker.id()));
+            writer.write_u8(Encoder::Edgebreaker.get_id() as u8);
+            debug_write!("Start of edgebreaker connectivity", writer);
             // write the edgebreaker decoder id
-            writer((3, EdgebreakerDecoder::SpiraleReversi.id()));
+            writer.write_u8(EdgebreakerDecoder::SpiraleReversi.id() as u8);
             let mut encoder = edgebreaker::Edgebreaker::new(cfg);
             let result = encoder.encode_connectivity(faces, children, writer);
             
@@ -104,10 +107,11 @@ where
             eval::scope_begin("sequential", writer);
 
             // write the encoder id
-            writer((1,Encoder::Sequential.id()));
+            writer.write_u8(Encoder::Sequential.get_id() as u8);
             let mut encoder = sequential::Sequential::new(cfg);
+            debug_write!("Start of sequential connectivity", writer);
             let result = encoder.encode_connectivity(faces, children, writer);
-            
+
             #[cfg(feature = "evaluation")]
             eval::scope_end(writer);
             
@@ -123,14 +127,13 @@ where
 pub trait ConnectivityEncoder {
     type Err;
     type Config;
-    fn encode_connectivity<F>(
+    fn encode_connectivity<W>(
         &mut self, 
         faces: &mut [[VertexIdx; 3]],
         points: &mut[&mut Attribute], 
-        buffer: &mut F
+        buffer: &mut W
     ) -> Result<(), Self::Err>
-        where
-            F: FnMut((u8, u64));
+        where W: ByteWriter;
 }
 
 #[remain::sorted]
