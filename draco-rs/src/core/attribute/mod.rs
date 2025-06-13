@@ -1,9 +1,19 @@
-
 use serde::Serialize;
 
 use crate::core::shared::Vector;
+use crate::prelude::{ByteReader, ByteWriter};
 use super::{buffer, shared::DataValue};
 
+
+#[derive(Debug, thiserror::Error)]
+pub enum Err {
+	/// Invalid attribute domain id
+	#[error("Invalid attribute domain id: {0}")]
+	InvalidAttributeDomainId(u8),
+	/// Reader error
+	#[error("Reader error: {0}")]
+	ReaderError(#[from] crate::core::bit_coder::ReaderErr),
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Attribute {
@@ -15,15 +25,19 @@ pub struct Attribute {
 
 	/// attribute type
 	att_type: AttributeType,
+
+	/// attribute domain
+	domain: AttributeDomain,
 	
 	/// the reference of the parent, if any
 	parents: Vec<AttributeId>,
+
+	/// 
+	index_map: Option<Vec<usize>>,
 }
 
-
-
 impl Attribute {
-	pub(crate) fn from<Data>(id: AttributeId, data: Vec<Data>, att_type: AttributeType, parents: Vec<AttributeId>) -> Self 
+	pub(crate) fn from<Data>(id: AttributeId, data: Vec<Data>, att_type: AttributeType, domain: AttributeDomain, parents: Vec<AttributeId>) -> Self 
 		where 
 			Data: Vector,
 	{
@@ -33,16 +47,8 @@ impl Attribute {
 			buffer,
 			parents,
 			att_type,
-		}
-	}
-
-	pub(crate) fn from_faces(id: AttributeId, data: Vec<[usize;3]>, parents: Vec<AttributeId>) -> Self {
-		let buffer = buffer::attribute::AttributeBuffer::from(data);
-		Self {
-			id,
-			buffer,
-			parents: parents,
-			att_type: AttributeType::Connectivity
+			domain,
+			index_map: None,
 		}
 	}
 
@@ -74,6 +80,11 @@ impl Attribute {
 	}
 
 	#[inline]
+	pub fn get_domain(&self) -> AttributeDomain {
+		self.domain
+	}
+
+	#[inline]
 	pub fn get_parents(&self) -> &Vec<AttributeId> {
 		self.parents.as_ref()
 	}
@@ -82,6 +93,16 @@ impl Attribute {
 	#[inline(always)]
 	pub fn len(&self) -> usize {
 		self.buffer.len()
+	}
+
+	#[inline]
+	pub fn get_att_idx(&self, idx: usize) -> usize {
+		if let Some(ref index_map) = self.index_map {
+			index_map[idx]
+		} else {
+			// otherwise, we use identity mapping
+			idx
+		}
 	}
 
 	/// returns the data values as a slice of values casted to the given type.
@@ -294,6 +315,35 @@ impl AttributeType {
 	}
 }
 
+/// The domain of the attribute, i.e. whether it is defined on the position or corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(crate) enum AttributeDomain {
+	/// The attribute is defined on the position attribute, i.e. i'th element in the attribute is attached to the i'th position in the mesh.
+	Position,
+	/// The attribute is defined on the corner attribute, i.e. i'th element in the attribute is attached to the i'th corner in the mesh.
+	Corner,
+}
+
+impl AttributeDomain {
+	/// Writes the id of the attribute domain to the writer.
+	pub fn write_to<W: ByteWriter>(&self, writer: &mut W) {
+		match self {
+			Self::Position => writer.write_u8(0),
+			Self::Corner => writer.write_u8(1),
+		}
+	}
+
+	/// Reads the attribute domain from the reader.
+	pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+		let id = reader.read_u8()?;
+		match id {
+			0 => Ok(Self::Position),
+			1 => Ok(Self::Corner),
+			_ => Err(Err::InvalidAttributeDomainId(id)),
+		}
+	}
+}
+
 pub(crate) struct MaybeInitAttribute {
 	/// attribute id
 	id: AttributeId,
@@ -303,6 +353,9 @@ pub(crate) struct MaybeInitAttribute {
 
 	/// attribute type
 	att_type: AttributeType,
+
+	/// attribute domain
+	domain: AttributeDomain,
 	
 	/// the reference of the parent, if any
 	parents: Vec<AttributeId>,
@@ -313,6 +366,7 @@ impl MaybeInitAttribute {
 	pub fn new(
 		id: AttributeId, 
 		att_type: AttributeType,
+		domain: AttributeDomain,
 		len: usize, 
 		component_type: ComponentDataType,
 		num_components: usize,
@@ -327,6 +381,7 @@ impl MaybeInitAttribute {
 			buffer,
 			parents,
 			att_type,
+			domain,
 		}
 	}
 
@@ -387,6 +442,8 @@ impl From<MaybeInitAttribute> for Attribute {
 			buffer,
 			parents: maybe_init.parents,
 			att_type: maybe_init.att_type,
+			domain: maybe_init.domain,
+			index_map: None,
 		}
 	}
 }
@@ -419,7 +476,7 @@ mod tests {
 			NdVector::from([4.0f32, 5.0, 6.0]), 
 			NdVector::from([7.0f32, 8.0, 9.0])
 		];
-		let att = super::Attribute::from(AttributeId::new(0), data.clone(), super::AttributeType::Position, Vec::new());
+		let att = super::Attribute::from(AttributeId::new(0), data.clone(), super::AttributeType::Position, super::AttributeDomain::Position, Vec::new());
 		assert_eq!(att.len(), data.len());
 		assert_eq!(att.get::<NdVector<3,f32>>(0), data[0], "{:b}!={:b}", att.get::<NdVector<3,f32>>(0).get(0).to_bits(), data[0].get(0).to_bits());
 		assert_eq!(att.get_component_type(), super::ComponentDataType::F32);

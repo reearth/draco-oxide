@@ -7,6 +7,7 @@ use crate::core::attribute::ComponentDataType;
 use crate::core::shared::{DataValue, NdVector};
 use crate::core::attribute::Attribute;
 use crate::debug_write;
+use crate::encode::connectivity::ConnectivityEncoderOutput;
 use crate::prelude::{AttributeType, ByteWriter, ConfigType};
 use crate::shared::attribute::Portable;
 use crate::utils::splice_disjoint_indices;
@@ -86,22 +87,23 @@ impl ConfigType for Config {
     }
 }
 
-pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, W> 
+pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, 'co, 'mesh, W> 
 {
 	att: &'encoder Attribute,
     #[allow(unused)]
 	cfg: Config,
     writer: &'writer mut W,
     parents: &'encoder[&'parents Attribute],
+    conn_out: &'co ConnectivityEncoderOutput<'mesh>,
 }
 
-impl<'parents, 'encoder, 'writer, W> AttributeEncoder<'parents, 'encoder, 'writer, W>
+impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'encoder, 'writer, 'co, 'mesh, W>
     where 
         W: ByteWriter,
         'parents: 'encoder,
 {
-	pub(super) fn new(att: &'encoder Attribute, parents: &'encoder[&'parents Attribute], writer: &'writer mut W, cfg: Config) -> Self {
-        AttributeEncoder { att, cfg, writer, parents }
+	pub(super) fn new(att: &'encoder Attribute, parents: &'encoder[&'parents Attribute], conn_out: &'co ConnectivityEncoderOutput<'mesh>, writer: &'writer mut W, cfg: Config) -> Self {
+        AttributeEncoder { att, cfg, writer, parents, conn_out }
     }
 	
 	pub(super) fn encode<const WRITE_NOW: bool>(self) -> Result<(), Err> {

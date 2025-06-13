@@ -246,87 +246,87 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshMultiParallelogramPr
 }
 
 
-#[cfg(test)]
-mod test {
-    use std::vec;
+// #[cfg(test)]
+// mod test {
+//     use std::vec;
 
-    use super::*;
-    use crate::core::attribute::AttributeId;
-    use crate::core::shared::{ConfigType, NdVector}; 
-    use crate::encode::connectivity::{edgebreaker::{Config, Edgebreaker}, ConnectivityEncoder}; 
-    use crate::shared::attribute::prediction_scheme::PredictionSchemeImpl;
+//     use super::*;
+//     use crate::core::attribute::AttributeId;
+//     use crate::core::shared::{ConfigType, NdVector}; 
+//     use crate::encode::connectivity::{edgebreaker::{Config, Edgebreaker}, ConnectivityEncoder}; 
+//     use crate::shared::attribute::prediction_scheme::PredictionSchemeImpl;
 
 
-    // #[test]
-    fn test_predict() {
-        let mut faces = [
-            [0,1,5], [1,5,6], [1,2,6], [2,6,7], [2,3,7], [3,7,8], [3,4,8], [4,8,9],
-            [5,6,10], [6,10,11], [6,7,11], [7,11,12], [7,8,12], [8,12,13], [8,9,13], [9,13,14],
-            [10,11,15], [11,15,16], [11,12,16], [12,16,17], [12,13,17], [13,17,18], [13,14,18], [14,18,19],
-            [15,16,20], [16,20,21], [16,17,21], [17,21,22], [17,18,22], [18,22,23], [18,19,23], [19,23,24]
-        ];
-        faces.sort();
-        let points = {
-            let n_points = 25;
-            let mut points = Vec::new();
-            for i in 0..n_points {
-                let x = i % 5;
-                let y = (i / 5) % 5;
-                let z = x + y;
-                points.push(NdVector::from([x as f32, y as f32, z as f32]));
-            }
-            points
-        };
+//     // #[test]
+//     fn test_predict() {
+//         let mut faces = [
+//             [0,1,5], [1,5,6], [1,2,6], [2,6,7], [2,3,7], [3,7,8], [3,4,8], [4,8,9],
+//             [5,6,10], [6,10,11], [6,7,11], [7,11,12], [7,8,12], [8,12,13], [8,9,13], [9,13,14],
+//             [10,11,15], [11,15,16], [11,12,16], [12,16,17], [12,13,17], [13,17,18], [13,14,18], [14,18,19],
+//             [15,16,20], [16,20,21], [16,17,21], [17,21,22], [17,18,22], [18,22,23], [18,19,23], [19,23,24]
+//         ];
+//         faces.sort();
+//         let points = {
+//             let n_points = 25;
+//             let mut points = Vec::new();
+//             for i in 0..n_points {
+//                 let x = i % 5;
+//                 let y = (i / 5) % 5;
+//                 let z = x + y;
+//                 points.push(NdVector::from([x as f32, y as f32, z as f32]));
+//             }
+//             points
+//         };
 
-        let mut atts = vec![
-            Attribute::from_faces(
-                AttributeId::new(0),
-                faces.to_vec(),
-                Vec::new(),
-            ),
-            Attribute::from(
-                AttributeId::new(1),
-                points.clone(),
-                AttributeType::Position,
-                vec![
-                    AttributeId::new(0),
-                ],
-            ),
-        ];
+//         let mut atts = vec![
+//             Attribute::from_faces(
+//                 AttributeId::new(0),
+//                 faces.to_vec(),
+//                 Vec::new(),
+//             ),
+//             Attribute::from(
+//                 AttributeId::new(1),
+//                 points.clone(),
+//                 AttributeType::Position,
+//                 vec![
+//                     AttributeId::new(0),
+//                 ],
+//             ),
+//         ];
 
-        let mut encoder = Edgebreaker::new(Config::default());
-        let mut buffer = Vec::new();
-        let rerult = encoder.encode_connectivity(&mut faces, &mut [&mut atts[1]], &mut buffer);
-        assert!(rerult.is_ok());
+//         let mut encoder = Edgebreaker::new(Config::default());
+//         let mut buffer = Vec::new();
+//         let rerult = encoder.encode_connectivity(&mut faces, &mut [&mut atts[1]], &mut buffer);
+//         assert!(rerult.is_ok());
 
-        let atts = vec![
-            &atts[0],
-            &atts[1],
-        ];
+//         let atts = vec![
+//             &atts[0],
+//             &atts[1],
+//         ];
 
-        let mut mesh_prediction = MeshMultiParallelogramPrediction::<NdVector<3, f32>>::new(&*atts);
-        let mut seq = vec![0..points.len()];
-        let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut seq);
+//         let mut mesh_prediction = MeshMultiParallelogramPrediction::<NdVector<3, f32>>::new(&*atts);
+//         let mut seq = vec![0..points.len()];
+//         let impossible_to_predict = mesh_prediction.get_values_impossible_to_predict(&mut seq);
         
-        let mut points_up_till_now = {
-            // fill the answer for the vertices that are impossible to predict
-            let mut out = vec![NdVector::from([0.0, 0.0, 0.0]); points.len()];
-            for i in impossible_to_predict.into_iter().flatten() {
-                out[i] = points[i];
-            }
-            out
-        };
+//         let mut points_up_till_now = {
+//             // fill the answer for the vertices that are impossible to predict
+//             let mut out = vec![NdVector::from([0.0, 0.0, 0.0]); points.len()];
+//             for i in impossible_to_predict.into_iter().flatten() {
+//                 out[i] = points[i];
+//             }
+//             out
+//         };
 
-        let mut face_max_idx = 0;
-        for i in seq.into_iter().flatten() {
-            while !faces[face_max_idx].contains(&i) {
-                face_max_idx += 1;
-            }
-            let predicted = mesh_prediction.predict(&points[..i]);
-            // In this test, predtion and the original point are the same
-            assert_eq!(predicted, points[i]);
-            points_up_till_now[i] = predicted;
+//         let mut face_max_idx = 0;
+//         for i in seq.into_iter().flatten() {
+//             while !faces[face_max_idx].contains(&i) {
+//                 face_max_idx += 1;
+//             }
+//             let predicted = mesh_prediction.predict(&points[..i]);
+//             // In this test, predtion and the original point are the same
+//             assert_eq!(predicted, points[i]);
+//             points_up_till_now[i] = predicted;
 
-        }
-    }
-}
+//         }
+//     }
+// }

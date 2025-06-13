@@ -17,7 +17,8 @@ pub(crate) struct Sequential;
 
 
 impl ConnectivityDecoder for Sequential {
-    fn decode_connectivity<R>(&mut self, reader: &mut R) -> Result<Vec<[VertexIdx; 3]>, super::Err> 
+    type Err = Err;
+    fn decode_connectivity<R>(&mut self, reader: &mut R) -> Result<Vec<[VertexIdx; 3]>, Err> 
         where R: ByteReader
     {
         let num_points = reader.read_u64()?;

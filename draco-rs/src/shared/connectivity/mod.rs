@@ -2,10 +2,10 @@ pub(crate) mod edgebreaker;
 pub(crate) mod sequential;
 pub(crate) mod eq;
 
-#[remain::sorted]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Encoder {
+    Sequential,
     Edgebreaker,
-    Sequential
 }
 
 impl Encoder {

@@ -2,55 +2,62 @@ pub(crate) mod attribute_encoder;
 pub(crate) mod portabilization;
 pub(crate) mod prediction_transform;
 
+use crate::encode::connectivity::ConnectivityEncoderOutput;
 #[cfg(feature = "evaluation")]
 use crate::eval;
 
-use crate::prelude::{ByteWriter, ConfigType}; 
-use crate::core::mesh::Mesh;
+use crate::prelude::{Attribute, ByteWriter, ConfigType}; 
+use crate::shared::connectivity::edgebreaker::TraversalType;
 
 pub fn encode_attributes<W>(
-    mesh: &Mesh,
+    atts: Vec<Attribute>,
     writer: &mut W,
-    cfg: Config,
+    conn_out: ConnectivityEncoderOutput<'_>,
+    cfg: &super::Config,
 ) -> Result<(), Err> 
     where W: ByteWriter
 {
     #[cfg(feature = "evaluation")]
     eval::scope_begin("attributes", writer);
 
-    let (_,non_conn_atts) = mesh.take_splitted_attributes();
-
-    // Write the number of attributes
-    writer.write_u16(non_conn_atts.len() as u16); 
+    // Write the number of attribute encoders/decoders (In draco-oxide, this is the same as the number of attributes as 
+    // each attribute has its own encoder/decoder)
+    writer.write_u8(atts.len() as u8);
     #[cfg(feature = "evaluation")]
-    eval::write_json_pair("attributes count", non_conn_atts.len().into(), writer);
+    eval::write_json_pair("attributes count", atts.len().into(), writer);
+
+    for (i, att) in atts.iter().enumerate() {
+        if cfg.encoder_method == crate::shared::connectivity::Encoder::Edgebreaker {
+            // encode decoder id
+            writer.write_u8(i as u8);
+            // encode attribute type
+            att.get_domain().write_to(writer);
+            // write traversal method for attribute encoding/decoding sequencer. We currently only support depth-first traversal.
+            TraversalType::DepthFirst.write_to(writer);
+        }
+    }
 
     #[cfg(feature = "evaluation")]
     eval::array_scope_begin("attributes", writer);
     
-    for non_conn_att in non_conn_atts.into_iter() {
+    for att in &atts {
         #[cfg(feature = "evaluation")]
         eval::scope_begin("attribute", writer);
 
-        let parents_ids = non_conn_att.get_parents();
+        let parents_ids = att.get_parents();
         let parents = parents_ids.iter()
-            .map(|&id| &mesh.get_attributes()[id.as_usize()])
+            .map(|id| atts.iter().find(|att| att.get_id() == *id).unwrap())
             .collect::<Vec<_>>();
 
         let encoder = attribute_encoder::AttributeEncoder::new(
-            non_conn_att,
+            &att,
             &parents,
+            &conn_out,
             writer,
             attribute_encoder::Config::default(),
         );
 
-        if cfg.merge_rans_coders {
-            unimplemented!("Merging rANS coders is not implemented yet");
-        } else {
-            if let Err(err) = encoder.encode::<true>() {
-                return Err(Err::AttributeError(err))
-            }
-        };
+        encoder.encode::<true>()?;
 
         #[cfg(feature = "evaluation")]
         eval::scope_end(writer);
@@ -68,14 +75,12 @@ pub fn encode_attributes<W>(
 
 pub struct Config {
     _cfgs: Vec<attribute_encoder::Config>,
-    merge_rans_coders: bool,
 }
 
 impl ConfigType for Config {
     fn default() -> Self {
         Self {
             _cfgs: vec![attribute_encoder::Config::default()],
-            merge_rans_coders: false,
         }
     }
 }

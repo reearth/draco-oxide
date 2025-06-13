@@ -25,7 +25,7 @@ fn test_eval() {
 
     let original_mesh = {
         let mut builder = MeshBuilder::new();
-        let ref_face_att = builder.add_connectivity_attribute(faces, Vec::new());
+        let ref_face_att = builder.set_connectivity_attribute(faces);
         builder.add_attribute(points, AttributeType::Position, vec![ref_face_att]);
         builder.build().unwrap()
     };

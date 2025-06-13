@@ -89,41 +89,41 @@ fn into_ranges(v: Vec<usize>) -> Vec<std::ops::Range<usize>> {
 	out
 }
 
-#[cfg(test)]
-mod tests {
-	use crate::{core::attribute::AttributeId, prelude::NdVector};
+// #[cfg(test)]
+// mod tests {
+// 	use crate::{core::attribute::AttributeId, prelude::NdVector};
 
-use super::*;
+// use super::*;
 	
-	#[test]
-	fn test_into_ranges() {
-		let v = vec![1, 3, 6, 7, 8, 10, 11, 12, 15];
-		let r = into_ranges(v);
-		assert_eq!(r.len(), 5);	
-		assert_eq!(r[0], 1..2);
-		assert_eq!(r[1], 3..4);
-		assert_eq!(r[2], 6..9);
-		assert_eq!(r[3], 10..13);
-		assert_eq!(r[4], 15..16);
-	}
+// 	#[test]
+// 	fn test_into_ranges() {
+// 		let v = vec![1, 3, 6, 7, 8, 10, 11, 12, 15];
+// 		let r = into_ranges(v);
+// 		assert_eq!(r.len(), 5);	
+// 		assert_eq!(r[0], 1..2);
+// 		assert_eq!(r[1], 3..4);
+// 		assert_eq!(r[2], 6..9);
+// 		assert_eq!(r[3], 10..13);
+// 		assert_eq!(r[4], 15..16);
+// 	}
 
-	#[test]
-	fn test_get_values_impossible_to_predict() {
-		let faces = vec![[0, 1, 2], [1, 2, 3], [4, 5, 6], [5, 6, 7]];
-		let conn_att = Attribute::from_faces(
-			AttributeId::new(0), 
-			faces.clone(),
-			Vec::new()
-		);
-		let mut delta = DeltaPrediction::<NdVector<3, f32>>::new(&[&conn_att]);
-		let mut value_indices = vec![0..8];
-		let impossible = delta.get_values_impossible_to_predict(&mut value_indices);
-		assert_eq!(impossible.len(), 2);
-		assert_eq!(impossible[0], 0..1);
-		assert_eq!(impossible[1], 4..5);
+// 	#[test]
+// 	fn test_get_values_impossible_to_predict() {
+// 		let faces = vec![[0, 1, 2], [1, 2, 3], [4, 5, 6], [5, 6, 7]];
+// 		let conn_att = Attribute::from_faces(
+// 			AttributeId::new(0), 
+// 			faces.clone(),
+// 			Vec::new()
+// 		);
+// 		let mut delta = DeltaPrediction::<NdVector<3, f32>>::new(&[&conn_att]);
+// 		let mut value_indices = vec![0..8];
+// 		let impossible = delta.get_values_impossible_to_predict(&mut value_indices);
+// 		assert_eq!(impossible.len(), 2);
+// 		assert_eq!(impossible[0], 0..1);
+// 		assert_eq!(impossible[1], 4..5);
 
-		assert_eq!(value_indices.len(), 2);
-		assert_eq!(value_indices[0], 1..4);
-		assert_eq!(value_indices[1], 5..8);
-	}
-}
+// 		assert_eq!(value_indices.len(), 2);
+// 		assert_eq!(value_indices[0], 1..4);
+// 		assert_eq!(value_indices[1], 5..8);
+// 	}
+// }

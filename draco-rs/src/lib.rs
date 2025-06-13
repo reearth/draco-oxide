@@ -10,7 +10,7 @@ pub mod shared;
 pub mod encode;
 
 /// Defines the decoders.
-pub mod decode;
+// pub mod decode;
 
 /// Contains the shared definitions, native objects, and the buffer.
 pub mod core;
@@ -39,7 +39,7 @@ pub mod prelude {
         FunctionalByteWriter
     };
     pub use crate::encode::{self, encode};
-    pub use crate::decode::{self, decode};
+    // pub use crate::decode::{self, decode};
 }
 
 #[cfg(any(test, feature = "evaluation"))]

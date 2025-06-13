@@ -1,17 +1,16 @@
-use std::mem;
+use std::usize;
 
 use thiserror::Error;
 
 use crate::core::attribute::{
-    Attribute, 
-    AttributeType,
-    AttributeId,
+    Attribute, AttributeDomain, AttributeId, AttributeType
 };
 use crate::core::shared::Vector;
 use super::Mesh;
 
 pub struct MeshBuilder {
     attributes: Vec<Attribute>,
+    faces: Vec<[usize; 3]>,
     current_id: usize,
 }
 
@@ -20,37 +19,37 @@ impl MeshBuilder {
         Self {
             attributes: Vec::new(),
             current_id: 0,
+            faces: Vec::new(),
         }
     }
 
     pub fn add_attribute<Data: Vector>(&mut self, data: Vec<Data>, att_type: AttributeType, parents: Vec<AttributeId>) -> AttributeId {
         self.attributes.push(
-            Attribute::from(AttributeId::new(self.current_id), data, att_type, parents)
+            Attribute::from(AttributeId::new(self.current_id), data, att_type, AttributeDomain::Position, parents)
         );
         let id = self.current_id;
         self.current_id += 1;
         AttributeId::new(id)
     }
 
-    pub fn add_connectivity_attribute(&mut self, data: Vec<[usize; 3]>, parents: Vec<AttributeId>) -> AttributeId {
-        self.attributes.push(
-            Attribute::from_faces(AttributeId::new(self.current_id), data, parents)
-        );
-        let id = self.current_id;
-        self.current_id += 1;
-        AttributeId::new(id)
+    pub fn set_connectivity_attribute(&mut self, data: Vec<[usize; 3]>) -> AttributeId {
+        self.faces = data;
+        AttributeId::new(usize::MAX)
     }
 
     pub fn build(self) -> Result<Mesh, Err> {
         self.dependency_check()?;
 
-        let mut attributes = self.get_sorted_attributes();
+        let Self { attributes, faces, .. } = self;
+
+        let mut attributes = Self::get_sorted_attributes(attributes);
         Self::check_attribute_size(&attributes)?;
         Self::check_position_and_connectivity(&mut attributes)?;
         
         Ok(
             Mesh {
                 attributes,
+                faces,
             }
         )
     }
@@ -78,29 +77,14 @@ impl MeshBuilder {
 
 
     /// Sorts the attributes in a way that the parent attributes are before their children.
-    /// Furthermore, all connectivity attributes are moved to the front of the list.
-    fn get_sorted_attributes(mut self) -> Vec<Attribute> {
+    fn get_sorted_attributes(mut original: Vec<Attribute>) -> Vec<Attribute> {
         let mut sorted = Vec::new();
-        let mut original = mem::take(&mut self.attributes);
-
-        // First, we move all connectivity attributes to the front of the list
-        original = original
-            .into_iter()
-            .filter_map(|att| {
-                if att.get_attribute_type() == AttributeType::Connectivity {
-                    sorted.push(att);
-                    None
-                } else {
-                    Some(att)
-                }
-            })
-            .collect();
 
         while !original.is_empty() {
             original = original
                 .into_iter()
                 .filter_map(|att| {
-                    if att.get_parents().iter().all(|&p| sorted.iter().any(|att| p == att.get_id())) {
+                    if att.get_parents().iter().all(|&p| sorted.iter().any(|att: &Attribute| p == att.get_id())) {
                         sorted.push(att);
                         None
                     } else {

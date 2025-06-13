@@ -11,6 +11,7 @@ use std::{
 };
 
 pub type VertexIdx = usize;
+pub type CornerIdx = usize;
 pub type EdgeIdx = usize;
 pub type FaceIdx = usize;
 

@@ -5,10 +5,10 @@ use crate::prelude::{BitReader, ByteReader};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Symbol {
     C,
-    R,
-    L,
-    E,
     S,
+    L,
+    R,
+    E,
 }
 
 impl Symbol {
@@ -21,6 +21,18 @@ impl Symbol {
             Symbol::L => ('L', None),
             Symbol::E => ('E', None),
             Symbol::S => ('S', None),
+        }
+    }
+
+    /// Returns the symbol id of the symbol.
+    /// This id must be compatible with the draco library.
+    pub(crate) fn get_id(self) -> usize {
+        match self {
+            Symbol::C => 0,
+            Symbol::S => 1,
+            Symbol::L => 2,
+            Symbol::R => 3,
+            Symbol::E => 4,
         }
     }
 }

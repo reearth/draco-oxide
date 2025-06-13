@@ -1,6 +1,11 @@
-use std::cmp;
+use std::collections::HashMap;
+use std::{cmp, vec, mem};
+use std::io::Read;
 use crate::core::bit_coder::ReaderErr;
-use crate::debug_expect;
+use crate::core::corner_table::CornerTable;
+use crate::decode::entropy::rans::{self, RabsDecoder, RansDecoder};
+use crate::eval::ConnectivityEncoder;
+use crate::{debug_expect, shared};
 use crate::decode::connectivity::ConnectivityDecoder;
 use crate::core::shared::VertexIdx;
 use crate::shared::attribute::Portable;
@@ -11,24 +16,30 @@ use crate::shared::connectivity::edgebreaker::symbol_encoder::{
 };
 use crate::utils::bit_coder::leb128_read;
 
-use std::mem;
-
 use crate::shared::connectivity::edgebreaker::{
-    edge_shared_by, orientation_of_next_face, Orientation, TopologySplit
+    edge_shared_by, orientation_of_next_face, Orientation, TopologySplit, Traversal
 };
+
+const MIN_VALENCE: usize = 2;
+const MAX_VALENCE: usize = 7;
+const NUM_UNIQUE_VALENCES: usize = 6;
 
 #[derive(thiserror::Error, Debug)]
 #[remain::sorted]
 pub enum Err {
     #[error("Not enough data to decode connectivity")]
-    NotEnoughData(#[from] ReaderErr)
+    NotEnoughData(#[from] ReaderErr),
+    #[error("Rans decoder error")]
+    RansDecoder(#[from] rans::Err),
+    #[error("Shared Edgebreaker error")]
+    SharedEdgebreaker(#[from] shared::connectivity::edgebreaker::Err),
+
 }
 
 
 pub(crate)struct SpiraleReversi {
     faces: Vec<[VertexIdx; 3]>,
     num_connected_components: usize,
-    num_faces: Vec<usize>,
     num_decoded_vertices: usize,
     // active edge is oriented from right to left.
     active_edge: [usize; 2],
@@ -37,6 +48,32 @@ pub(crate)struct SpiraleReversi {
     prev_face: [usize;3],
     orientation: Vec<bool>,
     topology_splits: Vec<TopologySplit>,
+    last_symbol: Option<Symbol>,
+    active_context: Option<usize>,
+    symbol_buffer: Vec<u8>, 
+    standard_face_data: Vec<u8>,
+    standard_attribute_connectivity_data: Vec<u8>,
+    vertex_valences: Vec<usize>,
+    is_vert_hole: Vec<bool>,
+    corner_to_vertex_map: Vec<Vec<VertexIdx>>,
+    vertex_corners: Vec<usize>,
+    
+    start_face_buffer_prob_zero: u8,
+
+    corner_table: CornerTable,
+    last_vert_added: isize,
+
+    traversal_type: Traversal,
+    num_vertices: usize,
+    num_faces: usize,
+    num_attribute_data: usize,
+    num_encoded_symbols: usize,
+    num_encoded_split_symbols: usize,
+
+    curr_att_dec: usize,
+
+    att_dec_types: Vec<shared::attribute::AttributeKind>,
+    is_edge_on_seam: Vec<Vec<bool>>,
 }
 
 impl SpiraleReversi {
@@ -44,7 +81,6 @@ impl SpiraleReversi {
         Self {
             faces: vec![],
             num_connected_components: 0,
-            num_faces: Vec::new(),
             num_decoded_vertices: 0,
             active_edge: [0,1],
             active_edge_stack: Vec::new(),
@@ -52,18 +88,49 @@ impl SpiraleReversi {
             prev_face: [0,1,2],
             orientation: Vec::new(),
             topology_splits: Vec::new(),
+            last_symbol: None,
+            active_context: None,
+            symbol_buffer: Vec::new(),
+            standard_face_data: Vec::new(),
+            standard_attribute_connectivity_data: Vec::new(),
+            vertex_valences: Vec::new(),
+            is_vert_hole: Vec::new(),
+            corner_to_vertex_map: Vec::new(),
+            vertex_corners: Vec::new(),
+
+            start_face_buffer_prob_zero: 0,
+            
+            corner_table: CornerTable::new(),
+            last_vert_added: -1,
+            
+            traversal_type: Traversal::Standard,
+            num_vertices: 0,
+            num_faces: 0,
+            num_attribute_data: 0,
+            num_encoded_symbols: 0,
+            num_encoded_split_symbols: 0,
+
+            curr_att_dec: 0,
+            att_dec_types: Vec::new(),
+            is_edge_on_seam: Vec::new(),
         }
     }
 
     pub(super) fn init(&mut self) {
         self.faces.clear();
         self.num_connected_components = 0;
-        self.num_faces.clear();
         self.num_decoded_vertices = 0;
         self.active_edge = [0,1];
         self.active_edge_stack.clear();
         self.boundary_edges.clear();
         self.prev_face = [0,1,2];
+        self.topology_splits.clear();
+        self.orientation.clear();
+        self.active_context = None;
+        self.last_symbol = None;
+        self.symbol_buffer.clear();
+        self.standard_face_data.clear();
+        self.standard_attribute_connectivity_data.clear();
     }
 
     fn read_topology_splits<R: ByteReader>(&mut self, reader: &mut R) -> Result<(), Err> {
@@ -93,35 +160,566 @@ impl SpiraleReversi {
         
         Ok(())
     }
+
+    fn start_traversal<R>(&mut self, reader: &mut R) -> Result<(), Err>
+        where R: ByteReader
+    {
+        match self.traversal_type {
+            Traversal::Standard => {
+                let size = leb128_read(reader)? as usize;
+                self.symbol_buffer.reserve(size);
+                for _ in 0..size {
+                    self.symbol_buffer.push(reader.read_u8()?);
+                }
+
+                self.start_face_buffer_prob_zero = reader.read_u8()?;
+                let size = leb128_read(reader)? as usize;
+                self.standard_face_data.reserve(size);
+                for _ in 0..size {
+                    self.standard_face_data.push(reader.read_u8()?);
+                }
+
+                let size = leb128_read(reader)? as usize;
+                self.standard_attribute_connectivity_data.reserve(size);
+                for _ in 0..size {
+                    self.standard_attribute_connectivity_data.push(reader.read_u8()?);
+                }
+            },
+            Traversal::Valence => {
+                unimplemented!("Valence traversal is not implemented yet.");
+            },
+            _ => {} // Do nothing otherwise.
+        }
+        Ok(())
+    }
         
 
-    fn spirale_reversi_impl<SE: SymbolEncoder, R: ByteReader>(&mut self, reader: &mut R) {
-        // move the value in order to avoid the borrow checker.
-        let mut num_faces = Vec::new();
-        mem::swap(&mut num_faces, &mut self.num_faces);
-        for _ in 0..self.num_connected_components {
-            let sign_of_first_face = bool::read_from(reader).unwrap();
-            // get the number of faces = number of symbols.
-            let num_faces = reader.read_u64().unwrap() as usize;
-            self.num_decoded_vertices += 2;
-            self.active_edge_stack.clear();
-            self.active_edge = [
-                self.num_decoded_vertices-2,
-                self.num_decoded_vertices-1
-            ];
-            debug_expect!("Start of Symbols", reader);
-            let mut reader = BitReader::spown_from(reader).unwrap();
-            for _ in 0..num_faces {
-                self.spirale_reversi_recc::<SE, R>(&mut reader);
+    // fn spirale_reversi_standard(&mut self, num_symbols: usize) -> Result<(), Err> {
+    //     let mut it = mem::take(&mut self.symbol_buffer).into_iter();
+    //     let mut symbol_reader: BitReader<_> = BitReader::spown_from(&mut it).unwrap();
+    //     let mut read_next_symbol = || -> Result<Symbol, Err> {
+    //         let symbol = if symbol_reader.read_bits(1)? == 0 {
+    //             Symbol::C
+    //         } else {
+    //             match symbol_reader.read_bits(2)? {
+    //                 0 => Symbol::R,
+    //                 1 => Symbol::L,
+    //                 2 => Symbol::E,
+    //                 3 => Symbol::S,
+    //                 _ => unreachable!(), // it is safe to assume that the symbol is always one of these.
+    //             }
+    //         };
+    //         Ok(symbol)
+    //     };
+    //     let mut active_corner_stack = Vec::new();
+    //     let mut topology_split_active_corners = HashMap::new();
+
+    //     self.is_vert_hole = vec![true; self.num_vertices+self.num_encoded_split_symbols];
+    //     let mut num_faces = 0;
+    //     for symbol_id in 0..num_symbols {
+    //         let face_idx = num_faces;
+    //         num_faces += 1;
+    //         // Used to flag cases where we need to look for topology split events.
+    //         let mut check_topology_split = false;
+    //         let symbol = read_next_symbol()?;
+    //         match symbol {
+    //             Symbol::C => {
+    //                 let corner_a = active_corner_stack.last().ok_or(Err::ConnectivityError("Active corner stack is empty."))?;
+    //                 let vertex_x = self.corner_table.vertex(self.corner_table.next(corner_a));
+    //                 let corner_b = self.corner_table.next(self.corner_table.left_most_corner(vertex_x));
+
+    //                 if corner_a == corner_b {
+    //                     Err::ConnectivityError("Matched corners must be different.")?;
+    //                 }
+    //                 if self.corner_table.opposite(corner_a).is_some() || self.corner_table.opposite(corner_b).is_some() {
+    //                     // One of the corners is already opposite to an existing face, which
+    //                     // should not happen unless the input was tampered with.
+    //                     Err::ConnectivityError("One of the corners is already opposite to an existing face.")?;
+    //                 }
+
+    //                 // New tip corner.
+    //                 let corner = 3 * face_idx;
+    //                 // Update opposite corner mappings.
+    //                 self.set_opposite_corners(corner_a, corner + 1);
+    //                 self.set_opposite_corners(corner_b, corner + 2);
+
+    //                 // Update vertex mapping.
+    //                 let vert_a_prev = self.corner_table.vertex(self.corner_table.previous(corner_a));
+    //                 let vert_b_next = self.corner_table.vertex(self.corner_table.next(corner_b));
+    //                 if vertex_x == vert_a_prev || vertex_x == vert_b_next {
+    //                     // Encoding is invalid, because face vertices are degenerate.
+    //                     Err::ConnectivityError("Face vertices are degenerate.");
+    //                 }
+    //                 self.corner_table.map_corner_to_vertex(corner, vertex_x);
+    //                 self.corner_table.map_corner_to_vertex(corner + 1, vert_b_next);
+    //                 self.corner_table.map_corner_to_vertex(corner + 2, vert_a_prev);
+    //                 self.corner_table.map_corner_to_vertex(vert_a_prev, corner + 2);
+    //                 // Mark the vertex |x| as interior.
+    //                 self.is_vert_hole[vertex_x] = false;
+    //                 // Update the corner on the active stack.
+    //                 *active_corner_stack.last_mut().unwrap() = corner;
+    //             },
+    //             Symbol::R => {
+    //                 let corner_a = active_corner_stack.last().ok_or(Err::ConnectivityError("Active corner stack is empty."))?;
+    //                 if self.corner_table.opposite(corner_a).is_some() {
+    //                     // Active corner is already opposite to an existing face, which should happen.
+    //                     return Err::ConnectivityError("Active corner is already opposite to an existing face.");
+    //                 }
+
+    //                 // First corner on the new face is either corner "l" or "r".
+    //                 let corner = 3 * face_idx;
+    //                 // "r" is the new first corner.
+    //                 let opp_corner = corner + 2;
+    //                 let corner_l = corner + 1;
+    //                 let corner_r = corner;
+    //                 self.set_opposite_corners(opp_corner, corner_a);
+    //                 // Update vertex mapping.
+    //                 let new_vert_index = self.corner_table.add_new_vertex();
+
+    //                 if self.corner_table.num_vertices() > max_num_vertices {
+    //                     return Err::ConnectivityError("Unexpected number of decoded vertices.");
+    //                 }
+
+    //                 corner_table_->MapCornerToVertex(opp_corner, new_vert_index);
+    //                 corner_table_->SetLeftMostCorner(new_vert_index, opp_corner);
+
+    //                 const VertexIndex vertex_r =
+    //                     corner_table_->Vertex(corner_table_->Previous(corner_a));
+    //                 corner_table_->MapCornerToVertex(corner_r, vertex_r);
+    //                 // Update left-most corner on the vertex on the |corner_r|.
+    //                 corner_table_->SetLeftMostCorner(vertex_r, corner_r);
+
+    //                 corner_table_->MapCornerToVertex(
+    //                     corner_l, corner_table_->Vertex(corner_table_->Next(corner_a)));
+    //                 active_corner_stack.back() = corner;
+    //                 check_topology_split = true;
+    //             },
+    //             Symbol::L => {
+    //                 if (active_corner_stack.empty()) {
+    //                     return -1;
+    //                 }
+
+    //                 let corner_a = active_corner_stack.back();
+    //                 if (corner_table_->Opposite(corner_a) != kInvalidCornerIndex) {
+    //                     // Active corner is already opposite to an existing face, which should
+    //                     // not happen unless the input was tampered with.
+    //                     return -1;
+    //                 }
+
+    //                 // First corner on the new face is either corner "l" or "r".
+    //                 const CornerIndex corner(3 * face.value());
+    //                 CornerIndex opp_corner, corner_l, corner_r;
+                    
+    //                 // "l" is the new first corner.
+    //                 opp_corner = corner + 1;
+    //                 corner_l = corner;
+    //                 corner_r = corner + 2;
+
+    //                 SetOppositeCorners(opp_corner, corner_a);
+    //                 // Update vertex mapping.
+    //                 const VertexIndex new_vert_index = corner_table_->AddNewVertex();
+
+    //                 if (corner_table_->num_vertices() > max_num_vertices) {
+    //                     return -1;  // Unexpected number of decoded vertices.
+    //                 }
+
+    //                 corner_table_->MapCornerToVertex(opp_corner, new_vert_index);
+    //                 corner_table_->SetLeftMostCorner(new_vert_index, opp_corner);
+
+    //                 const VertexIndex vertex_r =
+    //                     corner_table_->Vertex(corner_table_->Previous(corner_a));
+    //                 corner_table_->MapCornerToVertex(corner_r, vertex_r);
+    //                 // Update left-most corner on the vertex on the |corner_r|.
+    //                 corner_table_->SetLeftMostCorner(vertex_r, corner_r);
+
+    //                 corner_table_->MapCornerToVertex(
+    //                     corner_l, corner_table_->Vertex(corner_table_->Next(corner_a)));
+    //                 active_corner_stack.back() = corner;
+    //                 check_topology_split = true;
+    //             },
+    //             Symbol::S =>{
+    //                 // Create a new face that merges two last active edges from the active
+    //                 // stack. No new vertex is created, but two vertices at corners "p" and
+    //                 // "n" need to be merged into a single vertex.
+    //                 //
+    //                 // *-------v-------*
+    //                 //  \a   p/x\n   b/
+    //                 //   \   /   \   /
+    //                 //    \ /  S  \ /
+    //                 //     *.......*
+    //                 //
+    //                 if (active_corner_stack.empty()) {
+    //                     return -1;
+    //                 }
+    //                 const CornerIndex corner_b = active_corner_stack.back();
+    //                 active_corner_stack.pop_back();
+
+    //                 // Corner "a" can correspond either to a normal active edge, or to an edge
+    //                 // created from the topology split event.
+    //                 const auto it = topology_split_active_corners.find(symbol_id);
+    //                 if (it != topology_split_active_corners.end()) {
+    //                     // Topology split event. Move the retrieved edge to the stack.
+    //                     active_corner_stack.push_back(it->second);
+    //                 }
+    //                 if (active_corner_stack.empty()) {
+    //                     return -1;
+    //                 }
+    //                 const CornerIndex corner_a = active_corner_stack.back();
+
+    //                 if (corner_a == corner_b) {
+    //                     // All matched corners must be different.
+    //                     return -1;
+    //                 }
+    //                 if (corner_table_->Opposite(corner_a) != kInvalidCornerIndex ||
+    //                     corner_table_->Opposite(corner_b) != kInvalidCornerIndex) {
+    //                     // One of the corners is already opposite to an existing face, which
+    //                     // should not happen unless the input was tampered with.
+    //                     return -1;
+    //                 }
+
+    //                 // First corner on the new face is corner "x" from the image above.
+    //                 const CornerIndex corner(3 * face.value());
+    //                 // Update the opposite corner mapping.
+    //                 SetOppositeCorners(corner_a, corner + 2);
+    //                 SetOppositeCorners(corner_b, corner + 1);
+    //                 // Update vertices. For the vertex at corner "x", use the vertex id from
+    //                 // the corner "p".
+    //                 const VertexIndex vertex_p =
+    //                     corner_table_->Vertex(corner_table_->Previous(corner_a));
+    //                 corner_table_->MapCornerToVertex(corner, vertex_p);
+    //                 corner_table_->MapCornerToVertex(
+    //                     corner + 1, corner_table_->Vertex(corner_table_->Next(corner_a)));
+    //                 const VertexIndex vert_b_prev =
+    //                     corner_table_->Vertex(corner_table_->Previous(corner_b));
+    //                 corner_table_->MapCornerToVertex(corner + 2, vert_b_prev);
+    //                 corner_table_->SetLeftMostCorner(vert_b_prev, corner + 2);
+    //                 CornerIndex corner_n = corner_table_->Next(corner_b);
+    //                 const VertexIndex vertex_n = corner_table_->Vertex(corner_n);
+    //                 traversal_decoder_.MergeVertices(vertex_p, vertex_n);
+    //                 // Update the left most corner on the newly merged vertex.
+    //                 corner_table_->SetLeftMostCorner(vertex_p,
+    //                                                 corner_table_->LeftMostCorner(vertex_n));
+
+    //                 // Also update the vertex id at corner "n" and all corners that are
+    //                 // connected to it in the CCW direction.
+    //                 const CornerIndex first_corner = corner_n;
+    //                 while (corner_n != kInvalidCornerIndex) {
+    //                     corner_table_->MapCornerToVertex(corner_n, vertex_p);
+    //                     corner_n = corner_table_->SwingLeft(corner_n);
+    //                     if (corner_n == first_corner) {
+    //                     // We reached the start again which should not happen for split
+    //                     // symbols.
+    //                     return -1;
+    //                     }
+    //                 }
+    //                 // Make sure the old vertex n is now mapped to an invalid corner (make it
+    //                 // isolated).
+    //                 corner_table_->MakeVertexIsolated(vertex_n);
+    //                 if (remove_invalid_vertices) {
+    //                     invalid_vertices.push_back(vertex_n);
+    //                 }
+    //                 active_corner_stack.back() = corner;
+    //             },
+    //             Symbol::E => {
+    //                 const CornerIndex corner(3 * face.value());
+    //                 const VertexIndex first_vert_index = corner_table_->AddNewVertex();
+    //                 // Create three new vertices at the corners of the new face.
+    //                 corner_table_->MapCornerToVertex(corner, first_vert_index);
+    //                 corner_table_->MapCornerToVertex(corner + 1,
+    //                                                 corner_table_->AddNewVertex());
+    //                 corner_table_->MapCornerToVertex(corner + 2,
+    //                                                 corner_table_->AddNewVertex());
+
+    //                 if (corner_table_->num_vertices() > max_num_vertices) {
+    //                     return -1;  // Unexpected number of decoded vertices.
+    //                 }
+
+    //                 corner_table_->SetLeftMostCorner(first_vert_index, corner);
+    //                 corner_table_->SetLeftMostCorner(first_vert_index + 1, corner + 1);
+    //                 corner_table_->SetLeftMostCorner(first_vert_index + 2, corner + 2);
+    //                 // Add the tip corner to the active stack.
+    //                 active_corner_stack.push_back(corner);
+    //                 check_topology_split = true;
+    //             }
+    //         };
+
+    //         // Inform the traversal decoder that a new corner has been reached.
+    //         traversal_decoder_.NewActiveCornerReached(active_corner_stack.back());
+
+    //         if (check_topology_split) {
+    //         // Check for topology splits happens only for TOPOLOGY_L, TOPOLOGY_R and
+    //         // TOPOLOGY_E symbols because those are the symbols that correspond to
+    //         // faces that can be directly connected a TOPOLOGY_S face through the
+    //         // topology split event.
+    //         // If a topology split is detected, we need to add a new active edge
+    //         // onto the active_corner_stack because it will be used later when the
+    //         // corresponding TOPOLOGY_S event is decoded.
+
+    //         // Symbol id used by the encoder (reverse).
+    //         const int encoder_symbol_id = num_symbols - symbol_id - 1;
+    //         EdgeFaceName split_edge;
+    //         int encoder_split_symbol_id;
+    //         while (IsTopologySplit(encoder_symbol_id, &split_edge,
+    //                                 &encoder_split_symbol_id)) {
+    //             if (encoder_split_symbol_id < 0) {
+    //             return -1;  // Wrong split symbol id.
+    //             }
+    //             // Symbol was part of a topology split. Now we need to determine which
+    //             // edge should be added to the active edges stack.
+    //             const CornerIndex act_top_corner = active_corner_stack.back();
+    //             // The current symbol has one active edge (stored in act_top_corner) and
+    //             // two remaining inactive edges that are attached to it.
+    //             //              *
+    //             //             / \
+    //             //  left_edge /   \ right_edge
+    //             //           /     \
+    //             //          *.......*
+    //             //         active_edge
+
+    //             CornerIndex new_active_corner;
+    //             if (split_edge == RIGHT_FACE_EDGE) {
+    //             new_active_corner = corner_table_->Next(act_top_corner);
+    //             } else {
+    //             new_active_corner = corner_table_->Previous(act_top_corner);
+    //             }
+    //             // Add the new active edge.
+    //             // Convert the encoder split symbol id to decoder symbol id.
+    //             const int decoder_split_symbol_id =
+    //                 num_symbols - encoder_split_symbol_id - 1;
+    //             topology_split_active_corners[decoder_split_symbol_id] =
+    //                 new_active_corner;
+    //         }
+    //         }
+    //     }
+    //     if (corner_table_->num_vertices() > max_num_vertices) {
+    //         return -1;  // Unexpected number of decoded vertices.
+    //     }
+    //     // Decode start faces and connect them to the faces from the active stack.
+    //     while (!active_corner_stack.empty()) {
+    //         const CornerIndex corner = active_corner_stack.back();
+    //         active_corner_stack.pop_back();
+    //         const bool interior_face =
+    //             traversal_decoder_.DecodeStartFaceConfiguration();
+    //         if (interior_face) {
+    //         // The start face is interior, we need to find three corners that are
+    //         // opposite to it. The first opposite corner "a" is the corner from the
+    //         // top of the active corner stack and the remaining two corners "b" and
+    //         // "c" are then the next corners from the left-most corners of vertices
+    //         // "n" and "x" respectively.
+    //         //
+    //         //           *-------*
+    //         //          / \     / \
+    //         //         /   \   /   \
+    //         //        /     \ /     \
+    //         //       *-------p-------*
+    //         //      / \a    . .    c/ \
+    //         //     /   \   .   .   /   \
+    //         //    /     \ .  I  . /     \
+    //         //   *-------n.......x------*
+    //         //    \     / \     / \     /
+    //         //     \   /   \   /   \   /
+    //         //      \ /     \b/     \ /
+    //         //       *-------*-------*
+    //         //
+
+    //         if (num_faces >= corner_table_->num_faces()) {
+    //             return -1;  // More faces than expected added to the mesh.
+    //         }
+
+    //         const CornerIndex corner_a = corner;
+    //         const VertexIndex vert_n =
+    //             corner_table_->Vertex(corner_table_->Next(corner_a));
+    //         const CornerIndex corner_b =
+    //             corner_table_->Next(corner_table_->LeftMostCorner(vert_n));
+
+    //         const VertexIndex vert_x =
+    //             corner_table_->Vertex(corner_table_->Next(corner_b));
+    //         const CornerIndex corner_c =
+    //             corner_table_->Next(corner_table_->LeftMostCorner(vert_x));
+
+    //         if (corner == corner_b || corner == corner_c || corner_b == corner_c) {
+    //             // All matched corners must be different.
+    //             return -1;
+    //         }
+    //         if (corner_table_->Opposite(corner) != kInvalidCornerIndex ||
+    //             corner_table_->Opposite(corner_b) != kInvalidCornerIndex ||
+    //             corner_table_->Opposite(corner_c) != kInvalidCornerIndex) {
+    //             // One of the corners is already opposite to an existing face, which
+    //             // should not happen unless the input was tampered with.
+    //             return -1;
+    //         }
+
+    //         const VertexIndex vert_p =
+    //             corner_table_->Vertex(corner_table_->Next(corner_c));
+
+    //         const FaceIndex face(num_faces++);
+    //         // The first corner of the initial face is the corner opposite to "a".
+    //         const CornerIndex new_corner(3 * face.value());
+    //         SetOppositeCorners(new_corner, corner);
+    //         SetOppositeCorners(new_corner + 1, corner_b);
+    //         SetOppositeCorners(new_corner + 2, corner_c);
+
+    //         // Map new corners to existing vertices.
+    //         corner_table_->MapCornerToVertex(new_corner, vert_x);
+    //         corner_table_->MapCornerToVertex(new_corner + 1, vert_p);
+    //         corner_table_->MapCornerToVertex(new_corner + 2, vert_n);
+
+    //         // Mark all three vertices as interior.
+    //         for (int ci = 0; ci < 3; ++ci) {
+    //             is_vert_hole_[corner_table_->Vertex(new_corner + ci).value()] = false;
+    //         }
+
+    //         init_face_configurations_.push_back(true);
+    //         init_corners_.push_back(new_corner);
+    //         } else {
+    //         // The initial face wasn't interior and the traversal had to start from
+    //         // an open boundary. In this case no new face is added, but we need to
+    //         // keep record about the first opposite corner to this boundary.
+    //         init_face_configurations_.push_back(false);
+    //         init_corners_.push_back(corner);
+    //         }
+    //     }
+    //     if (num_faces != corner_table_->num_faces()) {
+    //         return -1;  // Unexpected number of decoded faces.
+    //     }
+
+    //     int num_vertices = corner_table_->num_vertices();
+    //     // If any vertex was marked as isolated, we want to remove it from the corner
+    //     // table to ensure that all vertices in range <0, num_vertices> are valid.
+    //     for (const VertexIndex invalid_vert : invalid_vertices) {
+    //         // Find the last valid vertex and swap it with the isolated vertex.
+    //         VertexIndex src_vert(num_vertices - 1);
+    //         while (corner_table_->LeftMostCorner(src_vert) == kInvalidCornerIndex) {
+    //         // The last vertex is invalid, proceed to the previous one.
+    //         src_vert = VertexIndex(--num_vertices - 1);
+    //         }
+    //         if (src_vert < invalid_vert) {
+    //         continue;  // No need to swap anything.
+    //         }
+
+    //         // Remap all corners mapped to |src_vert| to |invalid_vert|.
+    //         VertexCornersIterator<CornerTable> vcit(corner_table_.get(), src_vert);
+    //         for (; !vcit.End(); ++vcit) {
+    //         const CornerIndex cid = vcit.Corner();
+    //         if (corner_table_->Vertex(cid) != src_vert) {
+    //             // Vertex mapped to |cid| was not |src_vert|. This indicates corrupted
+    //             // data and we should terminate the decoding.
+    //             return -1;
+    //         }
+    //         corner_table_->MapCornerToVertex(cid, invalid_vert);
+    //         }
+    //         corner_table_->SetLeftMostCorner(invalid_vert,
+    //                                         corner_table_->LeftMostCorner(src_vert));
+
+    //         // Make the |src_vert| invalid.
+    //         corner_table_->MakeVertexIsolated(src_vert);
+    //         is_vert_hole_[invalid_vert.value()] = is_vert_hole_[src_vert.value()];
+    //         is_vert_hole_[src_vert.value()] = false;
+
+    //         // The last vertex is now invalid.
+    //         num_vertices--;
+    //     }
+  
+    //     self.process_interior_edges();
+  
+    //     num_vertices;
+    //     Ok(())
+    // }
+
+    fn spirale_reversi_valence(&mut self) -> Result<(), Err> {
+        unimplemented!("Valence traversal is not implemented yet.");
+    }
+
+    // fn process_interior_edges(&mut self) -> Result<(), Err> {
+    //     let mut standard_face_data = mem::take(&mut self.standard_face_data).into_iter();
+    //     let size = standard_face_data.len(); 
+    //     let mut decoder: RabsDecoder<_> = RabsDecoder::new(
+    //         &mut standard_face_data, 
+    //         size,
+    //         self.start_face_buffer_prob_zero as usize, 
+    //         None
+    //     )?;
+
+    //     while let Some(corner_a) = self.active_corner_stack.pop() {
+    //         let interior_face = decoder.read()?;
+    //         if interior_face > 0 {
+    //             let mut corner_b = self.corner_table.previous(corner_a);
+    //             while let Some(b_opp) = self.corner_table.opposite_corners[corner_b] {
+    //                 corner_b = self.corner_table.previous(b_opp);
+    //             }
+
+    //             let mut corner_c = self.corner_table.next(corner_a);
+    //             while let Some(c_opp) = self.corner_table.opposite_corners[corner_c] {
+    //                 corner_c = self.corner_table.next(c_opp);
+    //             }
+    //             let new_corner = self.faces.len() * 3;
+    //             self.corner_table.set_opposite_corners(new_corner, corner_a);
+    //             self.corner_table.set_opposite_corners(new_corner + 1, corner_b);
+    //             self.corner_table.set_opposite_corners(new_corner + 2, corner_c);
+
+    //             let [temp_v, next_a, temp_p] = self.corner_table.corner_to_verts(corner_a);
+    //             let [temp_v, next_b, temp_p] = self.corner_table.corner_to_verts(corner_b);
+    //             let [temp_v, next_c, temp_p] = self.corner_table.corner_to_verts(corner_c);
+    //             self.map_corner_to_vertex(new_corner, next_b);
+    //             self.map_corner_to_vertex(new_corner + 1, next_c);
+    //             self.map_corner_to_vertex(new_corner + 2, next_a);
+    //             self.faces.push([next_b, next_c, next_a]);
+
+    //             // Mark all three vertices as interior.
+    //             self.is_vert_hole[next_b] = false;
+    //             self.is_vert_hole[next_c] = false;
+    //             self.is_vert_hole[next_a] = false;
+    //         }
+    //     }
+    //     Ok(())
+    // }
+
+    fn is_topology_split(&mut self, symbol_idx: usize) -> Option<(Orientation, usize)> {
+        let split = if let Some(split) = self.topology_splits.last() {
+            if split.source_symbol_idx == symbol_idx {
+                self.topology_splits.pop().unwrap()
+            } else {
+                return None;
             }
-            self.recover_orientation(sign_of_first_face);
+        } else {
+            return None;
+        };
+        let out_face_edge = split.source_edge_orientation;
+        let out_encoder_split_symbol_id = split.split_symbol_idx;
+        Some( (out_face_edge, out_encoder_split_symbol_id))
+    }
+
+    fn replace_verts(&mut self, from: usize, to: usize) {
+        for i in 0..self.faces.len() {
+            for v in self.faces[i].iter_mut() {
+                if *v == from {
+                    *v = to;
+                }
+            }
         }
     }
 
+    // fn update_corners_after_merge(&mut self, c: usize, v: usize) {
+    //     let opp_corner = self.corner_table.opposite_corners[c];
+    //     if let Some(opp_corner) = opp_corner {
+    //         let corner_n = self.corner_table.next(opp_corner);
+    //         let mut corner_n = Some(corner_n);
+    //         while let Some(corner_n_unwrapped) = corner_n {
+    //             self.map_corner_to_vertex(corner_n_unwrapped, v);
+    //             corner_n = self.swing_left(corner_n_unwrapped);
+    //         }
+    //     }
+    // }
+    
+    #[inline]
+    fn map_corner_to_vertex(&mut self, corner: usize, v: VertexIdx) {
+        self.corner_to_vertex_map[0][corner] = v;
+        self.vertex_corners[v] = corner;
+    }
 
-    fn spirale_reversi_recc<SE: SymbolEncoder, R: ByteReader>(&mut self, reader: &mut BitReader<R>) {
-        let symbol = SE::decode_symbol(reader);
-        assert!(!self.faces.contains(&[35,36,41]));
+
+
+    fn spirale_reversi_recc(&mut self, symbol: Symbol) {
         match symbol {
             Symbol::C => {
                 let right_vertex = self.active_edge[0];
@@ -382,297 +980,6 @@ impl SpiraleReversi {
                     self.boundary_edges
                 );
             },
-            // Symbol::M(n_vertices) => {
-            //     // a hole starting and ending at 'self.active_edge[0]' must get created.
-            //     let mut prev_vertex = self.active_edge[0];
-            //     let mut curr_vertex = *self.boundary_edges.iter()
-            //         .filter(|e| e.contains(&self.active_edge[0]))
-            //         .find(|&&e| !e.contains(&self.active_edge[1]))
-            //         .unwrap()
-            //         .iter().find(|&&v| v != self.active_edge[0]).unwrap();
-            //     let mut boundary_to_remove = vec![
-            //         self.boundary_edges.binary_search(
-            //             &[cmp::min(prev_vertex, curr_vertex), cmp::max(prev_vertex, curr_vertex)]
-            //         ).unwrap()
-            //     ];
-            //     for _ in 0..n_vertices-1 {
-            //         let next_vertex = *self.boundary_edges.iter()
-            //             .filter(|e| e.contains(&curr_vertex))
-            //             .find(|&&e| !e.contains(&prev_vertex))
-            //             .unwrap()
-            //             .iter().find(|&&v| v != curr_vertex).unwrap();
-                
-            //         prev_vertex = curr_vertex;
-            //         curr_vertex = next_vertex;
-            //         boundary_to_remove.push(
-            //             self.boundary_edges.binary_search(
-            //                 &[cmp::min(prev_vertex, curr_vertex), cmp::max(prev_vertex, curr_vertex)]
-            //             ).unwrap()
-            //         );
-            //     }
-            //     // find the next vertex once more to get the active edge.
-            //     let mut next_vertex = *self.boundary_edges.iter()
-            //         .filter(|e| e.contains(&curr_vertex))
-            //         .find(|&&e| !e.contains(&prev_vertex))
-            //         .unwrap()
-            //         .iter().find(|&&v| v != curr_vertex).unwrap();
-            //     // remove the active edge from the boundary edges.
-            //     boundary_to_remove.sort();
-            //     for idx in boundary_to_remove.iter().rev() {
-            //         self.boundary_edges.remove(*idx);
-            //     }
-            //     let removed_edge = [
-            //         cmp::min(self.active_edge[0], self.active_edge[1]),
-            //         cmp::max(self.active_edge[0], self.active_edge[1]),
-            //     ];
-            //     self.boundary_edges.remove(
-            //         self.boundary_edges.binary_search(&removed_edge).unwrap()
-            //     );
-            //     let removed_edge = [
-            //         cmp::min(curr_vertex, next_vertex),
-            //         cmp::max(curr_vertex, next_vertex),
-            //     ];
-            //     self.boundary_edges.remove(
-            //         self.boundary_edges.binary_search(&removed_edge).unwrap()
-            //     );
-
-            //     let mut new_face = [
-            //         curr_vertex,
-            //         self.active_edge[1],
-            //         next_vertex
-            //     ];
-            //     new_face.sort();
-            //     self.faces.push(new_face);
-
-            //     // renumber the vertices: we merge the vertex 'self.active_edge[0]' with 'curr_vertex'.
-            //     let smaller = cmp::min(curr_vertex, self.active_edge[0]);
-            //     let larger = cmp::max(curr_vertex, self.active_edge[0]);
-            //     for face in &mut self.faces {
-            //         let mut is_face_updated = false;
-            //         for vertex in &mut *face {
-            //             if *vertex == larger {
-            //                 *vertex = smaller;
-            //                 is_face_updated = true;
-            //             } else if *vertex > larger {
-            //                 *vertex -= 1;
-            //             }
-            //         }
-            //         if is_face_updated {
-            //             face.sort();
-            //         }
-            //     }
-            //     for edge in &mut self.active_edge_stack {
-            //         for vertex in edge.iter_mut() {
-            //             if *vertex == larger {
-            //                 *vertex = smaller;
-            //             } else if *vertex > larger {
-            //                 *vertex -= 1;
-            //             }
-            //         }
-            //     }
-            //     assert!(self.active_edge[1] != larger);
-            //     if self.active_edge[1] > larger {
-            //         self.active_edge[1] -= 1;
-            //     }
-            //     for edge in &mut self.boundary_edges {
-            //         for vertex in edge.iter_mut() {
-            //             if *vertex == larger {
-            //                 *vertex = smaller;
-            //             } else if *vertex > larger {
-            //                 *vertex -= 1;
-            //             }
-            //         }
-            //         edge.sort();
-            //     }
-            //     self.boundary_edges.sort();
-            //     if next_vertex == larger {
-            //         next_vertex = smaller;
-            //     } else if next_vertex > larger {
-            //         next_vertex -= 1;
-            //     }
-
-
-            //     // add the new edge to the boundary edges
-            //     let new_edge = [
-            //         cmp::min(next_vertex, self.active_edge[1]),
-            //         cmp::max(next_vertex, self.active_edge[1]),
-            //     ];
-            //     let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
-            //     self.boundary_edges.insert(idx, new_edge);
-
-            //     self.num_decoded_vertices -= 1;
-            //     // self.active_edge = [self.active_edge[1], next_vertex];
-            //     self.active_edge[0] = next_vertex;
-            // },
-            // Symbol::H(metadata) => {
-            //     let mut new_face = [
-            //         self.active_edge[0],
-            //         self.active_edge[1],
-            //         self.num_decoded_vertices
-            //     ];
-            //     new_face.sort();
-            //     self.faces.push(new_face);
-                
-            //     // remove the active edge from the boundary edges.
-            //     let removed_edge = [
-            //         cmp::min(self.active_edge[0], self.active_edge[1]),
-            //         cmp::max(self.active_edge[0], self.active_edge[1]),
-            //     ];
-            //     self.boundary_edges.remove(
-            //         self.boundary_edges.binary_search(&removed_edge).unwrap_err()
-            //     );
-
-            //     let edges = {
-            //         let mut out = self.faces.iter().map(|face| [
-            //             [face[0], face[1]],
-            //             [face[1], face[2]],
-            //             [face[0], face[2]]
-            //         ]).flatten().collect::<Vec<_>>();
-            //         out.sort();
-            //         out
-            //     };
-
-            //     let one_coboundary = {
-            //         let mut one_coboundary = vec![Vec::new(); edges.len()];
-            //         for (i,face) in self.faces.iter().enumerate() {
-            //             debug_assert!(face.is_sorted());
-            //             let boundary_edges = [
-            //                 [face[0], face[1]],
-            //                 [face[1], face[2]],
-            //                 [face[0], face[2]]
-            //             ];
-            //             for edge in boundary_edges.iter() {
-            //                 let edge_idx = edges.binary_search(edge).unwrap();
-            //                 one_coboundary[edge_idx].push(i);
-            //             }
-            //         }
-            //         one_coboundary.iter_mut().for_each(|coboundary| coboundary.sort());
-            //         one_coboundary
-            //     };
-
-            //     // unpack the metadata
-            //     let index = self.faces.len()-1 - (metadata >> 1);
-            //     let is_right_not_left = metadata & 1 == 1;
-
-            //     let merge_face = self.faces[index];
-            //     let boundary_edges = [
-            //         [merge_face[0], merge_face[1]], 
-            //         [merge_face[1], merge_face[2]], 
-            //         [merge_face[0], merge_face[2]]
-            //     ];
-            //     debug_assert!(merge_face.is_sorted());
-            //     let edges_of_valency_2 = boundary_edges
-            //         .iter()
-            //         .map(|edge| edges.binary_search(edge).unwrap())
-            //         .filter(|&edge_idx| one_coboundary[edge_idx].len() == 2)
-            //         .collect::<Vec<_>>();
-
-            //     self.orientation = vec![false; self.faces.len()];
-            //     let mut visited_faces = vec![false; self.faces.len()];
-            //     let mut face_stack = vec![index];
-            //     while let Some(face_idx) = face_stack.pop() {
-            //         if visited_faces[face_idx] {
-            //             continue;
-            //         }
-
-            //         if face_idx == self.faces.len()-1 {
-            //             break;
-            //         }
-
-            //         visited_faces[face_idx] = true;
-            //         let face = self.faces[face_idx];
-            //         let boundary_edges = [
-            //             [face[0], face[1]], 
-            //             [face[1], face[2]], 
-            //             [face[0], face[2]]
-            //         ];
-            //         let adjacent_faces = boundary_edges.iter()
-            //             .map(|edge| edges.binary_search(edge).unwrap())
-            //             .filter_map(|edge_idx| {
-            //                 let face_indices = &one_coboundary[edge_idx];
-            //                 if face_indices.len() == 2 {
-            //                     let adj_face_idx = *face_indices.iter()
-            //                         .find(|&&idx| idx != face_idx)
-            //                         .unwrap();
-            //                     Some((edge_idx, adj_face_idx))
-            //                 } else {
-            //                     None
-            //                 }
-            //             })
-            //             .collect::<Vec<_>>();
-            //         for (common_edge_idx, adj_face_idx) in adjacent_faces {
-            //             self.orientation[adj_face_idx] = orientation_of_next_face(
-            //                 face, 
-            //                 self.orientation[face_idx], 
-            //                 edges[common_edge_idx], 
-            //                 self.faces[adj_face_idx]
-            //             );
-
-            //             face_stack.push(adj_face_idx);
-            //         }
-
-            //     }
-
-            //     let merge_edge = if edges_of_valency_2.len() ==2 {
-            //         let idx = boundary_edges.iter()
-            //             .map(|edge| edges.binary_search(edge).unwrap())
-            //             .find(|edge_idx| !edges_of_valency_2.contains(edge_idx))
-            //             .unwrap();
-            //         edges[idx]
-            //     } else {
-            //         debug_assert!(edges_of_valency_2.len() == 1, "edges_of_valency_2: {:?}", edges_of_valency_2);
-            //         let edge_of_valency_2 = edges_of_valency_2[0];
-            //         let next_vertex = *self.faces[index].iter()
-            //             .find(|&v| !edges[edge_of_valency_2].contains(v))
-            //             .unwrap();
-            //         if is_right_not_left ^ self.orientation[index] {
-            //             [edges[edge_of_valency_2][1], next_vertex]
-            //         } else {
-            //             [edges[edge_of_valency_2][0], next_vertex]
-            //         }
-            //     };
-
-            //     // merge merge_edge[0] and 'num_decoded_vertices'
-            //     debug_assert!(self.faces.last_mut().unwrap()[2] == self.num_decoded_vertices);
-            //     self.faces.last_mut().unwrap()[2] = merge_edge[0];
-
-            //     // merge merge_edge[1] and active_edge[0]
-            //     let [min, max] = if merge_edge[1] < self.active_edge[0] {
-            //         [merge_edge[1], self.active_edge[0]]
-            //     } else {
-            //         [self.active_edge[0], merge_edge[1]]
-            //     };
-            //     for face in &mut self.faces {
-            //         for vertex in face.iter_mut() {
-            //             if *vertex == max {
-            //                 *vertex = min;
-            //             } else if *vertex > max {
-            //                 *vertex -= 1;
-            //             }
-            //         }
-            //     }
-            //     if self.active_edge[1] == max {
-            //         self.active_edge[1] = min;
-            //     } else if self.active_edge[1] > max {
-            //         self.active_edge[1] -= 1;
-            //     }
-
-                
-            //     self.num_decoded_vertices -= 1;
-            //     self.active_edge[0] = self.faces.last_mut().unwrap()[2];
-
-            //     for face in &mut self.faces {
-            //         face.sort();
-            //     }
-
-            //     // add the new edge to the boundary edges
-            //     let new_edge = [
-            //         cmp::min(self.active_edge[0], self.active_edge[1]),
-            //         cmp::max(self.active_edge[0], self.active_edge[1]),
-            //     ];
-            //     let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
-            //     self.boundary_edges.insert(idx, new_edge);
-            // }
         }
     }
 
@@ -758,19 +1065,30 @@ impl SpiraleReversi {
 }
 
 impl ConnectivityDecoder for SpiraleReversi {
-    fn decode_connectivity<R>(&mut self, reader: &mut R) -> Result<Vec<[VertexIdx; 3]>, super::Err> 
+    type Err = Err;
+    fn decode_connectivity<R>(&mut self, reader: &mut R) -> Result<Vec<[VertexIdx; 3]>, Err> 
         where R: ByteReader
     {
+        self.traversal_type = Traversal::read_from(reader)?;
+        self.num_vertices = leb128_read(reader)? as usize;
+        self.num_faces = leb128_read(reader)? as usize;
+        self.num_attribute_data = reader.read_u8()? as usize;
+        self.num_encoded_symbols = leb128_read(reader)? as usize;
+        self.num_encoded_split_symbols = leb128_read(reader)? as usize;
+
         self.init();
-        let symbol_encoding = SymbolEncodingConfig::get_symbol_encoding(reader);
-        self.num_connected_components = reader.read_u8().unwrap() as usize; // ToDo: handle error properly.
+
+        self.read_topology_splits(reader)?;
+
+        self.start_traversal(reader)?;
 
         // unwrap the symbol encoding config here so that the spirale reversi does not 
         // need to unwrap config during each iteration.
-        match symbol_encoding {
-            SymbolEncodingConfig::CrLight => self.spirale_reversi_impl::<CrLight, _>(reader),
-            SymbolEncodingConfig::Rans => self.spirale_reversi_impl::<Rans, _>(reader),
-        }
+        match self.traversal_type {
+            Traversal::Standard => unimplemented!(), // self.spirale_reversi_standard(),
+            Traversal::Valence => self.spirale_reversi_valence(),
+            _ => unimplemented!()
+        }?;
 
 
         let mut faces = Vec::new();

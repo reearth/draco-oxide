@@ -4,16 +4,21 @@ pub mod metadata;
 use std::mem;
 
 use super::{attribute::{AttributeType, ComponentDataType, Attribute}, shared::{Float, Vector}};
-use crate::{core::shared::NdVector, utils::geom::point_to_face_distance_3d};
+use crate::{core::shared::{NdVector, VertexIdx}, utils::geom::point_to_face_distance_3d};
 
 #[derive(Debug, Clone)]
 pub struct Mesh {
-	attributes: Vec<Attribute>,
+    pub(crate) faces: Vec<[VertexIdx; 3]>,
+	pub(crate) attributes: Vec<Attribute>,
 }
 
 impl Mesh {
     pub fn get_attributes(&self) -> &[Attribute] {
         &self.attributes
+    }
+
+    pub fn get_faces(&self) -> &[[VertexIdx; 3]] {
+        &self.faces
     }
 
     pub fn get_attributes_mut(&mut self) -> &mut[Attribute] {
@@ -33,24 +38,13 @@ impl Mesh {
         }
     }
 
-    pub(crate) fn take_splitted_attributes(&self) -> (&[Attribute], &[Attribute]) {
-        let at = self.attributes.iter()
-            .position(|att| att.get_attribute_type() != AttributeType::Connectivity)
-            .unwrap(); // At least one attribute must be of type non-connectivity.
-
-        debug_assert!(
-            (at..self.attributes.len()).all(|i| {
-                self.attributes[i].get_attribute_type() != AttributeType::Connectivity
-            }), 
-            "All attributes after the first non-connectivity attribute must be of type non-connectivity"
-        );
-        let conn_atts = &self.attributes[..at];
-        let non_conn_atts = &self.attributes[at..];
-        (conn_atts, non_conn_atts)
+    pub(crate) fn take_attributes(&mut self) -> Vec<Attribute>{
+        mem::take(&mut self.attributes)
     }
 
     pub fn new() -> Self {
         Self {
+            faces: Vec::new(),
             attributes: Vec::new(),
         }
     }

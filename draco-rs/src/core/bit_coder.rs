@@ -1,4 +1,4 @@
-use std::vec;
+use std::{iter::Rev, vec};
 
 use super::buffer::{MsbFirst, OrderConfig};
 
@@ -7,6 +7,11 @@ pub trait ByteWriter: Sized {
     fn write_u16(&mut self, value: u16) {
         self.write_u8(value as u8);
         self.write_u8((value >> 8) as u8);
+    }
+    fn write_u24(&mut self, value: u32) {
+        self.write_u8(value as u8);
+        self.write_u8((value >> 8) as u8);
+        self.write_u8((value >> 16) as u8);
     }
     fn write_u32(&mut self, value: u32) {
         self.write_u16(value as u16);
@@ -25,6 +30,10 @@ impl ByteWriter for Vec<u8> {
 
     fn write_u16(&mut self, value: u16) {
         self.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_u24(&mut self, value: u32) {
+        self.extend_from_slice(&value.to_le_bytes()[..3]);
     }
 
     fn write_u32(&mut self, value: u32) {
@@ -49,6 +58,12 @@ impl<R: FnMut(u8)> ByteWriter for FunctionalByteWriter<R> {
         // ToDo: use unsafe code to avoid the allocation of the array.
         self.write_u8(value as u8);
         self.write_u8((value >> 8) as u8);
+    }
+
+    fn write_u24(&mut self, value: u32) {
+        self.write_u8(value as u8);
+        self.write_u8((value >> 8) as u8);
+        self.write_u8((value >> 16) as u8);
     }
 
     fn write_u32(&mut self, value: u32) {
@@ -169,6 +184,7 @@ impl<'buffer, Buffer: ByteWriter, Order: OrderConfig> Drop for BitWriter<'buffer
 }
 
 pub trait ByteReader {
+    type Rev: ReverseByteReader;
     fn read_u8(&mut self) -> Result<u8, ReaderErr>;
     fn read_u16(&mut self) -> Result<u16, ReaderErr> {
         let out = [
@@ -176,6 +192,14 @@ pub trait ByteReader {
             self.read_u8()?
         ];
         Ok(u16::from_le_bytes(out))
+    }
+    fn read_u24(&mut self) -> Result<u32, ReaderErr> {
+        let out = [
+            self.read_u8()?,
+            self.read_u8()?,
+            self.read_u8()?
+        ];
+        Ok(u32::from_le_bytes([out[0], out[1], out[2], 0]))
     }
     fn read_u32(&mut self) -> Result<u32, ReaderErr> {
         let out = [
@@ -199,6 +223,8 @@ pub trait ByteReader {
         ];
         Ok(u64::from_le_bytes(out))
     }
+
+    fn spown_reverse_reader_at(&mut self, offset: usize)-> Result<Self::Rev, ReaderErr>;
 }
 
 impl ByteReader for vec::IntoIter<u8> {
@@ -236,6 +262,18 @@ impl ByteReader for vec::IntoIter<u8> {
             self.next().ok_or(ReaderErr::NotEnoughData)?
         ];
         Ok(u64::from_le_bytes(out))
+    }
+
+    type Rev = Rev<vec::IntoIter<u8>>;
+    fn spown_reverse_reader_at(&mut self, offset: usize) -> Result<Self::Rev, ReaderErr> {
+        let mut vec: Vec<_> = self.collect();
+        if offset > vec.len() {
+            return Err(ReaderErr::NotEnoughData);
+        }
+        let rest = vec.split_off(offset);
+        let rev = vec.into_iter().rev();
+        *self = rest.into_iter();
+        Ok(rev)
     }
 }
 
@@ -279,6 +317,17 @@ impl<R: FnMut()->Result<u8, ReaderErr>> ByteReader for FunctionalByteReader<R> {
             self.read_u8()?
         ];
         Ok(u64::from_le_bytes(out))
+    }
+
+    type Rev = Rev<vec::IntoIter<u8>>;
+
+    fn spown_reverse_reader_at(&mut self, offset: usize)-> Result<Self::Rev, ReaderErr> {
+        let mut vec = Vec::new();
+        for _ in 0..offset {
+            vec.push(self.read_u8()?);
+        }
+        let rest = vec.into_iter().rev();
+        Ok(rest)
     }
 }
 
@@ -387,16 +436,71 @@ impl<'buffer, Buffer: ByteReader, Order: OrderConfig> BitReader<'buffer, Buffer,
 }
 
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReaderErr {
     #[error("Not enough data to read")]
     NotEnoughData,
 }
 
 
+pub trait ReverseByteReader {
+    fn read_u8_back(&mut self) -> Result<u8, ReaderErr>;
+    fn read_u16_back(&mut self) -> Result<u16, ReaderErr> {
+        let mut out = [
+            self.read_u8_back()?,
+            self.read_u8_back()?
+        ];
+        out.reverse();
+        Ok(u16::from_le_bytes(out))
+    }
+    fn read_u24_back(&mut self) -> Result<u32, ReaderErr> {
+        let mut out = [
+            self.read_u8_back()?,
+            self.read_u8_back()?,
+            self.read_u8_back()?
+        ];
+        out.reverse();
+        Ok(u32::from_le_bytes([out[0], out[1], out[2], 0]))
+    }
+    fn read_u32_back(&mut self) -> Result<u32, ReaderErr> {
+        let mut out = [
+            self.read_u8_back()?,
+            self.read_u8_back()?,
+            self.read_u8_back()?,
+            self.read_u8_back()?
+        ];
+        out.reverse();
+        Ok(u32::from_le_bytes(out))
+    }
+    fn read_u64_back(&mut self) -> Result<u64, ReaderErr> {
+        let mut out = [
+            self.read_u8_back()?,
+            self.read_u8_back()?,
+            self.read_u8_back()?,
+            self.read_u8_back()?,
+            self.read_u8_back()?,
+            self.read_u8_back()?,
+            self.read_u8_back()?,
+            self.read_u8_back()?
+        ];
+        out.reverse();
+        Ok(u64::from_le_bytes(out))
+    }
+}
+
+impl<I: DoubleEndedIterator<Item = u8>> ReverseByteReader for Rev<I> {
+    fn read_u8_back(&mut self) -> Result<u8, ReaderErr> {
+        self.next().ok_or(ReaderErr::NotEnoughData)
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use crate::core::{bit_coder::BitReader, buffer::*};
+    use crate::prelude::ByteWriter;
     use super::BitWriter;
 
     #[test]
@@ -513,5 +617,40 @@ mod tests {
         for _ in 0..5 {
             assert_eq!(reader.read_bits(2).unwrap(), 0b10);
         }
+    }
+
+    use crate::core::bit_coder::ByteReader;
+    use crate::core::bit_coder::ReverseByteReader;
+    use crate::core::bit_coder::ReaderErr::NotEnoughData;
+    #[test]
+    fn test_reverse_reader1() {
+        let buffer = vec![1_u8, 2, 3, 4, 5];
+        let mut reader = buffer.into_iter();
+        let mut reverse_reader = reader.spown_reverse_reader_at(2).unwrap();
+        assert_eq!(reverse_reader.read_u8_back().unwrap(), 2);
+        assert_eq!(reverse_reader.read_u8_back().unwrap(), 1);
+        assert_eq!(reverse_reader.read_u8_back(), Err(NotEnoughData));
+        assert!(reader.next().unwrap() == 3);
+        assert!(reader.next().unwrap() == 4);
+        assert!(reader.next().unwrap() == 5);
+        assert!(reader.next().is_none());
+    }
+
+        #[test]
+    fn test_reverse_reader2() {
+        let mut buffer = Vec::new();
+        buffer.write_u8(200);
+        buffer.write_u16(201);
+        buffer.write_u24(202);
+        buffer.write_u32(203);
+        assert!(buffer.len() == 10);
+        let mut reader = buffer.into_iter();
+        let mut reverse_reader = reader.spown_reverse_reader_at(10).unwrap();
+        assert_eq!(reverse_reader.read_u32_back().unwrap(), 203);
+        assert_eq!(reverse_reader.read_u24_back().unwrap(), 202);
+        assert_eq!(reverse_reader.read_u16_back().unwrap(), 201);
+        assert_eq!(reverse_reader.read_u8_back().unwrap(), 200);
+        assert_eq!(reverse_reader.read_u8_back(), Err(NotEnoughData));
+        assert!(reader.next().is_none());
     }
 }

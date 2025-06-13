@@ -1,11 +1,12 @@
 mod sequential;
 mod spirale_reversi;
-use crate::core::attribute::{Attribute, AttributeId}; 
 use crate::core::bit_coder::ReaderErr;
-use crate::core::shared::VertexIdx; 
+use crate::core::shared::{FaceIdx, VertexIdx}; 
 use crate::debug_expect;
+use crate::decode::header::Header;
 use crate::prelude::ByteReader;
-use crate::shared::connectivity::{EdgebreakerDecoder, Encoder};
+use crate::shared::connectivity::EdgebreakerDecoder;
+use crate::shared::header::EncoderMethod;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Err {
@@ -19,40 +20,28 @@ pub enum Err {
     NotEnoughData(#[from] ReaderErr),
 }
 
-pub fn decode_connectivity_atts<R>(reader: &mut R) -> Result<Vec<Attribute>, Err>
+pub fn decode_connectivity_att<R>(reader: &mut R, header: Header) -> Result<Vec<[FaceIdx;3]>, Err>
     where R: ByteReader,
 {
-    // ToDo: get rans coder
+    let connectivity = match header.encoding_method {
+        EncoderMethod::Edgebreaker => {
+            debug_expect!("Start of edgebreaker connectivity", reader);
+            let mut decoder = spirale_reversi::SpiraleReversi::new();
+            decoder.decode_connectivity(reader)?
+        },
+        EncoderMethod::Sequential => {
+            debug_expect!("Start of sequential connectivity", reader);
+            let mut decoder = sequential::Sequential;
+            decoder.decode_connectivity(reader)?
+        }
+    };
 
-    let num_atts = reader.read_u8().unwrap() as usize;
-
-    let mut atts = Vec::with_capacity(num_atts);
-    for i in 0..num_atts {
-        let connectivity = match Encoder::from_id(reader.read_u8().unwrap() as u64) {
-            Encoder::Edgebreaker => {
-                debug_expect!("Start of edgebreaker connectivity", reader);
-                match EdgebreakerDecoder::from_id(reader.read_u8().unwrap() as u64) {
-                    EdgebreakerDecoder::SpiraleReversi => {
-                        let mut decoder = spirale_reversi::SpiraleReversi::new();
-                        decoder.decode_connectivity(reader)?
-                    }
-                }
-            },
-            Encoder::Sequential => {
-                debug_expect!("Start of sequential connectivity", reader);
-                let mut decoder = sequential::Sequential;
-                decoder.decode_connectivity(reader)?
-            }
-        };
-        let attribute = Attribute::from_faces(AttributeId::new(i ), connectivity, Vec::new());
-        atts.push(attribute);
-    }
-
-    Ok(atts)
+    Ok(connectivity)
 }
 
 
 pub trait ConnectivityDecoder {
-    fn decode_connectivity<R>(&mut self, reader: &mut R) -> Result<Vec<[VertexIdx; 3]>, Err>
+    type Err;
+    fn decode_connectivity<R>(&mut self, reader: &mut R) -> Result<Vec<[VertexIdx; 3]>, Self::Err>
         where R: ByteReader;
 }

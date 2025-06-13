@@ -10,24 +10,25 @@ use crate::utils::bit_coder::leb128_write;
 
 pub(crate) struct Sequential {
     cfg: Config,
+    num_points: usize,
 }
 
 impl Sequential {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, num_points: usize) -> Self {
         Self {
             cfg: config,
+            num_points
         }
     }
 
     fn encode_direct_indices<W>(
-        &mut self,
-        faces: &mut [[VertexIdx; 3]],
-        points: &mut[&mut Attribute], 
+        &self,
+        faces: &[[VertexIdx; 3]],
         writer: &mut W
     ) -> Result<(), Err> 
         where  W: ByteWriter,
     {
-        let index_size = match index_size_from_vertex_count(points.len()) {
+        let index_size = match index_size_from_vertex_count(self.num_points) {
             Ok(index_size) => index_size as u8,
             Err(err) => return Err(Err::SharedError(err)),
         };
@@ -80,20 +81,19 @@ impl Sequential {
 impl ConnectivityEncoder for Sequential {
     type Err = Err;
     type Config = Config;
+    type Output = ();
 
     fn encode_connectivity<W>(
-        &mut self, 
-        faces: &mut [[VertexIdx; 3]],
-        points: &mut[&mut Attribute], 
+        self, 
+        faces: &[[VertexIdx; 3]],
         writer: &mut W
     ) -> Result<(), Err> 
         where  W: ByteWriter,
     {
-        writer.write_u64(points.len() as u64);
         writer.write_u64(faces.len() as u64);
         let encoder_method_id = self.cfg.encoder_method.get_id();
         writer.write_u8(encoder_method_id);
-        self.encode_direct_indices(faces, points, writer)?;
+        self.encode_direct_indices(faces, writer)?;
 
         Ok(())
     }

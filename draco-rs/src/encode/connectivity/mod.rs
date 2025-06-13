@@ -2,105 +2,72 @@ pub mod config;
 pub(crate) mod edgebreaker;
 pub(crate) mod sequential;
 
-use core::panic;
 use std::fmt::Debug;
 
 use crate::core::bit_coder::ByteWriter;
-use crate::core::shared::{
-    ConfigType,
-    VertexIdx,
-};
-use crate::core::attribute::AttributeType;
-use crate::core::mesh::Mesh;
-use crate::debug_write;
-use crate::prelude::Attribute;
-use crate::shared::connectivity::{EdgebreakerDecoder, Encoder, NUM_CONNECTIVITY_ATTRIBUTES_SLOT};
+use crate::core::shared::{ConfigType, FaceIdx};
+use crate::encode::connectivity::edgebreaker::{DefaultTraversal, ValenceTraversal};
+use crate::prelude::{Attribute, AttributeType};
+use crate::shared::connectivity::edgebreaker::EdgebreakerKind;
+use crate::shared::connectivity::{EdgebreakerDecoder, Encoder};
 
 #[cfg(feature = "evaluation")]
 use crate::eval;
 
 /// entry point for encoding connectivity.
-pub fn encode_connectivity<W>(
-    mesh:&mut Mesh,
+pub fn encode_connectivity<'faces, W>(
+    faces: &'faces[[usize; 3]],
+    atts: &[Attribute],
     writer: &mut W,
-    cfg: Config,
-) -> Result<(), Err>
+    cfg: &super::Config,
+) -> Result<ConnectivityEncoderOutput<'faces>, Err>
     where W: ByteWriter
 {
     #[cfg(feature = "evaluation")]
     eval::scope_begin("connectivity info", writer);
 
-    // create the array of tuples (connectivity attribute (parent), position attribute (child) index)
-    let conn_child_atts_indices = mesh.get_attributes()
-        .iter()
-        .enumerate()
-        .filter(|(_, att)| att.get_attribute_type() == AttributeType::Connectivity)
-        .map(|(idx, conn_att)| {
-            // look for attributes that has 'conn_att' as parent
-            let children = mesh.get_attributes()
-                .iter()
-                .enumerate()
-                .filter(|(_, att)| att.get_parents().contains(&conn_att.get_id()))
-                .map(|(child_idx, _)| child_idx)
-                .collect::<Vec<_>>();
-            let mut out = vec![idx];
-            out.extend(children);
-            out
-        })
-        .collect::<Vec<_>>();
-
-    // write the number of connectivity attributes
-    if conn_child_atts_indices.len() >= 1 << NUM_CONNECTIVITY_ATTRIBUTES_SLOT {
-        return Err(Err::TooManyConnectivityAttributes);
-    }
-    writer.write_u8(conn_child_atts_indices.len() as u8);
-
-    for idx in conn_child_atts_indices {
-        let mut atts = mesh.get_attributes_mut_by_indices(&idx);
-        let (conn_att, children) = atts.split_at_mut(1);
-        
-        // Safety: we know that the first attribute is a connectivity attribute,
-        // and the connectivity attribute is a 3D array of VertexIdx
-        let faces = unsafe{ 
-            conn_att[0].as_slice_unchecked_mut::<[VertexIdx; 3]>()
-        };
-
-        encode_connectivity_datatype_unpacked(faces, children, writer, Config::default())?;
-
-    }
+    let result = encode_connectivity_datatype_unpacked(faces, atts, writer, Config::default());
 
     #[cfg(feature = "evaluation")]
     eval::scope_end(writer);
-    Ok(())
+    result
 }
 
-pub fn encode_connectivity_datatype_unpacked<W>(
-    faces: &mut [[VertexIdx; 3]],
-    children: &mut[&mut Attribute],
+pub fn encode_connectivity_datatype_unpacked<'faces, W>(
+    faces: &'faces[[usize; 3]],
+    atts: &[Attribute],
     writer: &mut W,
     cfg: Config,
-) -> Result<(), Err>
+) -> Result<ConnectivityEncoderOutput<'faces>, Err>
     where W: ByteWriter,
 {
-    match cfg {
+    let result = match cfg {
         Config::Edgebreaker(cfg) => {
             #[cfg(feature = "evaluation")]
             eval::scope_begin("edgebreaker", writer);
             
             // write the encoder id
             writer.write_u8(Encoder::Edgebreaker.get_id() as u8);
-            debug_write!("Start of edgebreaker connectivity", writer);
             // write the edgebreaker decoder id
             writer.write_u8(EdgebreakerDecoder::SpiraleReversi.id() as u8);
-            let mut encoder = edgebreaker::Edgebreaker::new(cfg);
-            let result = encoder.encode_connectivity(faces, children, writer);
+            let result = match cfg.traversal {
+                EdgebreakerKind::Standard => {
+                    let encoder = edgebreaker::Edgebreaker::<DefaultTraversal>::new(cfg, atts, faces)?;
+                    encoder.encode_connectivity(&faces, writer)
+                },
+                EdgebreakerKind::Predictive => {
+                    unimplemented!("Predictive edgebreaker encoding is not implemented yet");
+                },
+                EdgebreakerKind::Valence => {
+                    let encoder = edgebreaker::Edgebreaker::<ValenceTraversal>::new(cfg, atts, faces)?;
+                    encoder.encode_connectivity(&faces, writer)
+                },
+            };
             
             #[cfg(feature = "evaluation")]
             eval::scope_end(writer);
 
-            if let Err(err) = result {
-                return Err(Err::EdgebreakerError(err));
-            }
+            result.map(|o| ConnectivityEncoderOutput::Edgebreaker(o))?
         },
         Config::Sequential(cfg) => {
             #[cfg(feature = "evaluation")]
@@ -108,43 +75,48 @@ pub fn encode_connectivity_datatype_unpacked<W>(
 
             // write the encoder id
             writer.write_u8(Encoder::Sequential.get_id() as u8);
-            let mut encoder = sequential::Sequential::new(cfg);
-            debug_write!("Start of sequential connectivity", writer);
-            let result = encoder.encode_connectivity(faces, children, writer);
+            let num_points = atts.iter()
+                .find(|att| att.get_attribute_type() == AttributeType::Position)
+                .unwrap()
+                .len();
+            let encoder = sequential::Sequential::new(cfg, num_points);
+            let result = encoder.encode_connectivity(faces, writer)?;
 
             #[cfg(feature = "evaluation")]
             eval::scope_end(writer);
             
-            if let Err(err) = result {
-                return Err(Err::SequentialError(err));
-            }
+            ConnectivityEncoderOutput::Sequential(result)
         }
     };
-
-    Ok(())
+    Ok(result)
 }
 
 pub trait ConnectivityEncoder {
     type Err;
     type Config;
+    type Output;
     fn encode_connectivity<W>(
-        &mut self, 
-        faces: &mut [[VertexIdx; 3]],
-        points: &mut[&mut Attribute], 
+        self, 
+        faces: &[[FaceIdx; 3]],
         buffer: &mut W
-    ) -> Result<(), Self::Err>
+    ) -> Result<Self::Output, Self::Err>
         where W: ByteWriter;
+}
+
+pub(crate) enum ConnectivityEncoderOutput<'faces> {
+    Edgebreaker(edgebreaker::Output<'faces>),
+    Sequential(()),
 }
 
 #[remain::sorted]
 #[derive(thiserror::Error, Debug)]
 pub enum Err {
-    #[error("Edgebreaker encoding error")]
-    EdgebreakerError(edgebreaker::Err),
+    #[error("Edgebreaker encoding error: {0}")]
+    EdgebreakerError(#[from] edgebreaker::Err),
     #[error("Position attribute must be of type f32 or f64")]
     PositionAttributeTypeError,
-    #[error("Sequential encoding error")]
-    SequentialError(sequential::Err),
+    #[error("Sequential encoding error: {0}")]
+    SequentialError(#[from] sequential::Err),
     #[error("Too many connectivity attributes")]
     TooManyConnectivityAttributes,
 }

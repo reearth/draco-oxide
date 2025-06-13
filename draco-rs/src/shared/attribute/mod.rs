@@ -3,6 +3,15 @@ use crate::prelude::{ByteReader, ByteWriter};
 
 pub mod prediction_scheme;
 pub mod portabilization;
+pub mod sequence;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Err {
+    #[error("Invalid Attribute Kind: {0}")]
+    AttributeKindError(u8),
+    #[error("Reader Error: {0}")]
+    ReaderError(#[from] ReaderErr),
+}
 
 pub trait Portable: Sized {
     fn to_bytes(self) -> Vec<u8>;
@@ -25,6 +34,27 @@ impl Portable for bool {
         Ok(reader.read_u8()? != 0)
     }
 }
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttributeKind {
+    MeshVertex,
+    MeshCorner,
+}
+
+impl AttributeKind {
+    pub(crate) fn read_from<R>(reader: &mut R) -> Result<Self, Err>
+        where R: ByteReader
+    {
+        let id = reader.read_u8()?;
+        match id {
+            0 => Ok(Self::MeshVertex),
+            1 => Ok(Self::MeshCorner),
+            _ => Err(Err::AttributeKindError(id)),
+        }
+    }
+}
+
 
 
 #[cfg(test)]
