@@ -56,6 +56,44 @@ impl AttributeKind {
 }
 
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttributeEncodingType {
+    Generic,
+    Integer,
+    Quantization,
+    Normals,
+}
+
+impl AttributeEncodingType {
+    /// Reads the encoding type from a byte stream.
+    #[inline]
+    pub(crate) fn read_from<R>(reader: &mut R) -> Result<Self, Err>
+        where R: ByteReader
+    {
+        let id = reader.read_u8()?;
+        match id {
+            0 => Ok(Self::Generic),
+            1 => Ok(Self::Integer),
+            2 => Ok(Self::Quantization),
+            3 => Ok(Self::Normals),
+            _ => Err(Err::AttributeKindError(id)),
+        }
+    }
+    
+    /// Writes the encoding type to a byte stream.
+    #[inline]
+    pub(crate) fn write_to<W>(self, writer: &mut W) where W: ByteWriter {
+        let id = match self {
+            Self::Generic => 0,
+            Self::Integer => 1,
+            Self::Quantization => 2,
+            Self::Normals => 3,
+        };
+        writer.write_u8(id);
+    }
+}
+
+
 
 #[cfg(test)]
 mod tests {

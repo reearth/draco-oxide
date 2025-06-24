@@ -50,13 +50,8 @@ impl Mesh {
     }
 
     pub(crate) fn add_attribute(&mut self, att: Attribute) {
-        if att.get_attribute_type() == AttributeType::Connectivity {
-            let mut tmp = vec![att];
-            mem::swap(&mut tmp, &mut self.attributes);
-            self.attributes.append(&mut tmp);
-        } else {
-            self.attributes.push(att);
-        }
+        // Connectivity is no longer a separate attribute, so just add normally
+        self.attributes.push(att);
     }
 
     pub fn diff_l2_norm(&self, other: &Self) -> f64 {
@@ -74,17 +69,9 @@ impl Mesh {
                 panic!("Position attribute must have 3 components, but the first mesh has {} components", pos_att.get_num_components());
             }
 
-            let faces = self.attributes.iter()
-                .filter(|att| att.get_attribute_type() == AttributeType::Connectivity)
-                .find(|att| !att.get_parents().is_empty() )
-                .unwrap();
-            let faces = unsafe{ faces.as_slice_unchecked::<[usize; 3]>() };
-
-            let other_faces = other.attributes.iter()
-                .filter(|att| att.get_attribute_type() == AttributeType::Connectivity)
-                .find(|att| !att.get_parents().is_empty() )
-                .unwrap();
-            let other_faces = unsafe{ other_faces.as_slice_unchecked::<[usize; 3]>() };
+            // Faces are now stored directly in the mesh
+            let faces = &self.faces;
+            let other_faces = &other.faces;
 
             num_points += pos_att.len();
             num_points += other_pos_att.len();
@@ -138,7 +125,7 @@ unsafe fn sum_of_squared_dist_impl<F>(
 ) -> F
     where
         F: Float,
-        NdVector<3, F>: Vector<Component = F>,
+        NdVector<3, F>: Vector<3, Component = F>,
 {
     assert!( 
         other_pos_att.get_component_type() == self_pos_att.get_component_type(),

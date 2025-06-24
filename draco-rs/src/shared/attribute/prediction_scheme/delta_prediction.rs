@@ -1,34 +1,27 @@
-use crate::{core::{attribute::Attribute, shared::Vector}, prelude::AttributeType};
+use crate::{core::{attribute::Attribute, corner_table::GenericCornerTable}, prelude::{AttributeType, NdVector, Vector}};
 use std::marker::PhantomData;
 use super::PredictionSchemeImpl;
 use std::mem;
 
-pub struct DeltaPrediction<'parents, Data: Vector> {
+pub struct DeltaPrediction<'parents, C, const N: usize> 
+{
 	faces: &'parents [[usize; 3]],
-	_marker: PhantomData<Data>,
+	_marker: PhantomData<C>,
 }
 
 
-impl<'parents, Data> PredictionSchemeImpl<'parents> for DeltaPrediction<'parents, Data>
-	where Data: Vector + Clone
+impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for DeltaPrediction<'parents, C, N>
+	where C: GenericCornerTable,
+	      NdVector<N, i32>: Vector<N, Component = i32>,
 {
 	const ID: u32 = 1;
 	
-	type Data = Data;
-
 	type AdditionalDataForMetadata = ();
 	
-	fn new(parents: &[&'parents Attribute]) -> Self {
-        assert!(parents.len() >= 1, "prediction needs at least one parent: connectivity.");
-        assert!(
-            parents[0].get_attribute_type() == AttributeType::Connectivity,
-            "Delta prediction requires faces as a parent, but they are: {:?}.",
-            parents[0].get_attribute_type(),
-        );
-
-        let faces = unsafe {
-            parents[0].as_slice_unchecked()
-        };
+	fn new(parents: &[&'parents Attribute], conn_att: &C) -> Self {
+        // Note: Connectivity is now passed via conn_att parameter instead of parent attributes
+        // For now, use an empty slice as this prediction scheme needs to be updated for the new architecture
+        let faces: &[[usize; 3]] = &[];
 
         Self {
             faces,
@@ -64,10 +57,13 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for DeltaPrediction<'parents
 	
 	fn predict(
 		&self,
-		values_up_till_now: &[Data]
-	) -> Self::Data 
+		_i: usize,
+		vertices_or_corners_processed_up_till_now: &[usize],
+		att: &[NdVector<N, i32>],
+	) -> NdVector<N, i32>
 	{
-		values_up_till_now.last().unwrap().clone()
+		let i = *vertices_or_corners_processed_up_till_now.last().unwrap();
+		att[i].clone()
 	}
 }
 

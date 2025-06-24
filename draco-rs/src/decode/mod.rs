@@ -2,8 +2,8 @@ use crate::{debug_expect, prelude::{ByteReader, ConfigType}, Mesh};
 
 mod header;
 mod metadata;
-mod connectivity;
-mod attribute;
+// mod connectivity;
+// mod attribute;
 mod entropy;
 
 pub fn decode<W>(reader: &mut W, cfg: Config) -> Result<Mesh, Err> 
@@ -24,8 +24,8 @@ pub fn decode<W>(reader: &mut W, cfg: Config) -> Result<Mesh, Err>
     debug_expect!("Metadata done, now starting connectivity.", reader);
 
     // Decode connectivity
-    let connectivity = connectivity::decode_connectivity_att(reader, header)
-        .map_err(|r| Err::ConnectivityError(r))?;
+    // let connectivity = connectivity::decode_connectivity_att(reader, header)
+    //     .map_err(|r| Err::ConnectivityError(r))?;
 
     debug_expect!("Connectivity done, now starting attributes.", reader);
 
@@ -47,13 +47,13 @@ pub fn decode<W>(reader: &mut W, cfg: Config) -> Result<Mesh, Err>
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    attribute_decoder_cfg: attribute::Config,
+    // attribute_decoder_cfg: attribute::Config,
 }
 
 impl ConfigType for Config {
     fn default() -> Self {
         Self {
-            attribute_decoder_cfg: attribute::Config::default(),
+            // attribute_decoder_cfg: attribute::Config::default(),
         }
     }
 }
@@ -62,10 +62,10 @@ impl ConfigType for Config {
 #[remain::sorted]
 #[derive(thiserror::Error, Debug)]
 pub enum Err {
-    #[error("Attribute encoding error")]
-    AttributeError(#[from] attribute::Err),
-    #[error("Connectivity encoding error")]
-    ConnectivityError(#[from] connectivity::Err),
+    // #[error("Attribute encoding error")]
+    // AttributeError(#[from] attribute::Err),
+    // #[error("Connectivity encoding error")]
+    // ConnectivityError(#[from] connectivity::Err),
     #[error("Header encoding error")]
     HeaderError(#[from] header::Err),
     #[error("Metadata encoding error")]

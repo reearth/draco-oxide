@@ -205,10 +205,9 @@ pub fn impl_ndvector_ops_for_dim(input: TokenStream) -> TokenStream {
         macro_rules! impl_vector {
             ($($t:ty);* ) => {
             $(
-                impl Vector for NdVector<#n, $t> 
+                impl Vector<#n> for NdVector<#n, $t> 
                 {
                     type Component = $t;
-                    const NUM_COMPONENTS: usize = #n;
                     fn zero() -> Self {
                         Self {
                             data: [<$t as DataValue>::zero(); #n],
@@ -222,28 +221,12 @@ pub fn impl_ndvector_ops_for_dim(input: TokenStream) -> TokenStream {
                         self.data.index_mut(index)
                     }
                     
-                    fn get_static<const INDEX: usize>(&self) -> &Self::Component {
-                        self.data.index(INDEX)
-                    }
-
-                    fn get_mut_static<const INDEX: usize>(&mut self) -> &mut Self::Component {
-                        self.data.index_mut(INDEX)
-                    }
-                    
                     unsafe fn get_unchecked(&self, index: usize) -> &Self::Component {
                         self.data.as_slice().get_unchecked(index)
                     }
                     
-                    unsafe fn get_unchecked_static<const INDEX: usize>(&self) -> &Self::Component {
-                        self.data.as_slice().get_unchecked(INDEX)
-                    }
-
                     unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut Self::Component {
                         self.data.as_mut_slice().get_unchecked_mut(index)
-                    }
-
-                    unsafe fn get_unchecked_mut_static<const INDEX: usize>(&mut self) -> &mut Self::Component {
-                        self.data.as_mut_slice().get_unchecked_mut(INDEX)
                     }
                 }
             )*
@@ -251,7 +234,7 @@ pub fn impl_ndvector_ops_for_dim(input: TokenStream) -> TokenStream {
         }
 
         impl_vector!(
-            u8; u16; u32; u64;
+            u8; u16; u32; u64; i8; i16; i32; i64;
             f32; f64
         );
     };

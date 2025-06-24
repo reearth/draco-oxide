@@ -1,3 +1,5 @@
+use crate::prelude::{NdVector, Vector};
+
 pub mod geom;
 pub(crate) mod debug;
 pub(crate) mod bit_coder;
@@ -140,4 +142,22 @@ pub(crate) fn splice_disjoint_indeces(set_of_indeces: Vec<Vec<std::ops::Range<us
 
     // ToDo: connect the adjacent ranges
     spliced
+}
+
+pub(crate) fn to_positive_i32(val: i32) -> i32 {
+    if val >= 0 {
+        val << 1
+    } else {
+        (-(val + 1) << 1) + 1
+    }
+}
+
+pub(crate) fn to_positive_i32_vec<const N: usize>(mut vec: NdVector<N, i32>) -> NdVector<N, i32> 
+    where 
+        NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    for i in 0..N {
+        *vec.get_mut(i) = to_positive_i32(*vec.get(i));
+    }
+    vec
 }

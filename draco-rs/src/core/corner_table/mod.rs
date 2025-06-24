@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use crate::core::shared::{CornerIdx, FaceIdx, VertexIdx};
 
+#[derive(Debug, Clone)]
 enum Faces<'faces> {
     Taken(Vec<[VertexIdx;3]>),
     Borrowed(&'faces [[VertexIdx;3]])
@@ -38,18 +39,19 @@ pub(crate) trait GenericCornerTable {
     }
     
     fn is_on_boundary(&self, v: VertexIdx) -> bool {
-        self.swing_left(self.left_most_corner(v)).is_some()
+        self.swing_left(self.left_most_corner(v)).is_none()
     }
     
     fn get_left_corner(&self, corner: CornerIdx) -> Option<CornerIdx> {
-        self.opposite(self.next(corner))
+        self.opposite(self.previous(corner))
     }
     
     fn get_right_corner(&self, corner: CornerIdx) -> Option<CornerIdx> {
-        self.opposite(self.previous(corner))
+        self.opposite(self.next(corner))
     }
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct CornerTable<'faces> {
     /// Records the opposite corner for each corner.
     /// If a corner does not have an opposite corner, the value is 'usize::MAX'.
@@ -68,8 +70,7 @@ pub(crate) struct CornerTable<'faces> {
     left_most_corners: Vec<usize>,
 
     /// corner to vertex map.
-    /// This is only used for corners mapping non-manifold vertices
-    corner_to_vertex: BTreeMap<CornerIdx, VertexIdx>,
+    corner_to_vertex: Vec<VertexIdx>,
 
     /// Stores the parents of non-manifold vertices.
     non_manifold_vertex_parents: Vec<VertexIdx>,
@@ -83,10 +84,15 @@ impl<'faces> CornerTable<'faces> {
             num_corners: faces.len() * 3,
             num_vertices: 0, // will be computed later
             left_most_corners: Vec::new(), // will be computed later
-            corner_to_vertex: BTreeMap::new(), // will be computed later
+            corner_to_vertex: Vec::new(), // will be computed later
             non_manifold_vertex_parents: Vec::new(), // will be computed later
         };
 
+        for f in 0..faces.len() {
+            for i in 0..3 {
+                out.corner_to_vertex.push(faces[f][i]);
+            }
+        }
         out.compute_table();
         out.compute_left_most_corners();
 
@@ -97,12 +103,18 @@ impl<'faces> CornerTable<'faces> {
         let mut out  = Self {
             opposite_corners: Vec::new(), // will be computed later
             num_corners: faces.len() * 3,
+            corner_to_vertex: Vec::new(), // will be computed later
             faces: Faces::Taken(faces),
             num_vertices: 0, // will be computed later
             left_most_corners: Vec::new(), // will be computed later
-            corner_to_vertex: BTreeMap::new(), // will be computed later
             non_manifold_vertex_parents: Vec::new(), // will be computed later
         };
+
+        for f in 0..out.get_faces().len() {
+            for i in 0..3 {
+                out.corner_to_vertex.push(out.get_faces()[f][i]);
+            }
+        }
 
         out.compute_table();
         out.compute_left_most_corners();
@@ -113,6 +125,9 @@ impl<'faces> CornerTable<'faces> {
     fn compute_table(&mut self) {
         self.opposite_corners.resize(self.num_corners(), usize::MAX);
         let mut num_corners_on_vertices = Vec::with_capacity(self.num_corners());
+
+        // Compute the number of corners on each vertex.
+        // The vertices are sorted by their earliest corner.
         for c in 0..self.num_corners() {
             let v1 = self.vertex_idx(c);
             if v1 >= num_corners_on_vertices.len() {
@@ -122,13 +137,14 @@ impl<'faces> CornerTable<'faces> {
         }
 
         // Array for storing half edges. (sink vertex, edge corner)
-        let mut vertex_edges = vec![ (usize::MAX, usize::MAX); self.num_corners() ];
+        let mut vertex_edges: Vec<(VertexIdx, CornerIdx)> = vec![ (usize::MAX, usize::MAX); self.num_corners() ];
 
         let mut offset = 0;
+        // Compute the offset of the the earliest corner for each vertex.
         let vertex_offset = (0..num_corners_on_vertices.len()).map(|i| {
-                let tmp = offset;
+                let out = offset;
                 offset += num_corners_on_vertices[i];
-                tmp
+                out
             })
             .collect::<Vec<_>>();
 
@@ -137,8 +153,8 @@ impl<'faces> CornerTable<'faces> {
             let source_v = self.vertex_idx(self.next(c));
             let sink_v = self.vertex_idx(self.previous(c));
 
-            let face_index = self.face_idx_containing(c);
-            if c == Self::first_corner(face_index) {
+            let f_idx = self.face_idx_containing(c);
+            if c == Self::first_corner(f_idx) {
                 let v0 = self.vertex_idx(c);
                 if v0 == source_v || v0 == sink_v || source_v == sink_v {
                     unimplemented!("Degenerated face found in corner table computation.");
@@ -154,8 +170,10 @@ impl<'faces> CornerTable<'faces> {
                     break;
                 }
                 if other_v == source_v {
+                    // opposite corner found.
+                    // We need to remove the half edge from the vertex_edges.
                     if tip_v == self.vertex_idx(vertex_edges[offset].1) {
-                    continue; 
+                        continue; 
                     }
                     opposite_c = vertex_edges[offset].1;
                     for _ in i+1..num_corners_on_vert {
@@ -172,18 +190,17 @@ impl<'faces> CornerTable<'faces> {
             }
             if opposite_c == usize::MAX {
                 let num_corners_on_source_vert = num_corners_on_vertices[source_v];
-                offset = vertex_offset[source_v];
-                for _ in 0..num_corners_on_source_vert {
-                    if vertex_edges[offset].0 == usize::MAX {
-                        vertex_edges[offset].0 = sink_v;
-                        vertex_edges[offset].1 = c;
+                let first_c = vertex_offset[source_v];
+                for corner in first_c..num_corners_on_source_vert+first_c {
+                    if vertex_edges[corner].0 == usize::MAX {
+                        vertex_edges[corner].0 = sink_v;
+                        vertex_edges[corner].1 = c;
                         break;
                     }
-                    offset += 1;
                 }
             } else {
-            self.opposite_corners[c] = opposite_c;
-            self.opposite_corners[opposite_c] = c;
+                self.opposite_corners[c] = opposite_c;
+                self.opposite_corners[opposite_c] = c;
             }
         }
         self.num_vertices = num_corners_on_vertices.len();
@@ -195,15 +212,15 @@ impl<'faces> CornerTable<'faces> {
         let mut visited_corners = vec![false; self.num_corners()];
 
         for f_idx in 0..self.get_faces().len() {
-
             for i in 0..3 {
-                let c = f_idx + i;
+                let c = 3*f_idx + i;
                 if visited_corners[c] { continue; }
 
-                let mut v = self.vertex_idx(c);
+                let mut v = self.corner_to_vertex[c];
                 let mut is_non_manifold_vertex = false;
                 if visited_vertices[v] {
-                    // Coming here means the vertex a neighborhood that is not connected when the vertex is removed.
+                    // Coming here means the vertex has a neighborhood that is not connected when the vertex is removed,
+                    // i.e. it is violating the manifold condition.
                     // We need to create a new vertex here to avoid this case.
                     self.left_most_corners.push(usize::MAX);
                     self.non_manifold_vertex_parents.push(v);
@@ -213,9 +230,15 @@ impl<'faces> CornerTable<'faces> {
                     is_non_manifold_vertex = true;
                 }
                 visited_vertices[v] = true;
+                visited_corners[c] = true;
+                self.left_most_corners[v] = c;
+                if is_non_manifold_vertex {
+                    // Update vertex index in the corresponding face.
+                    self.corner_to_vertex.insert(c, v);
+                }
 
                 // Swing all the way to the left
-                let mut maybe_act_c= Some(c);
+                let mut maybe_act_c= self.swing_left(c);
                 while let Some(act_c) = maybe_act_c {
                     visited_corners[act_c] = true;
                     self.left_most_corners[v] = act_c;
@@ -231,8 +254,8 @@ impl<'faces> CornerTable<'faces> {
                 }
                 
                 if maybe_act_c.is_none() {
-                    // it we have reached open boundary, we need to swing right to mark all corners
-                    maybe_act_c = self.swing_right(c);
+                    // if we have reached open boundary, we need to swing right to mark all corners
+                    maybe_act_c = Some(c);
                     while let Some(act_c) = maybe_act_c {
                         visited_corners[act_c] = true;
                         if is_non_manifold_vertex {
@@ -273,14 +296,8 @@ impl<'faces> CornerTable<'faces> {
     }
 
     #[inline]
-    pub(crate) fn set_opposite_corners(&mut self, c1: usize, c2: usize) {
-        self.opposite_corners[c1] = c2;
-        self.opposite_corners[c2] = c1;
-    }
-
-    #[inline]
     pub(crate) fn corner_to_vert(&self, corner: usize) -> VertexIdx {
-        if let Some(v) = self.corner_to_vertex.get(&corner) {
+        if let Some(v) = self.corner_to_vertex.get(corner) {
             return *v
         };
 
@@ -319,7 +336,7 @@ impl<'mesh> GenericCornerTable for CornerTable<'mesh> {
 
     #[inline]
     fn vertex_idx(&self, corner: usize) -> VertexIdx {
-        self.get_faces()[corner / 3][corner % 3]
+        self.corner_to_vertex[corner]
     }
 
     #[inline]
@@ -334,18 +351,18 @@ impl<'mesh> GenericCornerTable for CornerTable<'mesh> {
     #[inline]
     fn previous(&self, corner: usize) -> usize {
         if corner%3 == 0 {
-            corner-1
-        } else {
             corner+2
+        } else {
+            corner-1
         }
     }
 
     #[inline]
     fn next(&self, corner: usize) -> usize {
         if corner%3 == 2 {
-            corner+1
-        } else {
             corner-2
+        } else {
+            corner+1
         }
     }
 
@@ -353,4 +370,80 @@ impl<'mesh> GenericCornerTable for CornerTable<'mesh> {
     fn left_most_corner(&self, vertex: usize) -> usize {
         self.left_most_corners[vertex]
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_corner_table() {
+        let faces = vec![[0, 1, 2], [2, 1, 3]];
+        let corner_table = CornerTable::new_with_taken_faces(faces);
+        assert_eq!(corner_table.num_faces(), 2);
+        assert_eq!(corner_table.num_corners(), 6);
+        assert_eq!(corner_table.num_vertices(), 4);
+        assert_eq!(corner_table.vertex_idx(0), 0);
+        assert_eq!(corner_table.vertex_idx(1), 1);
+        assert_eq!(corner_table.vertex_idx(2), 2);
+        assert_eq!(corner_table.vertex_idx(3), 2);
+        assert_eq!(corner_table.vertex_idx(4), 1);
+        assert_eq!(corner_table.vertex_idx(5), 3);
+        assert_eq!(corner_table.face_idx_containing(0), 0);
+        assert_eq!(corner_table.face_idx_containing(1), 0);
+        assert_eq!(corner_table.face_idx_containing(2), 0);
+        assert_eq!(corner_table.face_idx_containing(3), 1);
+        assert_eq!(corner_table.face_idx_containing(4), 1);
+        assert_eq!(corner_table.face_idx_containing(5), 1);
+        assert_eq!(corner_table.opposite(0), Some(5));
+        assert_eq!(corner_table.opposite(1), None);
+        assert_eq!(corner_table.opposite(2), None);
+        assert_eq!(corner_table.opposite(3), None);
+        assert_eq!(corner_table.opposite(4), None);
+        assert_eq!(corner_table.opposite(5), Some(0));
+        assert_eq!(corner_table.previous(0), 2);
+        assert_eq!(corner_table.previous(1), 0);
+        assert_eq!(corner_table.previous(2), 1);
+        assert_eq!(corner_table.next(0), 1);
+        assert_eq!(corner_table.next(1), 2);
+        assert_eq!(corner_table.next(2), 0);
+    }
+
+    #[test]
+    fn test_corner_table_disk() {
+        let faces = vec![
+            [0, 1, 2], [0, 2, 3], [0, 3, 4], 
+            [0, 4, 5],[0, 5, 6], [0, 6, 1]
+        ];
+
+        let corner_table = CornerTable::new_with_taken_faces(faces);
+        assert_eq!(corner_table.num_faces(), 6);
+        assert_eq!(corner_table.num_corners(), 18);
+        assert_eq!(corner_table.num_vertices(), 7);
+        assert_eq!(corner_table.opposite(1), Some(5));
+        assert_eq!(corner_table.opposite(4), Some(8));
+        assert_eq!(corner_table.opposite(2), Some(16));
+    }
+
+    #[test]
+    fn test_corner_table_sphere() {
+        // read the sphere.obj file and create a corner table
+        let sphere = tobj::load_obj(
+            "tests/data/sphere.obj",
+            &tobj::GPU_LOAD_OPTIONS
+        ).unwrap();
+        let sphere = &sphere.0[0];
+        let mesh = &sphere.mesh;
+        let faces = mesh.indices.chunks(3)
+            .map(|x| [x[0] as usize, x[1] as usize, x[2] as usize])
+            .collect::<Vec<_>>();
+        let corner_table = CornerTable::new_with_taken_faces(faces);
+
+        for c in 0..corner_table.num_corners() {
+            assert!(corner_table.opposite(c).is_some());
+        }
+    }
+
+    // ToDo: Add tests for non-manifold vertices cases.
 }

@@ -19,6 +19,9 @@ serde_json = "1.0"
 thiserror = "*"
 tobj = "4.0.3"
 faer = "0.22.6"
+gltf = "1.4"
 
 [features]
+default = []
 evaluation = []
+debug_format = []

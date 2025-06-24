@@ -88,10 +88,10 @@ impl SymbolEncoder for CrLight {
     fn encode_symbol(symbol: Symbol) -> Result<(u8, u64), Err> {
         match symbol {
             Symbol::C => Ok((1, 0)),
-            Symbol::R => Ok((2, 0b10)),
-            Symbol::L => Ok((4, 0b1100)),
-            Symbol::E => Ok((4, 0b1101)),
-            Symbol::S => Ok((4, 0b1110)),
+            Symbol::S => Ok((3, 0b1)),
+            Symbol::L => Ok((3, 0b11)),
+            Symbol::R => Ok((3, 0b101)),
+            Symbol::E => Ok((3, 0b111)),
         }
     }
 

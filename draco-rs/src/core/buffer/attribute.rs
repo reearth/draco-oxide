@@ -32,9 +32,9 @@ impl AttributeBuffer {
     }
 
 
-    pub(crate) fn get<Data>(&self, idx: usize) -> Data 
+    pub(crate) fn get<Data, const N: usize>(&self, idx: usize) -> Data 
         where 
-            Data: Vector,
+            Data: Vector<N>,
             Data::Component: DataValue
     {
         assert!(
@@ -44,16 +44,16 @@ impl AttributeBuffer {
         );
         assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
         // just checked the condition
-        unsafe{ self.get_unchecked::<Data>(idx) }
+        unsafe{ self.get_unchecked::<Data, N>(idx) }
     }
 
     /// # Safety:
     /// Two checks are ignored in this function:
     /// (1) 'std::mem::size_of::<Data>()==component.size() * num_components', and
     /// (2) idx < self.len
-    pub(crate) unsafe fn get_unchecked<Data>(&self, idx: usize) -> Data 
+    pub(crate) unsafe fn get_unchecked<Data, const N: usize>(&self, idx: usize) -> Data 
         where 
-            Data: Vector,
+            Data: Vector<N>,
             Data::Component: DataValue
     {
         debug_assert!(
@@ -72,14 +72,18 @@ impl AttributeBuffer {
         self.component_type
     }
 
+    pub(crate) fn set_component_type(&mut self, component_type: ComponentDataType) {
+        self.component_type = component_type;
+    }
+
     pub(crate) fn get_num_components(&self) -> usize {
         self.num_components
     }
 
     #[allow(unused)]
-    pub(crate) fn push<Data>(&mut self, data: Data) 
+    pub(crate) fn push<Data, const N: usize>(&mut self, data: Data) 
         where 
-            Data: Vector,
+            Data: Vector<N>,
             Data::Component: DataValue
     {
         assert_eq!(
@@ -88,9 +92,9 @@ impl AttributeBuffer {
             Data::Component::get_dyn(), self.component_type
         );
         assert!(
-            Data::NUM_COMPONENTS == self.num_components,
+            N == self.num_components,
             "Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
-            Data::NUM_COMPONENTS, self.num_components
+            N, self.num_components
         );
         unsafe {
             self.push_type_unchecked(data);
@@ -100,9 +104,9 @@ impl AttributeBuffer {
     /// pushes a value into the buffer without checking the type and the number of components.
     /// # Safety
     /// This function is unsafe because it does not check the type and the number of components of the data.
-    pub(crate) unsafe fn push_type_unchecked<Data>(&mut self, data: Data) 
+    pub(crate) unsafe fn push_type_unchecked<Data, const N: usize>(&mut self, data: Data) 
         where 
-            Data: Vector,
+            Data: Vector<N>,
             Data::Component: DataValue
     {
         debug_assert_eq!(
@@ -111,9 +115,9 @@ impl AttributeBuffer {
             Data::Component::get_dyn(), self.component_type
         );
         debug_assert!(
-            Data::NUM_COMPONENTS == self.num_components,
+            N == self.num_components,
             "Unsafe Condition Failed: Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
-            Data::NUM_COMPONENTS, self.num_components
+            N, self.num_components
         );
     
 
@@ -174,8 +178,8 @@ impl AttributeBuffer {
     }
 
     #[allow(unused)]
-    pub unsafe fn into_vec<Data>(self) -> Vec<Data> 
-        where Data: Vector,
+    pub unsafe fn into_vec<Data, const N: usize>(self) -> Vec<Data> 
+        where Data: Vector<N>,
     {
         assert_eq!(
             Data::Component::get_dyn(), self.component_type, 
@@ -183,16 +187,16 @@ impl AttributeBuffer {
             Data::Component::get_dyn(), self.component_type
         );
         assert!(
-            Data::NUM_COMPONENTS == self.num_components,
+            N == self.num_components,
             "Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
-            Data::NUM_COMPONENTS, self.num_components
+            N, self.num_components
         );
 
         self.into_vec_unchecked()
     }
 
-    pub unsafe fn into_vec_unchecked<Data>(self) -> Vec<Data> 
-        where Data: Vector,
+    pub unsafe fn into_vec_unchecked<Data, const N: usize>(self) -> Vec<Data> 
+        where Data: Vector<N>,
     {
         debug_assert_eq!(
             Data::Component::get_dyn(), self.component_type, 
@@ -200,9 +204,9 @@ impl AttributeBuffer {
             Data::Component::get_dyn(), self.component_type
         );
         debug_assert!(
-            Data::NUM_COMPONENTS == self.num_components,
+            N == self.num_components,
             "Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
-            Data::NUM_COMPONENTS, self.num_components
+            N, self.num_components
         );
 
         unsafe {
@@ -261,6 +265,28 @@ impl AttributeBuffer {
         let ptr_j = unsafe { self.as_ptr().add(j * elem_size) };
         unsafe {
             std::ptr::copy_nonoverlapping(ptr_i, ptr_j, elem_size);
+        }
+    }
+
+    pub fn from_vec<Data, const N: usize>(data: Vec<Data>) -> Self 
+        where 
+            Data: Vector<N>,
+            Data::Component: DataValue
+    {
+        let component_type = Data::Component::get_dyn();
+        let num_components = N;
+        let len = data.len();
+        let buffer = RawBuffer::from_vec(data);
+        let last = unsafe {
+            buffer.as_ptr().add(len * mem::size_of::<Data>())
+        };
+
+        Self {
+            data: buffer,
+            len,
+            last,
+            component_type,
+            num_components,
         }
     }
 }
@@ -327,63 +353,12 @@ impl Serialize for AttributeBuffer {
                     _ => panic!("Unsupported number of components: {}", self.num_components),
                 }
             },
+            _ => unimplemented!()
         }?;
         s.end()
     }
 }
 
-
-impl<Data> From<Vec<Data>> for AttributeBuffer 
-    where 
-        Data: Vector,
-        Data::Component: DataValue
-{
-    fn from(data: Vec<Data>) -> Self {
-        let component_type = Data::Component::get_dyn();
-        let num_components = Data::NUM_COMPONENTS;
-        let len = data.len();
-        let buffer = RawBuffer::from_vec(data);
-        let last = unsafe {
-            buffer.as_ptr().add(len * mem::size_of::<Data>())
-        };
-
-        Self {
-            data: buffer,
-            len,
-            last,
-            component_type,
-            num_components,
-        }
-    }
-}
-
-impl From<Vec<[usize; 3]>> for AttributeBuffer {
-    fn from(data: Vec<[usize;3]>) -> Self {
-        // The size of usize is platform dependent, so we need to check it at runtime.
-        let component_type = match mem::size_of::<usize>() {
-            2 => ComponentDataType::U16,
-            4 => ComponentDataType::U32,
-            8 => ComponentDataType::U64,
-            _ => panic!("Unsupported size for usize: {}", mem::size_of::<usize>()),
-            
-        };
-
-        let num_components = 3;
-        let len = data.len();
-        let buffer = RawBuffer::from_vec(data);
-        let last = unsafe {
-            buffer.as_ptr().add(len * mem::size_of::<[usize; 3]>())
-        };
-
-        Self {
-            data: buffer,
-            len,
-            last,
-            component_type,
-            num_components,
-        }
-    }
-}
 
 impl Clone for AttributeBuffer {
     fn clone(&self) -> Self {
@@ -463,6 +438,42 @@ impl std::fmt::Debug for AttributeBuffer {
                     _ => panic!("Unsupported number of components: {}", self.num_components),
                 }
             },
+            ComponentDataType::I8 => {
+                match self.num_components {
+                    1 => format!("{:?}", unsafe{ self.as_slice::<[i8;1]>() }),
+                    2 => format!("{:?}", unsafe{ self.as_slice::<[i8;2]>() }),
+                    3 => format!("{:?}", unsafe{ self.as_slice::<[i8;3]>() }),
+                    4 => format!("{:?}", unsafe{ self.as_slice::<[i8;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::I16 => {
+                match self.num_components {
+                    1 => format!("{:?}", unsafe{ self.as_slice::<[i16;1]>() }),
+                    2 => format!("{:?}", unsafe{ self.as_slice::<[i16;2]>() }),
+                    3 => format!("{:?}", unsafe{ self.as_slice::<[i16;3]>() }),
+                    4 => format!("{:?}", unsafe{ self.as_slice::<[i16;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::I32 => {
+                match self.num_components {
+                    1 => format!("{:?}", unsafe{ self.as_slice::<[i32;1]>() }),
+                    2 => format!("{:?}", unsafe{ self.as_slice::<[i32;2]>() }),
+                    3 => format!("{:?}", unsafe{ self.as_slice::<[i32;3]>() }),
+                    4 => format!("{:?}", unsafe{ self.as_slice::<[i32;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
+            ComponentDataType::I64 => {
+                match self.num_components {
+                    1 => format!("{:?}", unsafe{ self.as_slice::<[i64;1]>() }),
+                    2 => format!("{:?}", unsafe{ self.as_slice::<[i64;2]>() }),
+                    3 => format!("{:?}", unsafe{ self.as_slice::<[i64;3]>() }),
+                    4 => format!("{:?}", unsafe{ self.as_slice::<[i64;4]>() }),
+                    _ => panic!("Unsupported number of components: {}", self.num_components),
+                }
+            },
         };
         f.debug_struct("AttributeBuffer")
             .field("len", &self.len)
@@ -528,9 +539,9 @@ impl MaybeInitAttributeBuffer {
 	/// Safety: Callers must know exactly which part of resulting slice is valid. \
 	/// Dereferencing the uninitialized part of the slice is undefined behavior.
 	/// Moreover, 'num_components * component_type.size()' must equal 'std::mem::size_of::<Data>()'.
-    pub fn as_slice_unchecked<Data>(&self) -> &[Data] 
+    pub fn as_slice_unchecked<Data, const N: usize>(&self) -> &[Data] 
         where 
-            Data: Vector,
+            Data: Vector<N>,
             Data::Component: DataValue
     {
         debug_assert_eq!(
@@ -550,9 +561,9 @@ impl MaybeInitAttributeBuffer {
 
     #[allow(unused)]
     #[inline]
-    pub fn write<Data>(&mut self, idx: usize, data: Data) 
+    pub fn write<Data, const N: usize>(&mut self, idx: usize, data: Data) 
         where 
-            Data: Vector,
+            Data: Vector<N>,
             Data::Component: DataValue
     {
         assert_eq!(
@@ -561,9 +572,9 @@ impl MaybeInitAttributeBuffer {
             Data::Component::get_dyn(), self.component_type
         );
         assert!(
-            Data::NUM_COMPONENTS == self.num_components,
+            N == self.num_components,
             "Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
-            Data::NUM_COMPONENTS, self.num_components
+            N, self.num_components
         );
         assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
 
@@ -573,9 +584,9 @@ impl MaybeInitAttributeBuffer {
     /// Safety: The caller must ensure that the type of the data matches the type of the buffer.
     /// Furthermore, the index must be within the bounds of the buffer.
     #[inline]
-    pub fn write_type_unchecked<Data>(&mut self, idx: usize, data: Data) 
+    pub fn write_type_unchecked<Data, const N: usize>(&mut self, idx: usize, data: Data) 
         where 
-            Data: Vector,
+            Data: Vector<N>,
             Data::Component: DataValue
     {
         debug_assert_eq!(
@@ -584,9 +595,9 @@ impl MaybeInitAttributeBuffer {
             Data::Component::get_dyn(), self.component_type
         );
         debug_assert!(
-            Data::NUM_COMPONENTS == self.num_components,
+            N == self.num_components,
             "Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
-            Data::NUM_COMPONENTS, self.num_components
+            N, self.num_components
         );
 
         debug_assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
@@ -651,7 +662,7 @@ mod tests {
             NdVector::from([7.0f32, 8.0, 9.0])
         ];
 
-        let att = AttributeBuffer::from(data);
+        let att = AttributeBuffer::from_vec(data);
 
         let att_clone = att.clone();
         assert_eq!(att, att_clone, "The clone is not equal to the original");
@@ -670,7 +681,7 @@ mod tests {
         
         let att = AttributeBuffer::from(buffer);
         // check if the data is correct
-        let answer = AttributeBuffer::from(data);
+        let answer = AttributeBuffer::from_vec(data);
         assert_eq!(att, answer, "The attribute buffer is not equal to the original");
     }
 
@@ -682,7 +693,7 @@ mod tests {
             NdVector::from([4f32, 5.0, 6.0]), 
             NdVector::from([7f32, 8.0, 9.0])
         ];
-        let mut att = AttributeBuffer::from(data);
+        let mut att = AttributeBuffer::from_vec(data);
         let permutation = vec![2, 1, 0];
         unsafe {
             att.permute_unchecked(&permutation);
@@ -692,7 +703,7 @@ mod tests {
             NdVector::from([4f32, 5.0, 6.0]), 
             NdVector::from([1f32, 2.0, 3.0])
         ];
-        let expected_att = AttributeBuffer::from(expected_data);
+        let expected_att = AttributeBuffer::from_vec(expected_data);
         assert_eq!(att, expected_att);
     }
 }

@@ -66,7 +66,7 @@ macro_rules! impl_to_usize_float {
     };
 }
 
-impl_to_usize_float!(u8, u16, u32, u64);
+impl_to_usize_float!(u8, u16, u32, u64, i8, i16, i32, i64);
 
 pub trait Abs {
     fn abs(self) -> Self;
@@ -93,7 +93,7 @@ macro_rules! impl_abs {
 }
 
 impl_abs!(negatable: f32, f64);
-impl_abs!(non_negatable: u8, u16, u32, u64);
+impl_abs!(non_negatable: u8, u16, u32, u64, i8, i16, i32, i64);
 
 pub trait Acos {
     fn acos(self) -> Self;
@@ -120,7 +120,7 @@ macro_rules! impl_acos {
     };
 }
 impl_acos!(float: f32, f64);
-impl_acos!(non_float: u8, u16, u32, u64);
+impl_acos!(non_float: u8, u16, u32, u64, i8, i16, i32, i64);
 
 
 pub trait Max {
@@ -137,7 +137,7 @@ macro_rules! impl_max {
     };
 }
 impl_max!(f32, f64);
-impl_max!(u8, u16, u32, u64);
+impl_max!(u8, u16, u32, u64, i8, i16, i32, i64);
 
 
 pub trait DataValue: 
@@ -153,6 +153,8 @@ pub trait DataValue:
     fn one() -> Self;
     fn from_u64(data: u64) -> Self;
     fn to_u64(self) -> u64;
+    fn to_i64(self) -> i64;
+    fn from_i64(data: i64) -> Self;
     fn from_f64(data: f64) -> Self;
     fn to_f64(self) -> f64;
 }
@@ -178,6 +180,14 @@ macro_rules! impl_data_value {
 
                 fn to_u64(self) -> u64 {
                     self as u64
+                }
+
+                fn to_i64(self) -> i64 {
+                    self as i64
+                }
+
+                fn from_i64(data: i64) -> Self {
+                    data as $t
                 }
 
                 fn from_f64(data: f64) -> Self {
@@ -235,6 +245,14 @@ macro_rules! impl_data_value {
                     self as u64
                 }
 
+                fn to_i64(self) -> i64 {
+                    self as i64
+                }
+
+                fn from_i64(data: i64) -> Self {
+                    data as $t
+                }
+
                 fn from_f64(data: f64) -> Self {
                     data as $t
                 }
@@ -274,7 +292,11 @@ impl_data_value!(int:
     (u8, ComponentDataType::U8),
     (u16, ComponentDataType::U16),
     (u32, ComponentDataType::U32),
-    (u64, ComponentDataType::U64)
+    (u64, ComponentDataType::U64),
+    (i8, ComponentDataType::I8),
+    (i16, ComponentDataType::I16),
+    (i32, ComponentDataType::I32),
+    (i64, ComponentDataType::I64)
 );
 
 impl_data_value!(float: 
@@ -341,7 +363,7 @@ use crate::shared::attribute::Portable;
 impl_ndvector_ops!();
 
 
-pub trait Vector:
+pub trait Vector<const N: usize>:
     Clone + Copy + fmt::Debug + PartialEq
     + Into<serde_json::Value> 
     + ops::Add<Output=Self> + ops::Sub<Output=Self> + ops::Mul<Self::Component, Output=Self> + ops::Div<Self::Component, Output=Self> 
@@ -350,16 +372,11 @@ pub trait Vector:
     + Dot<Product=Self::Component> + Cross
 {
 	type Component: DataValue;
-	const NUM_COMPONENTS: usize;
     fn zero() -> Self;
 	fn get(&self, index: usize) -> &Self::Component;
 	fn get_mut(&mut self, index: usize) -> &mut Self::Component;
-	fn get_static<const INDEX: usize>(&self) -> &Self::Component;
-	fn get_mut_static<const INDEX: usize>(&mut self) -> &mut Self::Component;
 	unsafe fn get_unchecked(&self, index: usize) -> &Self::Component;
-	unsafe fn get_unchecked_static<const INDEX: usize>(&self) -> &Self::Component;
-	unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut Self::Component;
-	unsafe fn get_unchecked_mut_static<const INDEX: usize>(&mut self) -> &mut Self::Component;
+    unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut Self::Component;
 }
 
 

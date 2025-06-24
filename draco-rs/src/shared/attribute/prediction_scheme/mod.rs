@@ -3,26 +3,23 @@ pub mod mesh_parallelogram_prediction;
 pub mod mesh_multi_parallelogram_prediction;
 pub mod derivative_prediction;
 
-use crate::{core::{attribute::Attribute, shared::{ConfigType, Vector}}, prelude::ByteReader};
+use crate::{core::{attribute::Attribute, corner_table::GenericCornerTable, shared::{ConfigType, Vector, VertexIdx}}, prelude::{ByteReader, ByteWriter, NdVector}};
 
 /// PredictionScheme traits are not generic and the structs implementing the 
 /// trait are generic. This is so because some of the structs need to store
 /// the previous values in order to compute the current value.
-pub trait PredictionSchemeImpl<'a>
+pub trait PredictionSchemeImpl<'parents, C, const N: usize>
+	where C: GenericCornerTable,
+	      NdVector<N,i32>: Vector<N, Component = i32>
 {
 	/// Id of the prediction method. This value is encoded to buffer in order
 	/// for the decoder to identify the prediction method.
 	const ID: u32 = 0;
 	
-	/// The type of the data that the prediction scheme will predict.
-	/// The original data and the predicted data are of the same type.
-	type Data;
-	
-
 	type AdditionalDataForMetadata;
-	
+
 	/// Creates the prediction.
-	fn new(parents: &[&'a Attribute]) -> Self;
+	fn new(parents: &[&'parents Attribute], conn_att: &'parents C ) -> Self;
 	
 	/// Prediction computes the metadata beforehand (unlike transform or portabilization)
 	fn compute_metadata(&mut self, additional_data: Self::AdditionalDataForMetadata);
@@ -33,12 +30,20 @@ pub trait PredictionSchemeImpl<'a>
 	/// predicts the attribute from the given information. 
 	fn predict (
 		&self,
-		// Values that are encoded/decoded before the call to this function.
-		values_encoded_up_till_now: &[Self::Data],
-	) -> Self::Data;
+		// Vertex/corner index to predict.
+		i: usize,
+		// Vertices/corners processed before the call to this function.
+		// They must be sorted in the order they were processed.
+		vertices_or_corners_processed_up_till_now: &[VertexIdx],
+		// The attribute that is being predicted.
+		// When used by the encoder, this is the complete attribute.
+		// When used by the decoder, this is the data that is being decoded, and thus it is not complete.
+		// Hence, expecially in the decoder, the element access can only be done by the index that is
+		// an element of `vertices_or_corners_processed_up_till_now`.
+		attribute: &[NdVector<N,i32>],
+	) -> NdVector<N,i32>;
 }
 
-#[remain::sorted]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PredictionSchemeType
 {
@@ -46,18 +51,28 @@ pub enum PredictionSchemeType
 	DerivativePrediction,
 	MeshMultiParallelogramPrediction,
 	MeshParallelogramPrediction,
-	NoPrediction
+	NoPrediction,
+	Invalid, 
 }
 
 impl PredictionSchemeType {
 	pub(crate) fn get_id(&self) -> u8 {
 		match self {
 			PredictionSchemeType::DeltaPrediction => 0,
-			PredictionSchemeType::DerivativePrediction => 1,
+			PredictionSchemeType::MeshParallelogramPrediction => 1,
 			PredictionSchemeType::MeshMultiParallelogramPrediction => 2,
-			PredictionSchemeType::MeshParallelogramPrediction => 3,
-			PredictionSchemeType::NoPrediction => 4,
+			PredictionSchemeType::DerivativePrediction => 5,
+
+			PredictionSchemeType::NoPrediction => 0xFE, // -2 in i8
+			PredictionSchemeType::Invalid => 0xFF, // -1 in i8
 		}
+	}
+
+	pub(crate) fn write_to<W>(self, writer: &mut W) 
+		where W: ByteWriter
+	{
+		let id = self.get_id();
+		writer.write_u8(id);
 	}
 
 	pub(crate) fn read_from<R>(reader: &mut R) -> Result<Self, usize> 
@@ -66,10 +81,12 @@ impl PredictionSchemeType {
 		let id = reader.read_u8().unwrap() as usize; // ToDo: handle error.
 		let out = match id {
 			0 => PredictionSchemeType::DeltaPrediction,
-			1 => PredictionSchemeType::DerivativePrediction,
+			1 => PredictionSchemeType::MeshParallelogramPrediction,
 			2 => PredictionSchemeType::MeshMultiParallelogramPrediction,
-			3 => PredictionSchemeType::MeshParallelogramPrediction,
-			4 => PredictionSchemeType::NoPrediction,
+			5 => PredictionSchemeType::DerivativePrediction,
+			0xFE => PredictionSchemeType::NoPrediction, // -2 in i8
+			0xFF => PredictionSchemeType::Invalid, // -1 in i8
+			// If the id is not recognized, return an error.
 			_ => return Err(id as usize),
 		};
 		Ok(out)
@@ -82,54 +99,65 @@ impl PredictionSchemeType {
 			PredictionSchemeType::MeshMultiParallelogramPrediction => "MeshMultiParallelogramPrediction".to_string(),
 			PredictionSchemeType::MeshParallelogramPrediction => "MeshParallelogramPrediction".to_string(),
 			PredictionSchemeType::NoPrediction => "NoPrediction".to_string(),
+			PredictionSchemeType::Invalid => "Invalid".to_string(),
 		}
 	}
 }
 
 #[remain::sorted]
-pub enum PredictionScheme<'parents, Data>
-	where Data: Vector
+pub(crate) enum PredictionScheme<'parents, C, const N: usize>
 {
-	DeltaPrediction(delta_prediction::DeltaPrediction<'parents, Data>),
-	DerivativePrediction(derivative_prediction::DerivativePredictionForTextureCoordinates<'parents, Data>),
-	MeshMultiParallelogramPrediction(mesh_multi_parallelogram_prediction::MeshMultiParallelogramPrediction<'parents, Data>),
-	MeshParallelogramPrediction(mesh_parallelogram_prediction::MeshParallelogramPrediction<'parents, Data>),
-	NoPrediction(NoPrediction<Data>),
+	DeltaPrediction(delta_prediction::DeltaPrediction<'parents, C, N>),
+	DerivativePrediction(derivative_prediction::DerivativePredictionForTextureCoordinates<'parents, C, N>),
+	MeshMultiParallelogramPrediction(mesh_multi_parallelogram_prediction::MeshMultiParallelogramPrediction<'parents, C, N>),
+	MeshParallelogramPrediction(mesh_parallelogram_prediction::MeshParallelogramPrediction<'parents, C, N>),
+	NoPrediction(NoPrediction),
 }
 
-impl<'parents, Data> PredictionScheme<'parents, Data>
-	where Data: Vector
+impl<'parents, C, const N: usize> PredictionScheme<'parents, C, N>
+	where 
+		C: GenericCornerTable,
+		NdVector<N,i32>: Vector<N, Component = i32>,
 {
-	pub(crate) fn new(ty: PredictionSchemeType, parents: &[&'parents Attribute]) -> Self {
+	pub(crate) fn new(ty: PredictionSchemeType, parents: &[&'parents Attribute], corner_table: &'parents C) -> Self {
 		match ty {
 			PredictionSchemeType::DeltaPrediction => {
-				let prediction = delta_prediction::DeltaPrediction::new(parents);
+				let prediction = delta_prediction::DeltaPrediction::new(parents, corner_table);
 				PredictionScheme::DeltaPrediction(prediction)
 			}
 			PredictionSchemeType::DerivativePrediction => {
-				let prediction = derivative_prediction::DerivativePredictionForTextureCoordinates::new(parents);
+				let prediction = derivative_prediction::DerivativePredictionForTextureCoordinates::new(
+					parents, corner_table
+				);
 				PredictionScheme::DerivativePrediction(prediction)
 			}
 			PredictionSchemeType::MeshMultiParallelogramPrediction => {
-				let prediction = mesh_multi_parallelogram_prediction::MeshMultiParallelogramPrediction::new(parents);
+				let prediction = mesh_multi_parallelogram_prediction::MeshMultiParallelogramPrediction::new(
+					parents, corner_table
+				);
 				PredictionScheme::MeshMultiParallelogramPrediction(prediction)
 			}
 			PredictionSchemeType::MeshParallelogramPrediction => {
-				let prediction = mesh_parallelogram_prediction::MeshParallelogramPrediction::new(parents);
+				let prediction = mesh_parallelogram_prediction::MeshParallelogramPrediction::new(
+					parents, corner_table
+				);
 				PredictionScheme::MeshParallelogramPrediction(prediction)
 			}
 			PredictionSchemeType::NoPrediction => {
 				let prediction = NoPrediction::new();
 				PredictionScheme::NoPrediction(prediction)
 			}
+			PredictionSchemeType::Invalid => {
+				panic!("Invalid prediction scheme type");
+			}
 		}
 	}
 
-	pub(crate) fn read_from<R>(reader: &mut R, parents: &[&'parents Attribute]) -> Result<Self, usize> 
+	pub(crate) fn read_from<R>(reader: &mut R, parents: &[&'parents Attribute], conn_att: &'parents C ) -> Result<Self, usize> 
 		where R: ByteReader
 	{
 		let ty = PredictionSchemeType::read_from(reader)?;
-		Ok(Self::new(ty, parents))
+		Ok(Self::new(ty, parents, conn_att))
 	}
 
 	pub(crate) fn get_values_impossible_to_predict(&mut self, value_indices: &mut Vec<std::ops::Range<usize>>) 
@@ -156,24 +184,33 @@ impl<'parents, Data> PredictionScheme<'parents, Data>
 	
 	pub(crate) fn predict (
 		&self,
-		// Values that are encoded/decoded before the call to this function.
-		values_encoded_up_till_now: &[Data],
-	) -> Data {
+		// Vertex/corner index to predict.
+		i: usize,
+		// Vertices/corners processed before the call to this function.
+		// They must be sorted in the order they were processed.
+		vertices_or_corners_processed_up_till_now: &[VertexIdx],
+		// The attribute that is being predicted.
+		// When used by the encoder, this is the complete attribute.
+		// When used by the decoder, this is the data that is being decoded, and thus it is not complete.
+		// Hence, expecially in the decoder, the element access can only be done by the index that is
+		// an element of `vertices_or_corners_processed_up_till_now`.
+		attribute: &[NdVector<N,i32>],
+	) -> NdVector<N,i32> {
 		match self {
 			PredictionScheme::DeltaPrediction(prediction)=> {
-				prediction.predict(values_encoded_up_till_now)
+				prediction.predict(i, vertices_or_corners_processed_up_till_now, attribute)
 			}
 			PredictionScheme::DerivativePrediction(prediction) => {
-				prediction.predict(values_encoded_up_till_now)
+				prediction.predict(i, vertices_or_corners_processed_up_till_now, attribute)
 			}
 			PredictionScheme::MeshMultiParallelogramPrediction(prediction) => {
-				prediction.predict(values_encoded_up_till_now)
+				prediction.predict(i, vertices_or_corners_processed_up_till_now, attribute)
 			}
 			PredictionScheme::MeshParallelogramPrediction(prediction) => {
-				prediction.predict(values_encoded_up_till_now)
+				prediction.predict(i, vertices_or_corners_processed_up_till_now, attribute)
 			}
 			PredictionScheme::NoPrediction(_) => {
-				Data::zero()
+				NdVector::zero()
 			}
 		}
 	}
@@ -205,23 +242,21 @@ impl ConfigType for Config {
 	}
 }
 
-pub struct NoPrediction<Data> {
-	_marker: std::marker::PhantomData<Data>,
-}
+pub struct NoPrediction {}
 
-impl<Data> NoPrediction<Data> {
+impl NoPrediction {
 	pub fn new() -> Self {
-		Self {
-			_marker: std::marker::PhantomData,
-		}
+		Self{}
 	}
 }
 
-impl<'a, Data> PredictionSchemeImpl<'a> for NoPrediction<Data> {
+impl<'a, C, const N: usize> PredictionSchemeImpl<'a, C, N> for NoPrediction 
+	where C: GenericCornerTable,
+	      NdVector<N,i32>: Vector<N, Component = i32>,
+{
 	const ID: u32 = 0;
-	type Data = Data;
 	type AdditionalDataForMetadata = ();
-	fn new(_parents: &[&'a Attribute]) -> Self {
+	fn new(_parents: &[&'a Attribute], _conn_att: &'a C) -> Self {
 		unreachable!()
 	}
 	fn compute_metadata(&mut self, _additional_data: Self::AdditionalDataForMetadata) {
@@ -234,9 +269,10 @@ impl<'a, Data> PredictionSchemeImpl<'a> for NoPrediction<Data> {
 	}
 	fn predict(
 		&self,
-		_values_up_till_now: &[Self::Data],
-	) -> Self::Data 
-	{
+		_i: usize,
+		_vertices_or_corners_processed_up_till_now: &[VertexIdx],
+		_attribute: &[NdVector<N,i32>],
+	) -> NdVector<N,i32> {
 		unreachable!()
 	}
 }

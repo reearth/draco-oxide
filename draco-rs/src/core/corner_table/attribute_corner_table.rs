@@ -1,6 +1,7 @@
 use crate::{core::{corner_table::CornerTable, shared::{CornerIdx, VertexIdx}}, prelude::Attribute};
 use crate::core::corner_table::GenericCornerTable;
 
+#[derive(Debug, Clone)]
 pub(crate) struct AttributeCornerTable {
     corner_to_vertex: Vec<VertexIdx>,
     vertex_to_attribute_entry: Vec<usize>,
@@ -61,7 +62,7 @@ impl AttributeCornerTable {
         }
 
         let mut out = Self {
-            corner_to_vertex: Vec::new(),
+            corner_to_vertex: vec![0; corner_table.num_corners()],
             vertex_to_attribute_entry: Vec::new(),
             is_edge_on_seam,
             is_vertex_on_seam,
@@ -124,7 +125,7 @@ impl AttributeCornerTable {
                     maybe_act_c = self.swing_left(act_c, corner_table);
                 }
             }
-            self.corner_to_vertex[first_c] = self.vertex_idx(first_vert_id);
+            self.corner_to_vertex[first_c] = first_vert_id;
             self.left_most_corners.push(first_c);
             let mut maybe_act_c = corner_table.swing_right(first_c);
             while let Some(act_c) = maybe_act_c {
@@ -201,3 +202,47 @@ impl AttributeCornerTable {
         self.left_most_corners[vertex]
     }
 }
+
+
+#[cfg(test)]
+#[test]
+fn test_no_att_seam() {
+    // read the test data from a corner table
+
+    use crate::{io::obj::load_obj, prelude::AttributeType};
+    let mesh = load_obj("tests/data/sphere.obj").unwrap();
+    let faces = mesh.faces;
+
+    let corner_table = CornerTable::new(&faces);
+    let att = mesh.attributes.iter().find(|att| att.get_attribute_type()==AttributeType::Normal).unwrap();
+    let attr_corner_table = AttributeCornerTable::new(&corner_table, att);
+    assert_eq!(attr_corner_table.num_vertices(), corner_table.num_vertices());
+    assert_eq!(attr_corner_table.corner_to_vertex.len(), corner_table.num_corners());
+    assert_eq!(attr_corner_table.vertex_to_attribute_entry.len(), corner_table.num_vertices());
+    assert_eq!(attr_corner_table.left_most_corners.len(), corner_table.num_vertices());
+    assert_eq!(attr_corner_table.is_edge_on_seam.len(), corner_table.num_corners());
+    assert_eq!(attr_corner_table.is_vertex_on_seam.len(), corner_table.num_vertices());
+    assert!(attr_corner_table.is_edge_on_seam.iter().all(|&x| x == false));
+    assert!(attr_corner_table.is_vertex_on_seam.iter().all(|&x| x == false));
+    assert!(attr_corner_table.left_most_corners.iter().all(|&x| x < corner_table.num_corners()));
+    assert!(attr_corner_table.corner_to_vertex.iter().all(|&x| x < corner_table.num_vertices()));
+
+    // check the opprosite corners
+    for c in 0..corner_table.num_corners() {
+        assert_eq!(attr_corner_table.opposite(c, &corner_table), corner_table.opposite(c));
+    }
+
+    // check vertices
+    for c in 0..corner_table.num_corners() {
+        assert_eq!(attr_corner_table.vertex_idx(c), corner_table.vertex_idx(c), 
+            "attr corner_to_vertex: {:?}\noriginal corner_to_vertex: {:?}", 
+            attr_corner_table.corner_to_vertex, 
+            corner_table.corner_to_vertex
+        );
+    }
+
+    // no attribute seams, so all edges and vertices are not on a seam.
+    attr_corner_table.is_edge_on_seam.iter().all(|&x| !x);
+    attr_corner_table.is_vertex_on_seam.iter().all(|&x| !x);
+}
+    

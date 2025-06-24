@@ -2,74 +2,65 @@ use std::vec::IntoIter;
 
 use crate::core::shared::{DataValue, NdVector, Vector}; 
 use crate::prelude::ByteWriter;
-use crate:: shared::attribute::Portable;
 use super::{
     geom::*, 
     PredictionTransformImpl
 };
 
-pub struct OctahedronOrthogonalTransform<Data> 
-    where Data: Vector + Portable
+pub struct OctahedronOrthogonalTransform<const N: usize> 
 {
-    out: Vec<NdVector<2,f64>>,
-    _marker: std::marker::PhantomData<Data>,
+    out: Vec<NdVector<2,i32>>,
 }
 
-impl<Data> OctahedronOrthogonalTransform<Data> 
-    where Data: Vector + Portable
+impl<const N: usize> OctahedronOrthogonalTransform<N> 
 {
     pub fn new(_cfg: super::Config) -> Self {
         Self {
             out: Vec::new(),
-            _marker: std::marker::PhantomData,
         }
     }
 }
 
-impl<Data> PredictionTransformImpl<Data> for OctahedronOrthogonalTransform<Data> 
-    where Data: Vector + Portable
+impl<const N: usize> PredictionTransformImpl<N> for OctahedronOrthogonalTransform<N> 
 {
-    fn map_with_tentative_metadata(&mut self, mut orig: Data, mut pred: Data) {
+    fn map_with_tentative_metadata(&mut self, mut orig: NdVector<N, i32>, mut pred: NdVector<N, i32>) 
+        where 
+            NdVector<N, i32>: Vector<N, Component = i32>,
+    {
         // Safety:
         // We made sure that the data is three dimensional.
-        debug_assert!(
-            Data::NUM_COMPONENTS == 3,
+        assert!(
+            N==3,
         );
 
         unsafe {
-            if *pred.get_unchecked(2) < Data::Component::zero() {
-                let minus_one = Data::Component::from_f64(-1.0);
-                *pred.get_unchecked_mut(2) *= minus_one;
-                *orig.get_unchecked_mut(2) *= minus_one;
+            if *pred.get_unchecked(2) < 0 {
+                *pred.get_unchecked_mut(2) *= -1;
+                *orig.get_unchecked_mut(2) *= -1;
             }
 
-            if *pred.get_unchecked(0) > Data::Component::zero() {
-                if *pred.get_unchecked(1) > Data::Component::zero() {
+            if *pred.get_unchecked(0) > 0 {
+                if *pred.get_unchecked(1) > 0 {
                     // first quadrant. Rotate around z-axis by pi.
-                    let minus_one = Data::Component::from_f64(-1.0);
-                    *pred.get_unchecked_mut(0) *= minus_one;
-                    *pred.get_unchecked_mut(1) *= minus_one;
-                    *orig.get_unchecked_mut(0) *= minus_one;
-                    *orig.get_unchecked_mut(1) *= minus_one;
+                    *pred.get_unchecked_mut(0) *= -1;
+                    *pred.get_unchecked_mut(1) *= -1;
+                    *orig.get_unchecked_mut(0) *= -1;
+                    *orig.get_unchecked_mut(1) *= -1;
                 } else {
                     // fourth quadrant. Rotate around z-axis by -pi/2.
                     let temp = *pred.get_unchecked(0);
-                    let one = Data::Component::one();
-                    let minus_one = Data::Component::zero() - one;
                     *pred.get_unchecked_mut(0) = *pred.get_unchecked(1);
-                    *pred.get_unchecked_mut(1) = temp * minus_one;
+                    *pred.get_unchecked_mut(1) = temp * -1;
                     *orig.get_unchecked_mut(0) = *orig.get_unchecked(1);
-                    *orig.get_unchecked_mut(1) = temp * minus_one;
+                    *orig.get_unchecked_mut(1) = temp * -1;
                 }
             } else {
-                if *pred.get_unchecked(1) > Data::Component::zero() {
+                if *pred.get_unchecked(1) > 0 {
                     // second quadrant. Rotate around z-axis by pi/2.
                     let temp = *pred.get_unchecked(0);
-                    let one = Data::Component::one();
-                    let minus_one = Data::Component::zero() - one;
-                    *pred.get_unchecked_mut(0) = *pred.get_unchecked(1) * minus_one;
+                    *pred.get_unchecked_mut(0) = *pred.get_unchecked(1) * -1;
                     *pred.get_unchecked_mut(1) = temp;
-                    *orig.get_unchecked_mut(0) = *orig.get_unchecked(1) * minus_one;
+                    *orig.get_unchecked_mut(0) = *orig.get_unchecked(1) * -1;
                     *orig.get_unchecked_mut(1) = temp;
                 }
                 // third quadrant will not be transformed.
@@ -78,17 +69,11 @@ impl<Data> PredictionTransformImpl<Data> for OctahedronOrthogonalTransform<Data>
 
         let orig = unsafe{ octahedral_transform(orig) };
         let pred = unsafe { octahedral_transform(pred) };
-        self.out.push( orig - pred );
+        // self.out.push( orig - pred );
     }
 
-    fn squeeze<W>(&mut self, _writer: &mut W) 
+    fn squeeze<W>(self, _writer: &mut W) -> Vec<NdVector<N, i32>>
         where W: ByteWriter
-    {
-        unimplemented!()
-    }
-
-    fn out<W>(self, _writer: &mut W) -> IntoIter<IntoIter<u8>>
-        where W: ByteWriter 
     {
         unimplemented!()
     }

@@ -25,8 +25,8 @@ impl Quantized {
 }
 
 
-pub(crate) trait Linealizer<Data> 
-    where Data: Vector,
+pub(crate) trait Linealizer<Data, const N: usize> 
+    where Data: Vector<N>,
 {
     type Metadata;
     fn init(&mut self, metadata: Self::Metadata);

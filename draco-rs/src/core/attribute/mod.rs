@@ -13,6 +13,8 @@ pub enum Err {
 	/// Reader error
 	#[error("Reader error: {0}")]
 	ReaderError(#[from] crate::core::bit_coder::ReaderErr),
+	#[error("Invalid DataTypeId: {0}")]
+	InvalidDataTypeId(u8),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,11 +39,26 @@ pub struct Attribute {
 }
 
 impl Attribute {
-	pub(crate) fn from<Data>(id: AttributeId, data: Vec<Data>, att_type: AttributeType, domain: AttributeDomain, parents: Vec<AttributeId>) -> Self 
+	pub fn new<Data, const N: usize>(data: Vec<Data>, att_type: AttributeType, domain: AttributeDomain, parents: Vec<AttributeId>) -> Self 
 		where 
-			Data: Vector,
+			Data: Vector<N>,
 	{
-		let buffer = buffer::attribute::AttributeBuffer::from(data);
+		let id = AttributeId::new(0); // TODO: generate unique id
+		let buffer = buffer::attribute::AttributeBuffer::from_vec(data);
+		Self {
+			id,
+			buffer,
+			parents,
+			att_type,
+			domain,
+			index_map: None,
+		}
+	}
+	pub(crate) fn from<Data, const N: usize>(id: AttributeId, data: Vec<Data>, att_type: AttributeType, domain: AttributeDomain, parents: Vec<AttributeId>) -> Self 
+		where 
+			Data: Vector<N>,
+	{
+		let buffer = buffer::attribute::AttributeBuffer::from_vec(data);
 		Self {
 			id,
 			buffer,
@@ -52,9 +69,9 @@ impl Attribute {
 		}
 	}
 
-	pub fn get<Data>(&self, idx: usize) -> Data 
+	pub fn get<Data, const N: usize>(&self, idx: usize) -> Data 
 		where 
-			Data: Vector,
+			Data: Vector<N>,
 			Data::Component: DataValue
 	{
 		self.buffer.get(idx)
@@ -62,6 +79,10 @@ impl Attribute {
 
 	pub fn get_component_type(&self) -> ComponentDataType {
 		self.buffer.get_component_type()
+	}
+
+	pub(crate) fn set_component_type(&mut self, component_type: ComponentDataType) {
+		self.buffer.set_component_type(component_type);
 	}
 
 	#[inline]
@@ -119,7 +140,7 @@ impl Attribute {
 
 	/// returns the data values as a mutable slice of values casted to the given type.
 	#[inline]
-	pub fn as_slice_mut<Data>(&mut self) -> &[Data] {
+	pub fn as_slice_mut<Data>(&mut self) -> &mut [Data] {
 		assert_eq!(
 			self.buffer.get_num_components() * self.buffer.get_component_type().size(),
 			std::mem::size_of::<Data>(),
@@ -202,21 +223,77 @@ impl Attribute {
 			self.buffer.swap_unchecked(i, j);
 		}
 	}
+
+	pub fn take_values<Data, const N: usize>(self) -> Vec<Data>
+		where Data: Vector<N>,
+	{
+		assert_eq!(
+			self.get_num_components(), N,
+		);
+		assert_eq!(
+			self.get_component_type(), Data::Component::get_dyn(),
+		);
+		
+		unsafe {
+			self.buffer.into_vec_unchecked::<Data, N>()
+		}
+	}
+
+
+	pub fn into_parts<Data, const N: usize>(mut self) -> (Vec<Data>, Self)
+		where Data: Vector<N>,
+	{
+		let num_components = self.get_num_components();
+		let component_type = self.get_component_type();
+		assert_eq!(
+			num_components, N,
+		);
+		assert_eq!(
+			component_type, Data::Component::get_dyn(),
+		);
+		let mut new_buffer = buffer::attribute::AttributeBuffer::from_vec(
+			Vec::<Data>::new()
+		);
+		std::mem::swap(&mut self.buffer, &mut new_buffer);
+		let data = unsafe {
+			new_buffer.into_vec_unchecked::<Data, N>()
+		};
+
+		(data, self)
+	}
+
+	pub fn set_values<Data, const N: usize>(&mut self, data: Vec<Data>)
+		where Data: Vector<N>,
+	{
+		assert_eq!(
+			self.get_num_components(), N,
+		);
+		assert_eq!(
+			self.get_component_type(), Data::Component::get_dyn(),
+		);
+		assert_eq!( self.len(), 0 );
+		self.buffer = buffer::attribute::AttributeBuffer::from_vec(data);
+	}
 }
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum ComponentDataType {
+	I8,
+	U8,
+	I16,
+	U16,
+	I32,
+	U32,
+	I64,
+	U64,
 	F32,
 	F64,
-	U8,
-	U16,
-	U32,
-	U64,
 }
 
 impl ComponentDataType {
 	/// returns the size of the data type in bytes e.g. 4 for F32
+	#[inline]
 	pub fn size(self) -> usize {
         match self {
             ComponentDataType::F32 => 4,
@@ -225,31 +302,58 @@ impl ComponentDataType {
             ComponentDataType::U16 => 2,
             ComponentDataType::U32 => 4,
             ComponentDataType::U64 => 8,
+			ComponentDataType::I8 => 1,
+			ComponentDataType::I16 => 2,
+			ComponentDataType::I32 => 4,
+			ComponentDataType::I64 => 8,
         }
     }
 	/// returns unique id for the data type.
-	pub fn get_id(self) -> usize {
+	#[inline]
+	pub fn get_id(self) -> u8 {
         match self {
-            ComponentDataType::F32 => 0,
-            ComponentDataType::F64 => 1,
-            ComponentDataType::U8 => 2,
+            ComponentDataType::U8 => 1,
+			ComponentDataType::I8 => 2,
             ComponentDataType::U16 => 3,
-            ComponentDataType::U32 => 4,
-            ComponentDataType::U64 => 5,
+			ComponentDataType::I16 => 4,
+            ComponentDataType::U32 => 5,
+			ComponentDataType::I32 => 6,
+            ComponentDataType::U64 => 7,
+			ComponentDataType::I64 => 8,
+            ComponentDataType::F32 => 9,
+            ComponentDataType::F64 => 10,
         }
-    }
+	}
+
+	/// returns the data type as a string.
+	#[inline]
+	pub fn write_to<W: ByteWriter>(self, writer: &mut W) {
+		writer.write_u8(self.get_id());
+	}
 
 	/// returns the data type from the given id.
+	#[inline]
 	pub fn from_id(id: usize) -> Result<Self, ()> {
 		match id {
-			0 => Ok(ComponentDataType::F32),
-			1 => Ok(ComponentDataType::F64),
+			1 => Ok(ComponentDataType::I8),
 			2 => Ok(ComponentDataType::U8),
-			3 => Ok(ComponentDataType::U16),
-			4 => Ok(ComponentDataType::U32),
-			5 => Ok(ComponentDataType::U64),
+			3 => Ok(ComponentDataType::I16),
+			4 => Ok(ComponentDataType::U16),
+			5 => Ok(ComponentDataType::I32),
+			6 => Ok(ComponentDataType::U32),
+			7 => Ok(ComponentDataType::I64),
+			8 => Ok(ComponentDataType::U64),
+			9 => Ok(ComponentDataType::F32),
+			10 => Ok(ComponentDataType::F64),
 			_ => Err(()),
 		}
+	}
+
+	/// Reads the data type from the reader.
+	#[inline]
+	pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+		let id = reader.read_u8()?;
+		Self::from_id(id as usize).map_err(|_| Err::InvalidDataTypeId(id))
 	}
 }
 
@@ -259,12 +363,11 @@ pub enum AttributeType {
 	Normal,
 	Color,
 	TextureCoordinate,
+	Custom,
 	Tangent,
 	Material,
 	Joint,
 	Weight,
-	Connectivity,
-	Custom
 }
 
 impl AttributeType {
@@ -273,51 +376,65 @@ impl AttributeType {
 			Self::Position => Vec::new(),
 			Self::Normal => Vec::new(),
 			Self::Color => Vec::new(),
-			Self::TextureCoordinate => vec![Self::Position, Self::Connectivity],
+			Self::TextureCoordinate => vec![Self::Position],
 			Self::Tangent => Vec::new(),
 			Self::Material => Vec::new(),
 			Self::Joint => Vec::new(),
 			Self::Weight => Vec::new(),
-			Self::Connectivity => Vec::new(),
 			Self::Custom => Vec::new(),
 		}
 	}
 
-	pub(crate) fn get_id(&self) -> usize {
+	/// Returns the id of the attribute type.
+	#[inline]
+	pub(crate) fn get_id(&self) -> u8 {
 		match self {
 			Self::Position => 0,
 			Self::Normal => 1,
 			Self::Color => 2,
 			Self::TextureCoordinate => 3,
-			Self::Tangent => 4,
-			Self::Material => 5,
-			Self::Joint => 6,
-			Self::Weight => 7,
-			Self::Connectivity => 8,
-			Self::Custom => 9,
+			Self::Custom => 4,
+			Self::Tangent => 5,
+			Self::Material => 6,
+			Self::Joint => 7,
+			Self::Weight => 8,
 		}
 	}
 
-	pub(crate) fn from_id(id: usize) -> Self {
+	/// Returns the id of the attribute type.
+	#[inline]
+	pub fn write_to<W: ByteWriter>(&self, writer: &mut W) {
+		writer.write_u8(self.get_id());
+	}
+
+	/// Reads the attribute type from the reader.
+	#[inline]
+	pub(crate) fn from_id(id: u8) -> Result<Self, Err> {
 		match id {
-			0 => Self::Position,
-			1 => Self::Normal,
-			2 => Self::Color,
-			3 => Self::TextureCoordinate,
-			4 => Self::Tangent,
-			5 => Self::Material,
-			6 => Self::Joint,
-			7 => Self::Weight,
-			8 => Self::Connectivity,
-			9 => Self::Custom,
-			_ => panic!("Invalid attribute type id"),
+			0 => Ok(Self::Position),
+			1 => Ok(Self::Normal),
+			2 => Ok(Self::Color),
+			3 => Ok(Self::TextureCoordinate),
+			4 => Ok(Self::Custom),
+			5 => Ok(Self::Tangent),
+			6 => Ok(Self::Material),
+			7 => Ok(Self::Joint),
+			8 => Ok(Self::Weight),
+			_ => Err(Err::InvalidDataTypeId(id)),
 		}
+	}
+
+	/// Reads the attribute type from the reader.
+	#[inline]
+	pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+		let id = reader.read_u8()?;
+		Self::from_id(id)
 	}
 }
 
 /// The domain of the attribute, i.e. whether it is defined on the position or corner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub(crate) enum AttributeDomain {
+pub enum AttributeDomain {
 	/// The attribute is defined on the position attribute, i.e. i'th element in the attribute is attached to the i'th position in the mesh.
 	Position,
 	/// The attribute is defined on the corner attribute, i.e. i'th element in the attribute is attached to the i'th corner in the mesh.
@@ -390,17 +507,17 @@ impl MaybeInitAttribute {
 	/// Dereferencing the uninitialized part of the slice is undefined behavior.
 	/// Moreover, 'num_components * component_type.size()' must equal 'std::mem::size_of::<Data>()'.
 	#[inline]
-	pub unsafe fn as_slice_unchecked<Data>(&self) -> &[Data]
-		where Data: Vector,
+	pub unsafe fn as_slice_unchecked<Data, const N: usize>(&self) -> &[Data]
+		where Data: Vector<N>,
 	{
 		// Safety: upheld
-		self.buffer.as_slice_unchecked::<Data>()
+		self.buffer.as_slice_unchecked::<Data, N>()
 	}
 
 	/// Writes the data to the buffer at the specified index.
 	#[inline]
-	pub fn write<Data>(&mut self, idx:usize, data: Data)
-		where Data: Vector,
+	pub fn write<Data, const N: usize>(&mut self, idx:usize, data: Data)
+		where Data: Vector<N>,
 	{
 		self.buffer.write(idx, data);
 	}
@@ -411,8 +528,8 @@ impl MaybeInitAttribute {
 	/// (2) The index must be within the bounds of the buffer.
 	#[inline]
 	#[allow(unused)]
-	pub unsafe fn write_type_unchecked<Data>(&mut self, idx:usize, data: Data)
-		where Data: Vector,
+	pub unsafe fn write_type_unchecked<Data, const N: usize>(&mut self, idx:usize, data: Data)
+		where Data: Vector<N>,
 	{
 		self.buffer.write_type_unchecked(idx, data);
 	}
@@ -478,7 +595,7 @@ mod tests {
 		];
 		let att = super::Attribute::from(AttributeId::new(0), data.clone(), super::AttributeType::Position, super::AttributeDomain::Position, Vec::new());
 		assert_eq!(att.len(), data.len());
-		assert_eq!(att.get::<NdVector<3,f32>>(0), data[0], "{:b}!={:b}", att.get::<NdVector<3,f32>>(0).get(0).to_bits(), data[0].get(0).to_bits());
+		assert_eq!(att.get::<NdVector<3,f32>, 3>(0), data[0], "{:b}!={:b}", att.get::<NdVector<3,f32>,3>(0).get(0).to_bits(), data[0].get(0).to_bits());
 		assert_eq!(att.get_component_type(), super::ComponentDataType::F32);
 		assert_eq!(att.get_num_components(), 3);
 		assert_eq!(att.get_attribute_type(), super::AttributeType::Position);

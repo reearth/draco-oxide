@@ -16,10 +16,9 @@ pub(crate) fn leb128_read<W>(reader: &mut W) -> Result<u64, ReaderErr>
     Ok(result)
 }
 
-pub(crate) fn leb128_write<W>(value: u64, writer: &mut W) 
+pub(crate) fn leb128_write<W>(mut value: u64, writer: &mut W) 
     where W: ByteWriter,
 {
-    let mut value = value;
     loop {
         let byte = (value & 0x7F) as u8;
         value >>= 7;

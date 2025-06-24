@@ -1,9 +1,17 @@
-use crate::core::{corner_table::{attribute_corner_table::AttributeCornerTable, CornerTable, GenericCornerTable}, shared::CornerIdx};
+use crate::core::{
+    corner_table::{
+        attribute_corner_table::AttributeCornerTable, 
+        CornerTable, 
+        GenericCornerTable
+    }, 
+    shared::CornerIdx
+};
 
 
 /// All-inclusive corner table that contains the universal corner table and the attribute corner tables (if any).
 /// This structure is constructed as a return value of the edgebreaker connectivity encoding, and will be passed to
 /// the attribute encoder for read-access.
+#[derive(Debug, Clone)]
 pub(crate) struct AllInclusiveCornerTable<'faces> {
     universal: CornerTable<'faces>,
     attribute_tables: Vec<AttributeCornerTable>,
@@ -23,15 +31,28 @@ impl<'faces> AllInclusiveCornerTable<'faces> {
     pub fn attribute_corner_table<'table>(
         &'table self,
         idx: usize,
-    ) -> RefAttributeCornerTable<'faces, 'table> {
-        assert!(idx < self.attribute_tables.len());
-        RefAttributeCornerTable::new(idx, self)
+    ) -> Option<RefAttributeCornerTable<'faces, 'table>> {
+        if idx>0 {
+            let idx = idx - 1;
+            if idx < self.attribute_tables.len() {
+                Some(RefAttributeCornerTable::new(idx, self))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn universal_corner_table(&self) -> &CornerTable<'faces> {
+        &self.universal
     }
 }
 
 
 /// Reference to an attribute corner table. 
 /// Mostly used to read-access the attribute corner table when encoding attributes.
+#[derive(Debug, Clone)]
 pub(crate) struct RefAttributeCornerTable<'faces, 'table> {
     idx: usize,
     corner_table: &'table AllInclusiveCornerTable<'faces>,

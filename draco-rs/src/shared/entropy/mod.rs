@@ -11,9 +11,11 @@ pub trait Symbol {
     fn from_id(id: usize) -> Self;
 }
 
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SymbolEncodingMethod {
-    Tagged,
-    RawSymbols,
+    LengthCoded,
+    DirectCoded,
 }
 
 impl SymbolEncodingMethod {
@@ -22,8 +24,8 @@ impl SymbolEncodingMethod {
     {
         let method = reader.read_u8()?;
         match method {
-            0 => Ok(SymbolEncodingMethod::Tagged),
-            1 => Ok(SymbolEncodingMethod::RawSymbols),
+            0 => Ok(SymbolEncodingMethod::LengthCoded),
+            1 => Ok(SymbolEncodingMethod::DirectCoded),
             _ => Err(Err::InvalidSymbolEncodingMethod),
         }
     }
@@ -31,8 +33,8 @@ impl SymbolEncodingMethod {
         where W: ByteWriter
     {
         match self {
-            SymbolEncodingMethod::Tagged => writer.write_u8(0),
-            SymbolEncodingMethod::RawSymbols => writer.write_u8(1),
+            SymbolEncodingMethod::LengthCoded => writer.write_u8(0),
+            SymbolEncodingMethod::DirectCoded => writer.write_u8(1),
         }
     }
 }
@@ -61,7 +63,7 @@ pub(crate) fn rans_build_tables<const RANS_PRECISION: usize>(freq_counts: &[usiz
     }
 
     if freq_cumulative != 1 << RANS_PRECISION {
-        return Err(Err::FrequencyCountNotCompatibleWithRansPrecision);
+        return Err(Err::FrequencyCountNotCompatibleWithRansPrecision(freq_cumulative, 1 << RANS_PRECISION));
     }
 
     Ok((slot_table, rans_syms))
@@ -69,8 +71,8 @@ pub(crate) fn rans_build_tables<const RANS_PRECISION: usize>(freq_counts: &[usiz
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Err {
-    #[error("Frequency count not compatible with RANS precision")]
-    FrequencyCountNotCompatibleWithRansPrecision,
+    #[error("Frequency count not compatible with RANS precision: freq_count=={0}!={1}==rans_precision")]
+    FrequencyCountNotCompatibleWithRansPrecision(usize, usize),
     #[error("Invalid frequency count")]
     InvalidFreqCount,
     #[error("Invalid symbol encoding method")]

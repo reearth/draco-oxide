@@ -9,8 +9,8 @@ pub(crate) struct RectangleArrayLinealizer<Data>
     max: Data,
 }
 
-impl<Data> Linealizer<Data> for RectangleArrayLinealizer<Data> 
-    where  Data: Vector + Portable
+impl<Data, const N: usize> Linealizer<Data, N> for RectangleArrayLinealizer<Data> 
+    where  Data: Vector<N> + Portable
 {
     type Metadata = Data;
 
@@ -22,7 +22,7 @@ impl<Data> Linealizer<Data> for RectangleArrayLinealizer<Data>
         data.into_iter()
             .map(|x| {
                 let mut val = 0;
-                for i in 0..Data::NUM_COMPONENTS {
+                for i in 0..N {
                     let component = unsafe { x.get_unchecked(i) };
                     let max_component = unsafe { self.max.get_unchecked(i) };
                     val += (*component * *max_component).to_u64();

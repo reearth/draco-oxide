@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! debug_write {
     ($msg:literal, $writer:expr) => {
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "debug_format")]
         {
             for byte in $msg.as_bytes() {
                 $writer.write_u8(*byte);
@@ -13,7 +13,7 @@ macro_rules! debug_write {
 #[macro_export]
 macro_rules! debug_expect {
     ($msg:literal, $reader:expr) => {
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "debug_format")]
         {
             for byte in $msg.as_bytes() {
                 assert!(

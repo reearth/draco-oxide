@@ -9,7 +9,6 @@ use crate::core::shared::{ConfigType, FaceIdx};
 use crate::encode::connectivity::edgebreaker::{DefaultTraversal, ValenceTraversal};
 use crate::prelude::{Attribute, AttributeType};
 use crate::shared::connectivity::edgebreaker::EdgebreakerKind;
-use crate::shared::connectivity::{EdgebreakerDecoder, Encoder};
 
 #[cfg(feature = "evaluation")]
 use crate::eval;
@@ -46,10 +45,6 @@ pub fn encode_connectivity_datatype_unpacked<'faces, W>(
             #[cfg(feature = "evaluation")]
             eval::scope_begin("edgebreaker", writer);
             
-            // write the encoder id
-            writer.write_u8(Encoder::Edgebreaker.get_id() as u8);
-            // write the edgebreaker decoder id
-            writer.write_u8(EdgebreakerDecoder::SpiraleReversi.id() as u8);
             let result = match cfg.traversal {
                 EdgebreakerKind::Standard => {
                     let encoder = edgebreaker::Edgebreaker::<DefaultTraversal>::new(cfg, atts, faces)?;
@@ -73,8 +68,6 @@ pub fn encode_connectivity_datatype_unpacked<'faces, W>(
             #[cfg(feature = "evaluation")]
             eval::scope_begin("sequential", writer);
 
-            // write the encoder id
-            writer.write_u8(Encoder::Sequential.get_id() as u8);
             let num_points = atts.iter()
                 .find(|att| att.get_attribute_type() == AttributeType::Position)
                 .unwrap()

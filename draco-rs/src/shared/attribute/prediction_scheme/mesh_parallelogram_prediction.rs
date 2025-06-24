@@ -4,33 +4,26 @@ use std::{
 };
 
 use super::PredictionSchemeImpl;
-use crate::core::attribute::AttributeType;
+use crate::core::corner_table::GenericCornerTable;
 use crate::core::{attribute::Attribute, shared::Vector};
-use crate::utils::merge_indices;
+use crate::prelude::NdVector;
 
-pub struct MeshParallelogramPrediction<'parents, Data> {
-    faces: &'parents[[usize; 3]],
-	_marker: std::marker::PhantomData<Data>
+pub struct MeshParallelogramPrediction<'parents, C, const N: usize> {
+    corner_table: &'parents C,
 }
 
-impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPrediction<'parents, Data> 
-    where Data: Vector + Clone + ops::Add<Output = Data> + ops::Sub<Output = Data> 
+impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for MeshParallelogramPrediction<'parents, C, N> 
+    where 
+        C: GenericCornerTable,
+        NdVector<N, i32>: Vector<N, Component = i32>,
 {
     const ID: u32 = 2;
     
-    type Data = Data;
-
     type AdditionalDataForMetadata = ();
 	
-	fn new(parents: &[&'parents Attribute] ) -> Self {
-        let faces = unsafe {
-            parents.iter().find(|x| x.get_attribute_type() == AttributeType::Connectivity)
-                .expect("MeshParallelogramPrediction: No connectivity attribute found")
-                .as_slice_unchecked::<[usize;3]>()
-        };
+	fn new(_parents: &[&'parents Attribute], corner_table: &'parents C ) -> Self {
         Self {
-            faces,
-            _marker: std::marker::PhantomData,
+            corner_table,
         }
     }
 
@@ -41,207 +34,209 @@ impl<'parents, Data> PredictionSchemeImpl<'parents> for MeshParallelogramPredict
 	fn get_values_impossible_to_predict(&mut self, seq: &mut Vec<std::ops::Range<usize>>) 
         -> Vec<std::ops::Range<usize>>
     {
-        let mut is_already_encoded: Vec<bool> = Vec::new();
-        let mut vertices_without_parallelogram: Vec<ops::Range<usize>> = Vec::new();
+        unimplemented!();
+        // let mut is_already_encoded: Vec<bool> = Vec::new();
+        // let mut vertices_without_parallelogram: Vec<ops::Range<usize>> = Vec::new();
 
-        for face in self.faces {
-            let mut face = *face;
-            face.sort();
-            let num_unvisited_vertices = face.iter()
-                .filter(|&&v| v>=is_already_encoded.len() || !is_already_encoded[v])
-                .count();
-            if num_unvisited_vertices == 3 {
-                // In the standard edgebreaker decoding, only unpredictable faces are 
-                // the first ones getting encoded among a connected component.
-                // In the reverse-play decoding, only unpredictable faces are
-                // the ones that correspond to the 'E' symbol.
-                if face[0]+1 == face[1] && face[1]+1 == face[2] {
-                    vertices_without_parallelogram.push(face[0]..face[2]+1);
-                } else if face[0]+1 == face[1] {
-                    vertices_without_parallelogram.push(face[0]..face[1]+1);
-                    vertices_without_parallelogram.push(face[2]..face[2]+1);
-                } else if face[1]+1 == face[2] {
-                    vertices_without_parallelogram.push(face[0]..face[0]+1);
-                    vertices_without_parallelogram.push(face[1]..face[2]+1);
-                } else {
-                    vertices_without_parallelogram.push(face[0]..face[0]+1);
-                    vertices_without_parallelogram.push(face[1]..face[1]+1);
-                    vertices_without_parallelogram.push(face[2]..face[2]+1);
-                }
-            } else if num_unvisited_vertices == 2 {
-                let unvisited_vertices = face.into_iter()
-                    .filter(|&v| v>=is_already_encoded.len() || !is_already_encoded[v])
-                    .collect::<Vec<_>>();
-                let idx1 = unvisited_vertices[0];
-                let idx2 = unvisited_vertices[1];
-                if idx1+1 == idx2 {
-                    vertices_without_parallelogram.push(idx1..idx2+1);
-                } else {
-                    vertices_without_parallelogram.push(idx1..idx1+1);
-                    vertices_without_parallelogram.push(idx2..idx2+1);
-                }
-            }
-            for v in face {
-                if v >= is_already_encoded.len() {
-                    is_already_encoded.resize(v + 1, false);
-                }
-                // ToDo: Remove check
-                is_already_encoded[v] = true;
-            }
-        }
-        vertices_without_parallelogram.sort_by(|a,b| a.start.cmp(&b.start));
-        // merge 'vertices_without_parallelogram' with 'value_indices'
-        let merged = merge_indices(vec![seq.clone(), vertices_without_parallelogram]);
-        // modify seq not to contain the merged ranges
-        let mut new_seq = Vec::new();
-        let mut seq_iter = mem::take(seq).into_iter();
-        let mut merged_iter = merged.iter();
-        new_seq.push(seq_iter.next().unwrap());
-        // Safety: just added an element to 'new_seq'
-        let mut r = unsafe {
-            new_seq.last().unwrap_unchecked().clone() // this clone is cheap
-        };
-        let mut m = merged_iter.next().unwrap();
-        loop {
-            if m.start < r.start {
-                m = if let Some(m) = merged_iter.next() {
-                    m
-                } else {
-                    seq_iter.for_each(|r| new_seq.push(r.clone()));
-                    break;
-                };
-                continue;
-            }
+        // for face in self.faces {
+        //     let mut face = *face;
+        //     face.sort();
+        //     let num_unvisited_vertices = face.iter()
+        //         .filter(|&&v| v>=is_already_encoded.len() || !is_already_encoded[v])
+        //         .count();
+        //     if num_unvisited_vertices == 3 {
+        //         // In the standard edgebreaker decoding, only unpredictable faces are 
+        //         // the first ones getting encoded among a connected component.
+        //         // In the reverse-play decoding, only unpredictable faces are
+        //         // the ones that correspond to the 'E' symbol.
+        //         if face[0]+1 == face[1] && face[1]+1 == face[2] {
+        //             vertices_without_parallelogram.push(face[0]..face[2]+1);
+        //         } else if face[0]+1 == face[1] {
+        //             vertices_without_parallelogram.push(face[0]..face[1]+1);
+        //             vertices_without_parallelogram.push(face[2]..face[2]+1);
+        //         } else if face[1]+1 == face[2] {
+        //             vertices_without_parallelogram.push(face[0]..face[0]+1);
+        //             vertices_without_parallelogram.push(face[1]..face[2]+1);
+        //         } else {
+        //             vertices_without_parallelogram.push(face[0]..face[0]+1);
+        //             vertices_without_parallelogram.push(face[1]..face[1]+1);
+        //             vertices_without_parallelogram.push(face[2]..face[2]+1);
+        //         }
+        //     } else if num_unvisited_vertices == 2 {
+        //         let unvisited_vertices = face.into_iter()
+        //             .filter(|&v| v>=is_already_encoded.len() || !is_already_encoded[v])
+        //             .collect::<Vec<_>>();
+        //         let idx1 = unvisited_vertices[0];
+        //         let idx2 = unvisited_vertices[1];
+        //         if idx1+1 == idx2 {
+        //             vertices_without_parallelogram.push(idx1..idx2+1);
+        //         } else {
+        //             vertices_without_parallelogram.push(idx1..idx1+1);
+        //             vertices_without_parallelogram.push(idx2..idx2+1);
+        //         }
+        //     }
+        //     for v in face {
+        //         if v >= is_already_encoded.len() {
+        //             is_already_encoded.resize(v + 1, false);
+        //         }
+        //         // ToDo: Remove check
+        //         is_already_encoded[v] = true;
+        //     }
+        // }
+        // vertices_without_parallelogram.sort_by(|a,b| a.start.cmp(&b.start));
+        // // merge 'vertices_without_parallelogram' with 'value_indices'
+        // let merged = merge_indices(vec![seq.clone(), vertices_without_parallelogram]);
+        // // modify seq not to contain the merged ranges
+        // let mut new_seq = Vec::new();
+        // let mut seq_iter = mem::take(seq).into_iter();
+        // let mut merged_iter = merged.iter();
+        // new_seq.push(seq_iter.next().unwrap());
+        // // Safety: just added an element to 'new_seq'
+        // let mut r = unsafe {
+        //     new_seq.last().unwrap_unchecked().clone() // this clone is cheap
+        // };
+        // let mut m = merged_iter.next().unwrap();
+        // loop {
+        //     if m.start < r.start {
+        //         m = if let Some(m) = merged_iter.next() {
+        //             m
+        //         } else {
+        //             seq_iter.for_each(|r| new_seq.push(r.clone()));
+        //             break;
+        //         };
+        //         continue;
+        //     }
 
-            if m.start > r.end {
-                let new_r = if let Some(r) = seq_iter.next() {
-                    r
-                } else {
-                    break;
-                };
-                new_seq.push(new_r);
-                // Safety: just added an element to 'new_seq'
-                r = unsafe {
-                    new_seq.last().unwrap_unchecked().clone() // this clone is cheap
-                };
-                continue;
-            }
-            // The following cases are impossible since the 'seq' contains 'merged': 
+        //     if m.start > r.end {
+        //         let new_r = if let Some(r) = seq_iter.next() {
+        //             r
+        //         } else {
+        //             break;
+        //         };
+        //         new_seq.push(new_r);
+        //         // Safety: just added an element to 'new_seq'
+        //         r = unsafe {
+        //             new_seq.last().unwrap_unchecked().clone() // this clone is cheap
+        //         };
+        //         continue;
+        //     }
+        //     // The following cases are impossible since the 'seq' contains 'merged': 
             
-            // [    m    )
-            //    [    r    )
-            debug_assert!(!(r.start > m.start && r.start < m.end && r.end > m.end));
+        //     // [    m    )
+        //     //    [    r    )
+        //     debug_assert!(!(r.start > m.start && r.start < m.end && r.end > m.end));
 
-            //     [    m    )
-            // [    r    )
-            debug_assert!(!(r.start > m.start && r.end > m.start && r.end < m.end));
+        //     //     [    m    )
+        //     // [    r    )
+        //     debug_assert!(!(r.start > m.start && r.end > m.start && r.end < m.end));
 
-            // [    m    )
-            //   [  r  )
-            debug_assert!(!(r.start < m.start && r.end > m.start && r.end < m.end));
+        //     // [    m    )
+        //     //   [  r  )
+        //     debug_assert!(!(r.start < m.start && r.end > m.start && r.end < m.end));
 
             
-            // The following cases are the only possibilities:
+        //     // The following cases are the only possibilities:
 
-            // [  m  )
-            // [    r    )
-            if r.start == m.start && m.end < r.end {
-                unsafe {
-                    *new_seq.last_mut().unwrap_unchecked() = m.end..r.end;
-                };
-                r = m.end..r.end;
-            }
+        //     // [  m  )
+        //     // [    r    )
+        //     if r.start == m.start && m.end < r.end {
+        //         unsafe {
+        //             *new_seq.last_mut().unwrap_unchecked() = m.end..r.end;
+        //         };
+        //         r = m.end..r.end;
+        //     }
 
-            //   [  m  )
-            // [    r    )
-            else if r.start < m.start && m.end < r.end {
-                unsafe {
-                    *new_seq.last_mut().unwrap_unchecked() = r.start..m.start;
-                };
-                new_seq.push(m.end..r.end);
-                r = m.end..r.end;
-            }
+        //     //   [  m  )
+        //     // [    r    )
+        //     else if r.start < m.start && m.end < r.end {
+        //         unsafe {
+        //             *new_seq.last_mut().unwrap_unchecked() = r.start..m.start;
+        //         };
+        //         new_seq.push(m.end..r.end);
+        //         r = m.end..r.end;
+        //     }
 
-            // [  m  )
-            // [  r  )
-            else if r == *m {
-                new_seq.pop();
+        //     // [  m  )
+        //     // [  r  )
+        //     else if r == *m {
+        //         new_seq.pop();
                 
-                r = if let Some(r) = seq_iter.next() {
-                    r
-                } else {
-                    break;
-                };
-                new_seq.push(r.clone());
-                m = if let Some(m) = merged_iter.next() {
-                    m
-                } else {
-                    seq_iter.for_each(|r| new_seq.push(r.clone()));
-                    break;
-                };
-            }
+        //         r = if let Some(r) = seq_iter.next() {
+        //             r
+        //         } else {
+        //             break;
+        //         };
+        //         new_seq.push(r.clone());
+        //         m = if let Some(m) = merged_iter.next() {
+        //             m
+        //         } else {
+        //             seq_iter.for_each(|r| new_seq.push(r.clone()));
+        //             break;
+        //         };
+        //     }
 
-            // No overlap
-            else {
-                m = if let Some(m) = merged_iter.next() {
-                    m
-                } else {
-                    seq_iter.for_each(|r| new_seq.push(r.clone()));
-                    break;
-                };
-            }
-        }
+        //     // No overlap
+        //     else {
+        //         m = if let Some(m) = merged_iter.next() {
+        //             m
+        //         } else {
+        //             seq_iter.for_each(|r| new_seq.push(r.clone()));
+        //             break;
+        //         };
+        //     }
+        // }
         
-        mem::swap(seq, &mut new_seq);
+        // mem::swap(seq, &mut new_seq);
 
-        merged
+        // merged
     }
 	
 	fn predict(
 		&self,
-		values_up_till_now: &[Data],
-	) -> Self::Data {
-        let n_points = values_up_till_now.len();
-
+        i: usize,
+		vertices_up_till_now: &[usize],
+        attribute: &[NdVector<N, i32>],
+	) -> NdVector<N, i32> {
         // Find the the most recent opposite face.
-        // 'diagonal' is the vertex opposite to 'n_points', and 'a' and 'b' are the other points such that 'a<b',
-        // so that 'a', 'n_points', 'b', 'diagonal' form a parallelogram.
-        let [a,b,diagonal] = self.faces.iter()
-            .filter(|f| f.contains(&n_points))
-            .filter(|f| f.iter().all(|&v| v==n_points || v<n_points))
-            .map(|&[a,b,c]| 
-                if a == n_points {
-                    [b, c]
-                } else if b == n_points {
-                    [a, c]
+        // 'diagonal' is the vertex opposite to 'i', and 'a' and 'b' are the other points
+        // so that 'a', 'i', 'b', and 'diagonal' form a parallelogram.
+        let [a,b,diagonal] = {
+            if let Some(opp) = self.corner_table.opposite(i) {
+                let opp_v = self.corner_table.vertex_idx(opp);
+                if vertices_up_till_now.contains(&opp_v) {
+                    // we found the opposite corner
+                    [self.corner_table.next(i), self.corner_table.previous(i), opp]
                 } else {
-                    [a, b]
+                    // If there is no opposite corner, then we cannot do the parallelogram prediction.
+                    // return the most recent value instead.
+                    let last_v = if let Some(last) = vertices_up_till_now.last() {
+                        *last
+                    } else {
+                        // If there are no vertices or corners up till now, return a zero vector.
+                        return NdVector::<N, i32>::zero();
+                    };
+                    return attribute[last_v].clone();
                 }
-            )
-            .filter_map(|[a,b]| {
-                // Todo: This can be highly optimized.
-                if a >= n_points || b >= n_points {
-                    return None;
-                }
-                let face = self.faces.iter()
-                    .filter(|f| f.contains(&a) && f.contains(&b) && !f.contains(&n_points))
-                    .find(|f| f.iter().all(|&v| v<n_points));
-                if let Some(face) = face {
-                    let diagonal = *face.iter()
-                        .find(|&&v| v != a && v != b )
-                        .unwrap();
-                    Some([a, b, diagonal])
-                }
-                else {
-                    None
-                }
-            })
-            .last()
-            .unwrap();
+            } else {
+                // If there is no opposite corner, then we cannot do the parallelogram prediction.
+                // return the most recent value instead.
+                let last_v = if let Some(last) = vertices_up_till_now.last() {
+                    *last
+                } else {
+                    // If there are no vertices or corners up till now, return a zero vector.
+                    return NdVector::<N, i32>::zero();
+                };
+                return attribute[last_v].clone();
+            }
+        };
+        
+        let diagonal = self.corner_table.vertex_idx(diagonal);
+        let a = self.corner_table.vertex_idx(a);
+        let b = self.corner_table.vertex_idx(b);
 
-        let a_coord = values_up_till_now[a].clone();
-        let b_coord = values_up_till_now[b].clone();
-        let diagonal_coord = values_up_till_now[diagonal].clone();
+        let a_coord = attribute[a].clone();
+        let b_coord = attribute[b].clone();
+        let diagonal_coord = attribute[diagonal].clone();
         a_coord + b_coord - diagonal_coord
     }
 }

@@ -19,6 +19,8 @@ impl EncodedGeometryType {
     }
 }
 
+const METADATA_FLAG_MASK: u16 = 32768;
+
 pub fn encode_header<W>(writer: &mut W, cfg: &super::Config) -> Result<(), Err>
 where
     W: ByteWriter,
@@ -29,8 +31,8 @@ where
     });
 
     // Write the version
-    writer.write_u8(1);
-    writer.write_u8(5);
+    writer.write_u8(2);
+    writer.write_u8(2);
 
     // Write encoder type
     let id = cfg.geometry_type.get_id();
@@ -39,6 +41,13 @@ where
     // Write the encoding method
     let encoder_method = cfg.encoder_method.get_id() as u8;
     writer.write_u8(encoder_method);
+
+    // Write the connectivity encoder config
+    if cfg.metdata {
+        writer.write_u16(METADATA_FLAG_MASK);
+    } else {
+        writer.write_u16(0);
+    }
 
     Ok(())
 }

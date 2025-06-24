@@ -1,48 +1,35 @@
 pub mod difference;
+pub mod wrapped_difference;
 pub(crate) mod geom;
 pub mod orthogonal;
 pub mod oct_orthogonal;
 pub mod oct_reflection;
-pub mod oct_difference;
-use crate::encode::attribute::portabilization::PortabilizationImpl;
 
 #[cfg(feature = "evaluation")]
 use crate::eval;
-use crate::prelude::ByteWriter;
-
-use std::vec::IntoIter;
-use std::{
-	cmp,
-	fmt
-};
+use crate::prelude::{ByteWriter, NdVector};
 
 use crate::core::shared::{ConfigType, Vector};
-use crate::shared::attribute::Portable;
 
-use super::portabilization::{self, Portabilization};
-
-#[remain::sorted]
-#[enum_dispatch::enum_dispatch(PredictionTransformImpl<Data>)]
-pub enum PredictionTransform<Data> 
-	where Data: Vector + Portable
+#[enum_dispatch::enum_dispatch(PredictionTransformImpl<N>)]
+pub enum PredictionTransform<const N: usize> 
 {
-	Difference(difference::Difference<Data>),
-	NoTransform(NoPredictionTransform<Data>),
-	OctahedralDifference(oct_difference::OctahedronDifferenceTransform<Data>),
-	OctahedralOrthogonal(oct_orthogonal::OctahedronOrthogonalTransform<Data>),
-	OctahedralReflection(oct_reflection::OctahedronReflectionTransform<Data>),
-	Orthogonal(orthogonal::OrthogonalTransform<Data>),
+	Difference(difference::Difference<N>),
+	WrappedDifference(wrapped_difference::WrappedDifference<N>),
+	NoTransform(NoPredictionTransform<N>),
+	OctahedralOrthogonal(oct_orthogonal::OctahedronOrthogonalTransform<N>),
+	OctahedralReflection(oct_reflection::OctahedronReflectionTransform<N>),
+	Orthogonal(orthogonal::OrthogonalTransform<N>),
 }
 
-impl<Data> PredictionTransform<Data> 
-	where Data: Vector + Portable
+impl<const N: usize> PredictionTransform<N> 
 {
 	pub(crate) fn new(cfg: Config) -> Self {
 		let ty = cfg.ty;
 		match ty {
 			PredictionTransformType::NoTransform => PredictionTransform::NoTransform(NoPredictionTransform::new(cfg)),
 			PredictionTransformType::Difference => PredictionTransform::Difference(difference::Difference::new(cfg)),
-			PredictionTransformType::OctahedralDifference => PredictionTransform::OctahedralDifference(oct_difference::OctahedronDifferenceTransform::new(cfg)),
+			PredictionTransformType::WrappedDifference => PredictionTransform::WrappedDifference(wrapped_difference::WrappedDifference::new(cfg)),
 			PredictionTransformType::OctahedralReflection => PredictionTransform::OctahedralReflection(oct_reflection::OctahedronReflectionTransform::new(cfg)),
 			PredictionTransformType::OctahedralOrthogonal => PredictionTransform::OctahedralOrthogonal(oct_orthogonal::OctahedronOrthogonalTransform::new(cfg)),
 			PredictionTransformType::Orthogonal => PredictionTransform::Orthogonal(orthogonal::OrthogonalTransform::new(cfg)),
@@ -52,7 +39,7 @@ impl<Data> PredictionTransform<Data>
 		match self {
 			PredictionTransform::NoTransform(_) => PredictionTransformType::NoTransform,
 			PredictionTransform::Difference(_) => PredictionTransformType::Difference,
-			PredictionTransform::OctahedralDifference(_) => PredictionTransformType::OctahedralDifference,
+			PredictionTransform::WrappedDifference(_) => PredictionTransformType::WrappedDifference,
 			PredictionTransform::OctahedralReflection(_) => PredictionTransformType::OctahedralReflection,
 			PredictionTransform::OctahedralOrthogonal(_) => PredictionTransformType::OctahedralOrthogonal,
 			PredictionTransform::Orthogonal(_) => PredictionTransformType::Orthogonal,
@@ -62,13 +49,14 @@ impl<Data> PredictionTransform<Data>
 
 
 #[enum_dispatch::enum_dispatch]
-pub(crate) trait PredictionTransformImpl<Data> {
+pub(crate) trait PredictionTransformImpl<const N: usize> {
 	/// transforms the data (the correction value) with the tentative metadata value.
 	/// The tentative metadata can be determined by the function without any restriction,
 	/// but it needs to be returned. The output of the transform might get later on 
 	/// fixed by the metadata universal to the attribute after all the transforms are
 	/// done once for each attribute value.
-	fn map_with_tentative_metadata(&mut self, orig: Data, pred: Data);
+	fn map_with_tentative_metadata(&mut self, orig: NdVector<N, i32>, pred: NdVector<N, i32>)
+		where NdVector<N, i32>: Vector<N, Component = i32>;
 	
 	/// squeezes the transform results having computed the entire attribute and
 	/// gives up the final data.
@@ -76,41 +64,51 @@ pub(crate) trait PredictionTransformImpl<Data> {
 	/// and the transformed data, or doing some trade-off's between the tentative
 	/// metadata and the transformed data to decide the global metadata that will 
 	/// be encoded to buffer.
-	fn squeeze<W>(&mut self, writer: &mut W) 
-		where W: ByteWriter;
-
-	/// Returns the final data after portabilizing.
-	fn out<W>(self, writer: &mut W) -> IntoIter<IntoIter<u8>> 
-		where W: ByteWriter;
+	fn squeeze<W>(self, writer: &mut W) -> Vec<NdVector<N, i32>>
+		where 
+			W: ByteWriter,
+			NdVector<N, i32>: Vector<N, Component = i32>;
 }
 
 
 
-#[remain::sorted]
 #[derive(Clone, Copy, Debug)]
 pub enum PredictionTransformType {
-	Difference,
 	NoTransform,
-	OctahedralDifference,
+	Difference,
+	WrappedDifference,
 	OctahedralOrthogonal,
 	OctahedralReflection,
+	
 	Orthogonal,
 }
 
 impl PredictionTransformType {
+	/// gets the prediction transform type from its id.
+	#[inline]
 	pub(crate) fn get_id(&self) -> u8 {
 		match self {
-			PredictionTransformType::NoTransform => 0,
-			PredictionTransformType::Difference => 1,
-			PredictionTransformType::OctahedralDifference => 2,
-			PredictionTransformType::OctahedralReflection => 3,
-			PredictionTransformType::OctahedralOrthogonal => 4,
-			PredictionTransformType::Orthogonal => 5,
+			PredictionTransformType::NoTransform => 0xFF, // -1 in i8
+			PredictionTransformType::Difference => 0,
+			PredictionTransformType::WrappedDifference => 1,
+			PredictionTransformType::OctahedralReflection => 2,
+			PredictionTransformType::OctahedralOrthogonal => 3,
+
+			PredictionTransformType::Orthogonal => 4,
 		}
+	}
+
+	/// Writes the prediction transform type to a byte stream.
+	#[inline]
+	pub(crate) fn write_to<W>(self, writer: &mut W) 
+		where W: ByteWriter
+	{
+		let id = self.get_id();
+		writer.write_u8(id);
 	}
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Config {
 	pub ty: PredictionTransformType,
 	pub portabilization: super::portabilization::Config,
@@ -126,45 +124,27 @@ impl ConfigType for Config {
 }
 
 
-pub struct NoPredictionTransform<Data> 
-	where Data: Vector + Portable
+pub struct NoPredictionTransform<const N: usize> 
 {
-	cfg: portabilization::Config,
-	out: Vec<Data>,
-	_marker: std::marker::PhantomData<Data>,
+	out: Vec<NdVector<N, i32>>,
 }
 
-impl<Data> NoPredictionTransform<Data> 
-	where Data: Vector + Portable
+impl<const N: usize> NoPredictionTransform<N> 
 {
 	pub fn new(cfg: Config) -> Self {
 		Self {
-			cfg: cfg.portabilization,
 			out: Vec::new(),
-			_marker: std::marker::PhantomData,
 		}
 	}
 }
 
-impl<Data> PredictionTransformImpl<Data> for NoPredictionTransform<Data> 
-	where 
-		Data: Vector + Portable,
+impl<const N: usize> PredictionTransformImpl<N> for NoPredictionTransform<N> 
 {
-	fn map_with_tentative_metadata(&mut self, orig: Data, _pred: Data) {
+	fn map_with_tentative_metadata(&mut self, orig: NdVector<N,i32>, _pred: NdVector<N,i32>) {
 		self.out.push(orig);
 	}
 
-	fn out<W>(self, writer: &mut W) -> IntoIter<IntoIter<u8>>
-		where W: ByteWriter
-	{
-		Portabilization::new(
-		self.out,
-			self.cfg,
-			writer
-		).portabilize()
-	}
-
-	fn squeeze<W>(&mut self, writer: &mut W) 
+	fn squeeze<W>(self, writer: &mut W) -> Vec<NdVector<N, i32>>
 		where W: ByteWriter
 	{
 		#[cfg(feature = "evaluation")]
@@ -175,5 +155,7 @@ impl<Data> PredictionTransformImpl<Data> for NoPredictionTransform<Data>
             }
             eval::array_scope_end(writer);
         }
+
+		self.out
 	}
 }

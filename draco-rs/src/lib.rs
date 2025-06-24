@@ -10,7 +10,7 @@ pub mod shared;
 pub mod encode;
 
 /// Defines the decoders.
-// pub mod decode;
+pub mod decode;
 
 /// Contains the shared definitions, native objects, and the buffer.
 pub mod core;

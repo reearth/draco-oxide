@@ -1,8 +1,8 @@
 use crate::core::shared::{DataValue, NdVector, Vector};
 
-pub(crate) fn rotation_matrix_from<Data>(axis: Data, angle: f64) -> [Data; 3] 
+pub(crate) fn rotation_matrix_from<Data, const N: usize>(axis: Data, angle: f64) -> [Data; 3] 
     where
-        Data: Vector,
+        Data: Vector<N>,
         Data::Component: DataValue
 {
     let cos_angle = Data::Component::from_f64(angle.cos());
@@ -36,15 +36,17 @@ pub(crate) fn rotation_matrix_from<Data>(axis: Data, angle: f64) -> [Data; 3]
 use crate::core::shared::Abs;
 /// Transforms the data to the octahedron space.
 /// Make sure that the data is three dimensional.
-pub(crate) unsafe fn octahedral_transform<Data>(v: Data) -> NdVector<2, f64>
-	where 
-		Data: Vector,
-		Data::Component: DataValue
+pub(crate) unsafe fn octahedral_transform<const N: usize, Data>(v: Data) -> NdVector<2, f32> 
+	where Data: Vector<N>,
+	      Data::Component: DataValue
 {
+	assert!(N==3);
+	assert!(v!=Data::zero(), "Zero vector cannot be transformed to octahedron space as it is not a unit vector.");
 	let x = v.get_unchecked(0);
 	let y = v.get_unchecked(1);
 	let z = v.get_unchecked(2);
 
+	// abs_sum is guaranteed to be non-zero a zero vector as we checked above.
 	let abs_sum = x.abs() + y.abs() + z.abs();
 
 	let mut u = *x / abs_sum;
@@ -52,7 +54,7 @@ pub(crate) unsafe fn octahedral_transform<Data>(v: Data) -> NdVector<2, f64>
 
 	if *z < Data::Component::zero() {
 		let one = Data::Component::one();
-		let minus_one = Data::Component::zero() - one;
+		let minus_one = Data::Component::from_f64(-1.0);
 		let u_sign = if u > Data::Component::zero() {
 			one
 		} else {
@@ -71,8 +73,8 @@ pub(crate) unsafe fn octahedral_transform<Data>(v: Data) -> NdVector<2, f64>
 
 	let mut out = NdVector::<2, _>::zero();
 	unsafe {
-		*out.get_unchecked_mut(0) = u.to_f64();
-		*out.get_unchecked_mut(1) = v.to_f64();
+		*out.get_unchecked_mut(0) = u.to_f64() as f32;
+		*out.get_unchecked_mut(1) = v.to_f64() as f32;
 	}
 
 	out
@@ -82,9 +84,9 @@ pub(crate) unsafe fn octahedral_transform<Data>(v: Data) -> NdVector<2, f64>
 /// Data is transformed back from the octahedron space.
 /// Safety:
 /// 'Data' must be three dimensional.
-pub(crate) unsafe fn octahedral_inverse_transform<Data>(v: NdVector<2, f64>) -> Data 
+pub(crate) unsafe fn octahedral_inverse_transform<Data, const N: usize>(v: NdVector<2, f32>) -> Data 
 	where 
-		Data: Vector,
+		Data: Vector<N>,
 		Data::Component: DataValue
 {
 	let u = v.get_unchecked(0);
@@ -114,9 +116,9 @@ pub(crate) unsafe fn octahedral_inverse_transform<Data>(v: NdVector<2, f64>) -> 
 
 	let mut out = Data::zero();
 	// safety condition is upheld
-	*out.get_unchecked_mut(0) = Data::Component::from_f64(x/norm);
-	*out.get_unchecked_mut(1) = Data::Component::from_f64(y/norm);
-	*out.get_unchecked_mut(2) = Data::Component::from_f64(z/norm);
+	*out.get_unchecked_mut(0) = Data::Component::from_f64((x/norm) as f64);
+	*out.get_unchecked_mut(1) = Data::Component::from_f64((y/norm) as f64);
+	*out.get_unchecked_mut(2) = Data::Component::from_f64((z/norm) as f64);
 
 	out
 }

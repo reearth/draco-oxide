@@ -23,6 +23,7 @@ pub struct Config {
     attribute_encoder_cfg: attribute::Config,
     geometry_type: header::EncodedGeometryType,
     encoder_method: shared::connectivity::Encoder,
+    metdata: bool
 }
 
 impl ConfigType for Config {
@@ -32,6 +33,7 @@ impl ConfigType for Config {
             attribute_encoder_cfg: attribute::Config::default(),
             geometry_type: header::EncodedGeometryType::TrianglarMesh,
             encoder_method: shared::connectivity::Encoder::Edgebreaker,
+            metdata: false,
         }
     }
 }
@@ -62,7 +64,14 @@ pub fn encode<W>(mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err>
     debug_write!("Header done, now starting metadata.", writer);
 
     // Encode metadata
-    metadata::encode_metadata(&mesh, writer)?;
+    if cfg.metdata {
+        #[cfg(feature = "evaluation")]
+        eval::scope_begin("metadata", writer);
+        metadata::encode_metadata(&mesh, writer)?;
+        #[cfg(feature = "evaluation")]
+        eval::scope_end(writer);
+    }
+
 
     debug_write!("Metadata done, now starting connectivity.", writer);
 

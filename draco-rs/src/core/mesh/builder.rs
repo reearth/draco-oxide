@@ -23,18 +23,19 @@ impl MeshBuilder {
         }
     }
 
-    pub fn add_attribute<Data: Vector>(&mut self, data: Vec<Data>, att_type: AttributeType, parents: Vec<AttributeId>) -> AttributeId {
+    pub fn add_attribute<Data, const N: usize>(&mut self, data: Vec<Data>, att_type: AttributeType, domain: AttributeDomain, parents: Vec<AttributeId>) -> AttributeId 
+        where Data: Vector<N>
+    {
         self.attributes.push(
-            Attribute::from(AttributeId::new(self.current_id), data, att_type, AttributeDomain::Position, parents)
+            Attribute::from(AttributeId::new(self.current_id), data, att_type, domain, parents)
         );
         let id = self.current_id;
         self.current_id += 1;
         AttributeId::new(id)
     }
 
-    pub fn set_connectivity_attribute(&mut self, data: Vec<[usize; 3]>) -> AttributeId {
+    pub fn set_connectivity_attribute(&mut self, data: Vec<[usize; 3]>) {
         self.faces = data;
-        AttributeId::new(usize::MAX)
     }
 
     pub fn build(self) -> Result<Mesh, Err> {
@@ -44,7 +45,7 @@ impl MeshBuilder {
 
         let mut attributes = Self::get_sorted_attributes(attributes);
         Self::check_attribute_size(&attributes)?;
-        Self::check_position_and_connectivity(&mut attributes)?;
+        Self::check_position_and_connectivity(&mut attributes, &faces)?;
         
         Ok(
             Mesh {
@@ -98,14 +99,12 @@ impl MeshBuilder {
     }
 
     /// Checks if the position attribute values are large enough to be used by the connectivity attributes.
-    fn check_position_and_connectivity(atts: &mut Vec<Attribute>) -> Result<(), Err> {
-        for pos_att in atts.iter().filter(|att| att.get_attribute_type() == AttributeType::Position) {
-            if let Some(conn_att) = pos_att.get_parents().iter().find_map(|parent_id| {
-                atts.iter().find(|att| att.get_id() == *parent_id && att.get_attribute_type() == AttributeType::Connectivity)
-            }) {
-                // Safety: conn_att is a connectivity attribute.
-                let conn_att = unsafe{ conn_att.as_slice_unchecked::<[usize;3]>() };
-                let max_idx = conn_att.iter().flat_map(|face| face.iter()).copied().max().unwrap_or(0);
+    fn check_position_and_connectivity(atts: &mut Vec<Attribute>, faces: &Vec<[usize; 3]>) -> Result<(), Err> {
+        // Check that all face indices are valid for the position attributes
+        if !faces.is_empty() {
+            let max_idx = faces.iter().flat_map(|face| face.iter()).copied().max().unwrap_or(0);
+            
+            for pos_att in atts.iter().filter(|att| att.get_attribute_type() == AttributeType::Position) {
                 if max_idx >= pos_att.len() {
                     return Err(Err::PositionAndConnectivityNotCompatible(max_idx, pos_att.len()));
                 }
@@ -122,15 +121,7 @@ impl MeshBuilder {
             let parents = att.get_parents();
             for parent in parents {
                 let parent_att = attributes.iter().find(|att| att.get_id() == *parent).unwrap();
-                let parent_len = if parent_att.get_attribute_type() == AttributeType::Connectivity {
-                    parent_att.as_slice::<[usize; 3]>().iter()
-                        .flat_map(|face| *face)
-                        .map(|v|v+1)
-                        .max()
-                        .unwrap_or(0)
-                } else {
-                    parent_att.len()
-                };
+                let parent_len = parent_att.len();
                 if att.len() != parent_len {
                     return Err(Err::AttributeSizeError(att.get_id().as_usize(), att.len(), parent_att.get_id().as_usize(), parent_len));
                 }
@@ -142,7 +133,7 @@ impl MeshBuilder {
 
 
 #[remain::sorted]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum Err {
     #[error("The attribute {0} has {1} values, but the parent attribute {2} has a size of {3}.")]
     AttributeSizeError(usize, usize, usize, usize),
