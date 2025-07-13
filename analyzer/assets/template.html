@@ -242,7 +242,13 @@
 
   <script type="module">
     import { setupComparison } from './viewer.js';
-    setupComparison('./original.obj', './result.obj');
+    // Check if we have GLB files, otherwise fall back to OBJ
+    const fileType = '{{file_type}}' || 'obj';
+    if (fileType === 'gltf') {
+      setupComparison('./{{original_filename}}', './result.glb', 'gltf');
+    } else {
+      setupComparison('./original.obj', './result.obj', 'obj');
+    }
   </script>
 </body>
 </html>

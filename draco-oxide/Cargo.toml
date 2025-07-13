@@ -1,0 +1,33 @@
+[package]
+description = "draco-oxide"
+name = "draco-oxide"
+authors = ["Re:Earth Contributors"]
+edition = "2021"
+exclude = ["benches/", "test-data/", "testdata/"]
+rust-version = "1.84"
+version = "0.0.1"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/reearth/draco-oxide"
+repository = "https://github.com/reearth/draco-oxide"
+
+[dependencies]
+enum_dispatch = "0.3.13"
+nd_vector = { path = "macros/nd_vector" }
+lazy_static = "1.5.0"
+remain = "*"
+seq-macro = "0.3.6"
+serde = { version = "1.0", features = ["derive"] }
+schemars = "0.8"
+serde_json = "1.0"
+thiserror = "*"
+tobj = "4.0.3"
+faer = "0.22.6"
+gltf = { version = "1.4", features = ["extensions", "guess_mime_type", "image", "import"] }
+image = { version = "0.25", features = ["webp"] }
+base64 = "0.21"
+indexmap = "2.0"
+
+[features]
+default = []
+evaluation = []
+debug_format = []

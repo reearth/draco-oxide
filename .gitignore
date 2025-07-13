@@ -10,5 +10,11 @@ target/
 *.pdb
 Cargo.lock
 
-
+# analyzer outputs
 analyzer/outputs
+
+# test outputs
+draco-oxide/tests/outputs
+
+# private test data
+private_tests
