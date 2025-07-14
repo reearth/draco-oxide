@@ -13,7 +13,7 @@ use crate::core::scene::Scene;
 use crate::core::scene::TrsMatrix;
 use crate::core::texture::TextureMap;
 use crate::prelude::AttributeType;
-use crate::MeshBuilder;
+use crate::prelude::MeshBuilder;
 use crate::core::shared::NdVector;
 
 /// Holds extension attributes that the gltf crate doesn't recognize
@@ -1894,7 +1894,7 @@ impl GltfDecoder {
         buffers: &[gltf::buffer::Data], 
         extension_attributes: Option<&ExtensionAttributes>,
         _gltf_model: &gltf::Document
-    ) -> Result<crate::Mesh, Err> {
+    ) -> Result<Mesh, Err> {
         use gltf::mesh::Mode;
         use gltf::Semantic;
         
@@ -1906,7 +1906,7 @@ impl GltfDecoder {
         }
 
         // Create a mesh builder
-        let mut mesh_builder = crate::MeshBuilder::new();
+        let mut mesh_builder = MeshBuilder::new();
         
         // Process indices if available
         let mut face_indices = Vec::new();

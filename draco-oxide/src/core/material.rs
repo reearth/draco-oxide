@@ -93,6 +93,7 @@ pub(crate) struct Material {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(unused)]
 pub enum TransparencyMode {
     Opaque = 0,
     Mask,

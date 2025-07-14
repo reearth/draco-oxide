@@ -4,14 +4,6 @@ pub(crate) const L_RANS_BASE: usize = 4096;
 pub(crate) const DEFAULT_RANS_PRECISION: usize = 12;
 pub(crate) const DEFAULT_RABS_PRECISION: usize = 8;
 
-pub trait Symbol {
-    fn cardinality() -> usize;
-    fn size(&self) -> usize;
-    fn get_id(&self) -> usize;
-    fn from_id(id: usize) -> Self;
-}
-
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SymbolEncodingMethod {
     #[allow(unused)]

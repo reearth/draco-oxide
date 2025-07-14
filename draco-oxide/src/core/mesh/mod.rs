@@ -6,6 +6,9 @@ use super::{attribute::{AttributeType, ComponentDataType, Attribute}, shared::{F
 use crate::core::{material::MaterialLibrary, shared::{NdVector, VertexIdx}};
 use crate::utils::geom::point_to_face_distance_3d;
 
+/// Represents a 3D mesh.
+/// It consists of a list of faces, where each face is defined by three vertex indices, 
+/// and a list of attributes ([Attribute]) that can be associated with the mesh.
 #[derive(Clone, Debug)]
 pub struct Mesh {
     pub(crate) faces: Vec<[VertexIdx; 3]>,

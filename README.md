@@ -19,7 +19,7 @@
 ### Encoder Highlights
 
 * Triangle‑mesh compression with configurable speed/ratio presets.
-* Basic GLTF transcoder (`*.gltf` or `*.glb` → `*.glb` with mesh buffer compressed).
+* Basic GLTF transcoder (`*.gltf` or `*.glb` → `*.glb` with mesh buffer compressed via [KHR_draco_mesh_compression extension](https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_draco_mesh_compression)).
 * Pure‑Rust implementation.
 * `no_std` + `alloc` compatible; builds to **WASM32**, **x86\_64**, **aarch64**, and more.
 
@@ -69,7 +69,11 @@ See the [draco-oxide/examples](draco-oxide/examples/) directory for more.
 ### CLI
 
 ```bash
+# compress input.obj into a draco file output.drc
 cargo run --bin cli -- -i path/to/input.obj -o path/to/output.drc
+
+# transcodes gltf.obj into a draco compressed glb file output.dlb as specified 
+# in KHR_draco_mesh_compression extension.
 cargo run --bin cli -- --transcode path/to/input.glb -o path/to/output.glb
 ```
 ---

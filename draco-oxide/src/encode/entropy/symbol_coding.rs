@@ -1,5 +1,6 @@
+use crate::core::bit_coder::BitWriter;
 use crate::encode::entropy::rans::RansSymbolEncoder;
-use crate::prelude::{BitWriter, ByteWriter};
+use crate::prelude::ByteWriter;
 use crate::shared::entropy::SymbolEncodingMethod;
 use super::rans;
 
