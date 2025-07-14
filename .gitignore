@@ -9,3 +9,12 @@ target/
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 Cargo.lock
+
+# analyzer outputs
+analyzer/outputs
+
+# test outputs
+draco-oxide/tests/outputs
+
+# private test data
+private_tests

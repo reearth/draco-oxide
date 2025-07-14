@@ -1,6 +1,9 @@
 [package]
 name = "cli"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+draco-oxide = { path = "../draco-oxide" }
+clap = { version = "4.0", features = ["derive"] }
+anyhow = "1.0"
