@@ -87,12 +87,3 @@ impl<Data, const N: usize> PortabilizationImpl<N> for OctahedralQuantization<Dat
     }
 }
         
-
-
- #[cfg(all(test, not(feature = "evaluation")))]
-mod tests {
-    use crate::{encode::attribute::portabilization::PortabilizationType, prelude::{FunctionalByteWriter, NdVector}};
-
-    use super::*;
-    // ToDo: Add tests
-}

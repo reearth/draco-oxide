@@ -1,7 +1,7 @@
 use std::io::Write;
-use draco::eval::EvalWriter;
-use draco::io::obj::load_obj;
-use draco::prelude::*;
+use draco_oxide::eval::EvalWriter;
+use draco_oxide::io::obj::load_obj;
+use draco_oxide::prelude::*;
 
 const MESH_NAME: &str = "tetrahedron";
 
