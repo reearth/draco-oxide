@@ -1,4 +1,4 @@
-# draco-oxcide
+# draco-oxide
 
 &#x20;&#x20;
 
@@ -72,7 +72,7 @@ See the [draco-oxide/examples](draco-oxide/examples/) directory for more.
 # compress input.obj into a draco file output.drc
 cargo run --bin cli -- -i path/to/input.obj -o path/to/output.drc
 
-# transcodes gltf.obj into a draco compressed glb file output.dlb as specified 
+# transcode gltf.obj into a draco compressed glb file output.glb as specified 
 # in KHR_draco_mesh_compression extension.
 cargo run --bin cli -- --transcode path/to/input.glb -o path/to/output.glb
 ```
