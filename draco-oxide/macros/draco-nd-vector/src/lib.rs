@@ -251,7 +251,7 @@ pub fn impl_ndvector_ops(_input: TokenStream) -> TokenStream {
         .unwrap_or(4); // Default max vec size is 4 if missing or invalid
 
     let expanded = quote! {
-        use nd_vector::impl_ndvector_ops_for_dim;
+        use draco_nd_vector::impl_ndvector_ops_for_dim;
         seq_macro::seq!(N in 1..=#n {
             impl_ndvector_ops_for_dim!(N);
         });

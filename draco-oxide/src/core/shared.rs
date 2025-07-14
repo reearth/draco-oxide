@@ -1,4 +1,4 @@
-use nd_vector::impl_ndvector_ops;
+use draco_nd_vector::impl_ndvector_ops;
 
 use super::attribute::ComponentDataType;
 use crate::core::bit_coder::ReaderErr;

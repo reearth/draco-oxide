@@ -1,5 +1,5 @@
 [package]
-name = "nd-vector"
+name = "draco-nd-vector"
 version = "0.0.0"
 edition = "2024"
 description = "Contains macros that writes low dimensional vectors implementation."
