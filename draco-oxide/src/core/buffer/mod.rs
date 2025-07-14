@@ -35,6 +35,7 @@ pub struct Buffer<Order: OrderConfig = MsbFirst> {
     _phantom: std::marker::PhantomData<Order>,
 }
 
+#[allow(dead_code)]
 impl<Order: OrderConfig> Buffer <Order> {
 	/// constructs an empty buffer
     pub fn new() -> Self {

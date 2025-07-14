@@ -1,4 +1,10 @@
-use crate::{core::{material::MaterialLibrary, mesh::metadata::Metadata, structural_metadata::StructuralMetadata, texture::TextureLibrary}, Mesh};
+use crate::core::{
+    material::MaterialLibrary, 
+    mesh::metadata::Metadata, 
+    structural_metadata::StructuralMetadata, 
+    texture::TextureLibrary
+};
+use crate::prelude::Mesh;
 
 type MeshGroupIdx = usize;
 type MeshIdx = usize;
@@ -311,12 +317,6 @@ pub struct MaterialsVariantsMapping {
     pub variants: Vec<i32>,
 }
 
-impl MaterialsVariantsMapping {
-    pub fn new(material: i32, variants: Vec<i32>) -> Self {
-        Self { material, variants }
-    }
-}
-
 // Describes mesh instance stored in a mesh group, including base mesh index,
 // material index, and materials variants mappings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,28 +334,18 @@ impl MeshInstance {
             materials_variants_mappings: Vec::new(),
         }
     }
-
-    pub fn new_with_variants(
-        mesh_index: MeshIdx,
-        material_index: i32,
-        materials_variants_mappings: Vec<MaterialsVariantsMapping>,
-    ) -> Self {
-        Self {
-            mesh_index,
-            material_index,
-            materials_variants_mappings,
-        }
-    }
 }
 
 // This struct is used to hold ordered mesh instances that refer to one or more
 // base meshes, materials, and materials variants mappings.
+#[allow(unused)]
 #[derive(Debug, Clone, Default)]
 pub struct MeshGroup {
     name: String,
     mesh_instances: Vec<MeshInstance>,
 }
 
+#[allow(unused)]
 impl MeshGroup {
     pub fn new() -> Self {
         Self::default()
@@ -411,6 +401,7 @@ pub struct Skin;
 
 // Light type according to KHR_lights_punctual extension
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(unused)]
 pub enum LightType {
     Directional,
     Point,
@@ -425,6 +416,7 @@ impl Default for LightType {
 
 // Describes a light in a scene according to the KHR_lights_punctual extension.
 #[derive(Debug, Clone, Default)]
+#[allow(unused)]
 pub struct Light {
     name: String,
     color: [f32; 3], // RGB color
@@ -437,6 +429,7 @@ pub struct Light {
     outer_cone_angle: f64,
 }
 
+#[allow(unused)]
 impl Light {
     pub fn new() -> Self {
         Self {
@@ -532,18 +525,6 @@ pub struct Instance {
     // TODO: Support custom instance attributes, e.g., _ID, _COLOR, etc.
 }
 
-impl Instance {
-    pub fn new() -> Self {
-        Self {
-            trs: TrsMatrix::new(),
-        }
-    }
-
-    pub fn new_with_trs(trs: TrsMatrix) -> Self {
-        Self { trs }
-    }
-}
-
 // Error type for InstanceArray operations
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum InstanceArrayError {
@@ -554,24 +535,16 @@ pub enum InstanceArrayError {
 }
 
 // Array of instances for mesh group instancing
+#[allow(unused)]
 #[derive(Debug, Clone, Default)]
 pub struct InstanceArray {
     instances: Vec<Instance>,
 }
 
+#[allow(unused)]
 impl InstanceArray {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn copy(&mut self, other: &InstanceArray) {
-        self.instances.clear();
-        self.instances.reserve(other.instances.len());
-        for instance in &other.instances {
-            let mut new_instance = Instance::new();
-            new_instance.trs.copy(&instance.trs);
-            self.instances.push(new_instance);
-        }
     }
 
     // Adds one |instance| into this mesh group instance array where the
@@ -640,6 +613,7 @@ impl InstanceArray {
 
 
 #[derive(Debug, Clone, thiserror::Error)]
+#[allow(unused)]
 pub enum Err {
     #[error("Mesh index out of range: the index {0} is greater than the number of meshes {1}")]
     MeshIndexOutOfRange(usize, usize),
@@ -791,6 +765,7 @@ impl Scene {
 // This struct is used to create a scene hierarchy from meshes in their local
 // space transformed into scene space.
 #[derive(Debug, Clone, Default)]
+#[allow(unused)]
 pub struct SceneNode {
     name: String,
     trs_matrix: TrsMatrix,
@@ -802,6 +777,7 @@ pub struct SceneNode {
     instance_array_index: Option<InstanceArrayIdx>,
 }
 
+#[allow(unused)]
 impl SceneNode {
     pub fn new() -> Self {
         Self::default()

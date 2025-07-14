@@ -1,5 +1,5 @@
 [package]
-description = "draco-oxide"
+description = "draco-oxide is a rust rewrite of Google's draco mesh compression library."
 name = "draco-oxide"
 authors = ["Re:Earth Contributors"]
 edition = "2021"
@@ -9,10 +9,11 @@ version = "0.1.0-alpha.0"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/reearth/draco-oxide"
 repository = "https://github.com/reearth/draco-oxide"
+readme = "README.md"
 
 [dependencies]
 enum_dispatch = "0.3.13"
-nd_vector = { path = "macros/nd_vector" }
+nd_vector = { path = "macros/nd_vector", version = "0.0.0" }
 lazy_static = "1.5.0"
 remain = "*"
 seq-macro = "0.3.6"

@@ -7,12 +7,12 @@ use crate::core::buffer::LsbFirst;
 use crate::core::corner_table::all_inclusive_corner_table::AllInclusiveCornerTable;
 use crate::core::corner_table::attribute_corner_table::AttributeCornerTable;
 use crate::core::corner_table::GenericCornerTable;
-use crate::core::bit_coder::ByteWriter;
+use crate::core::bit_coder::{BitWriter, ByteWriter};
 use crate::core::corner_table::CornerTable;
 use crate::encode::entropy::rans::{self, RabsCoder};
 use crate::encode::entropy::symbol_coding::encode_symbols;
 use crate::debug_write;
-use crate::prelude::{Attribute, AttributeType, BitWriter};
+use crate::prelude::{Attribute, AttributeType};
 use crate::shared::connectivity::edgebreaker::symbol_encoder::{CrLight, Symbol, SymbolEncoder};
 
 use crate::core::shared::{ConfigType, CornerIdx, EdgeIdx, FaceIdx, VertexIdx};

@@ -2,6 +2,8 @@ use std::{iter::Rev, vec};
 
 use super::buffer::{MsbFirst, OrderConfig};
 
+/// A trait that defines what a byte writer should implement. Users can implement this for any custom
+/// buffer type, and draco-oxide is able to write the output to it.
 pub trait ByteWriter: Sized {
     fn write_u8(&mut self, value: u8);
     fn write_u16(&mut self, value: u16) {
@@ -45,6 +47,8 @@ impl ByteWriter for Vec<u8> {
     }
 }
 
+/// A special byte writer that is provided by draco-oxide that allows users to build
+/// custom byte writers using a cloure.
 pub struct FunctionalByteWriter<R> {
     write_fn: R,
 }
@@ -278,6 +282,8 @@ impl ByteReader for vec::IntoIter<u8> {
 }
 
 
+/// A special byte reader that is provided by draco-oxide that allows users to build
+/// custom byte readers using a cloure.
 pub struct FunctionalByteReader<R> {
     read_fn: R,
 }
@@ -337,6 +343,7 @@ impl<R: FnMut() -> Result<u8, ReaderErr>> FunctionalByteReader<R> {
     }
 }
 
+#[allow(unused)] // will be used in the decoder
 pub struct BitReader<'buffer, Buffer, Order: OrderConfig = MsbFirst> {
     buffer: &'buffer mut Buffer,
 
@@ -350,6 +357,7 @@ pub struct BitReader<'buffer, Buffer, Order: OrderConfig = MsbFirst> {
     phantom: std::marker::PhantomData<Order>,
 }
 
+#[allow(unused)] // will be used in the decoder
 impl<'buffer, Buffer: ByteReader, Order: OrderConfig> BitReader<'buffer, Buffer, Order> {
     /// Spowns a new BitReader from the given buffer if the buffer is not empty.
     /// If the buffer is empty then it returns 'None'.
@@ -443,6 +451,7 @@ pub enum ReaderErr {
 }
 
 
+#[allow(unused)] // will be used in the decoder
 pub trait ReverseByteReader {
     fn read_u8_back(&mut self) -> Result<u8, ReaderErr>;
     fn read_u16_back(&mut self) -> Result<u16, ReaderErr> {

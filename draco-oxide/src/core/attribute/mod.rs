@@ -17,6 +17,11 @@ pub enum Err {
 	InvalidDataTypeId(u8),
 }
 
+/// Represents an attribute in a mesh. An attribute can be an array of values representing potisions
+/// of vertices, or it can be an array of values representing normals of vertices or corners, or faces.
+/// Note that the struct does not have the static type information, so the attribute value can be a 
+/// vector of any type of any dimension, as long as it implements the `Vector` trait. The information about 
+/// the type of the attribute, component type, and the number of components is stored in dynamically.
 #[derive(Debug, Clone, Serialize)]
 pub struct Attribute {
 	/// attribute id
@@ -276,7 +281,7 @@ impl Attribute {
 	}
 
 	/// permutes the data in the buffer according to the given indices, i.e. 
-	/// i-th element in the buffer will be moved to indices[i]-th position.
+	/// `i`-th element in the buffer will be moved to `indices[i]`-th position.
 	pub fn permute(&mut self, indices: &[usize]) {
 		assert!(
 			indices.len() == self.len(),
@@ -296,7 +301,7 @@ impl Attribute {
 	}
 
 	/// permutes the data in the buffer according to the given indices, i.e. 
-	/// i-th element in the buffer will be moved to indices[i]-th position.
+	/// `i`-th element in the buffer will be moved to `indices[i]`-th position.
 	/// # Safety:
 	/// This function assumes that the indices are valid, i.e. they are within the bounds of the buffer.
 	pub fn permute_unchecked(&mut self, indices: &[usize]) {

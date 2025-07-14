@@ -1,7 +1,7 @@
 use crate::core::attribute::AttributeDomain;
 // use tobj to load the obj file and convert it to our internal mesh representation
 use crate::prelude::{AttributeType, MeshBuilder, NdVector};
-use crate::Mesh;
+use crate::prelude::Mesh;
 use std::fmt::Debug;
 use std::path::Path;
 

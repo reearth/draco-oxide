@@ -1,5 +1,6 @@
+use crate::core::bit_coder::BitReader;
 use crate::encode::connectivity::edgebreaker::Err;
-use crate::prelude::{BitReader, ByteReader};
+use crate::prelude::ByteReader;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Symbol {

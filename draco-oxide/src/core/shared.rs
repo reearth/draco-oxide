@@ -37,6 +37,7 @@ pub trait ConfigType {
 }
 
 pub trait ToUsize {
+    #[allow(unused)]
     fn to_usize(self)-> usize;
 }
 
@@ -96,6 +97,7 @@ impl_abs!(negatable: f32, f64, i8, i16, i32, i64);
 impl_abs!(non_negatable: u8, u16, u32, u64);
 
 pub trait Acos {
+    #[allow(unused)]
     fn acos(self) -> Self;
 }
 
@@ -140,6 +142,7 @@ impl_max!(f32, f64);
 impl_max!(u8, u16, u32, u64, i8, i16, i32, i64);
 
 
+/// A trait that defines the basic mathematical operations and properties for the elements of the vector.
 pub trait DataValue: 
     Clone + Copy + fmt::Debug + PartialEq + PartialOrd
     + Portable
@@ -305,6 +308,13 @@ impl_data_value!(float:
 );
 
 
+/// An array of `N` elements of type `T`, where `T` is often a [DataValue], 
+/// which is a trait that defines the basic mathematical operations 
+/// and properties for the elements of the vector. This means that
+/// `NdVector` can be used to represent vectors in `N`-dimensional space (or a free module)
+///  over `T`. The vector operations for this type are implemented on a static basis, 
+/// meaning that the operations are defined for a fixed number of dimensions at compile time 
+/// without looping over `N` elements.
 #[derive(Clone, Copy)]
 pub struct NdVector<const N: usize, T> {
     data: [T; N],
@@ -398,13 +408,6 @@ pub trait ElementWiseDiv<Rhs=Self> {
     type Output;
     fn elem_div(self, other: Rhs) -> Self::Output;
 }
-
-
-#[derive(Debug)]
-pub struct ImplDivErr {
-    pub from: ComponentDataType,
-}
-
 
 
 impl<const N: usize, T> Cross for NdVector<N, T> 

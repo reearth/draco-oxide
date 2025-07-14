@@ -55,6 +55,7 @@ pub enum Err {
 }
 
 
+/// Encodes the input mesh into a provided byte stream using the provided configuration.
 pub fn encode<W>(mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err> 
     where W: ByteWriter
 {

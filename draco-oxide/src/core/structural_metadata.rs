@@ -9,12 +9,6 @@ pub struct JsonValue {
     // Placeholder for JSON data structure
 }
 
-impl JsonValue {
-    pub fn copy(&mut self, other: &JsonValue) {
-        *self = other.clone();
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PropertyTable {
     // Placeholder for property table data
@@ -58,6 +52,7 @@ pub struct StructuralMetadata {
     property_attributes: Vec<PropertyAttribute>,
 }
 
+#[allow(dead_code)]
 impl StructuralMetadata {
     /// Creates a new StructuralMetadata instance
     pub fn new() -> Self {
@@ -67,7 +62,7 @@ impl StructuralMetadata {
     /// Copies |src| structural metadata into this object.
     pub fn copy(&mut self, src: &StructuralMetadata) {
         // Copy schema.
-        self.schema.json.copy(&src.schema.json);
+        self.schema.json = src.schema.json.clone();
 
         // Copy property tables.
         self.property_tables.clear();
