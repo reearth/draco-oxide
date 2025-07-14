@@ -105,9 +105,9 @@ impl<'mesh> CornerTable<'mesh> {
 
 
         out.compute_table();
-        assert!(!Self::contains_non_manifold_edges(&out.conn_faces), 
-            "The mesh contains non-manifold edges. This is not supported by the corner table."
-        );
+        if Self::contains_non_manifold_edges(&out.conn_faces) {
+            out.handle_no_manifold_edges();
+        }
         out.compute_left_most_corners();
         
         debug_assert!(out.left_most_corners.iter().all(|&c| c < out.num_corners), 
@@ -143,6 +143,93 @@ impl<'mesh> CornerTable<'mesh> {
             }
         }
         false // no non-manifold edges found
+    }
+
+    /// Handles non-manifold edges by breaking the connectivity at them.
+    /// Follows the draco's implementation.
+    fn handle_no_manifold_edges(&mut self) {
+        let mut visited_corners = vec![false; self.num_corners()];
+        let mut sink_vertices: Vec<(VertexIdx, CornerIdx)> = Vec::new();
+        let mut connectivity_updated;
+        loop {
+            connectivity_updated = false;
+            for c in 0..self.num_corners() {
+                if visited_corners[c] {
+                    continue;
+                }
+                sink_vertices.clear();
+
+                // Swing all the way to find the lefft most corner, if any.
+                let mut first_c = c;
+                let mut curr_c = c;
+                while let Some(next_c) = self.swing_left(curr_c) {
+                    if next_c == first_c || visited_corners[next_c] {
+                        break;
+                    }
+                    curr_c = next_c;
+                }
+
+                first_c = curr_c;
+
+                // Check for the uniqueness by swinging right.
+                loop {
+                    visited_corners[curr_c] = true;
+                    let sink_c = self.next(curr_c);
+                    let sink_v = self.corner_to_vert(sink_c);
+
+                    let edge_c = self.previous(curr_c);
+                    let mut vertex_connectivity_updated = false;
+
+                    for &attached_sink_vertex in &sink_vertices {
+                        if attached_sink_vertex.0 == sink_v {
+                            let other_edge_c = attached_sink_vertex.1;
+                            let opp_edge_c = self.opposite(edge_c);
+
+                            if let Some(opp_edge_c) = opp_edge_c {
+                                if opp_edge_c == other_edge_c {
+                                    continue;
+                                }
+                            }
+
+                            let opp_other_edge_c = self.opposite(other_edge_c);
+                            if let Some(opp_edge_c) = opp_edge_c {
+                                self.opposite_corners[opp_edge_c] = usize::MAX; // None
+                            }
+                            if let Some(opp_other_edge_c) = opp_other_edge_c {
+                                self.opposite_corners[opp_other_edge_c] = usize::MAX; // None
+                            }
+
+                            self.opposite_corners[edge_c] = usize::MAX;
+                            self.opposite_corners[other_edge_c] = usize::MAX;
+
+                            vertex_connectivity_updated = true;
+                            break;
+                        }
+                    }
+                    if vertex_connectivity_updated {
+                        connectivity_updated = true;
+                        break;
+                    }
+                    let new_sink_vert: (VertexIdx, CornerIdx) = (
+                        self.corner_to_vert(self.previous(curr_c)),
+                        sink_c
+                    );
+                    sink_vertices.push(new_sink_vert);
+
+                    curr_c = if let Some(c) = self.swing_right(curr_c) {
+                        c
+                    } else {
+                        break; // reached the end of the corner loop
+                    };
+                    if curr_c == first_c {
+                        break; // reached back to the first corner
+                    }
+                }
+            }
+            if !connectivity_updated {
+                break; // no more connectivity updates
+            }
+        }
     }
 
     fn get_unused_vertices(faces: &[[usize;3]]) -> Vec<usize> {
