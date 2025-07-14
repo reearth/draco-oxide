@@ -34,7 +34,7 @@ Planned for the **beta** milestone.
 ### Add to Your Project
 
 ```bash
-cargo add draco-oxcide --git https://github.com/your-org/draco-oxcide --tag v0.1.0-alpha.*
+cargo add draco-oxide --git https://github.com/your-org/draco-oxide --tag v0.1.0-alpha.*
 ```
 
 > Until the first crates.io release, install directly from Git.
