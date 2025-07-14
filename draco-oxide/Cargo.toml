@@ -9,7 +9,7 @@ version = "0.1.0-alpha.0"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/reearth/draco-oxide"
 repository = "https://github.com/reearth/draco-oxide"
-readme = "README.md"
+readme = "../README.md"
 
 [dependencies]
 enum_dispatch = "0.3.13"
