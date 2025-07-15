@@ -14,7 +14,7 @@ pub mod encode;
 // pub mod decode;
 
 /// Contains the shared definitions, native objects, and the buffer.
-pub mod core;
+pub(crate) mod core;
 
 /// Contains the macros used by the encoder and the decoder.
 pub(crate) mod utils;
