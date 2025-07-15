@@ -33,11 +33,9 @@ Planned for the **beta** milestone.
 
 ### Add to Your Project
 
-```bash
-cargo add draco-oxide --git https://github.com/your-org/draco-oxide --tag v0.1.0-alpha.*
+```txt
+draco-oxide = "0.1.0-alpha.1"
 ```
-
-> Until the first crates.io release, install directly from Git.
 
 ### Example: Encode a GLTF Scene
 
