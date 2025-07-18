@@ -59,7 +59,6 @@ pub enum Err {
 pub fn encode<W>(mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err> 
     where W: ByteWriter
 {
-    println!("Encoding...");
     #[cfg(feature = "evaluation")]
     eval::scope_begin("compression info", writer);
     

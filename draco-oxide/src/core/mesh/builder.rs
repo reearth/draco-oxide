@@ -109,11 +109,13 @@ impl MeshBuilder {
 
     /// Sorts the attributes in a way that the parent attributes are before their children.
     fn get_sorted_attributes(mut original: Vec<Attribute>) -> Vec<Attribute> {
-        let pos_att_idx = original.iter()
-            .position(|att| att.get_attribute_type() == AttributeType::Position)
-            .unwrap(); // TODO: Handle this error properly
-
-        original.swap(0, pos_att_idx); // Ensure Position attribute is first
+        // Find position attribute if it exists
+        if let Some(pos_att_idx) = original.iter()
+            .position(|att| att.get_attribute_type() == AttributeType::Position) {
+            original.swap(0, pos_att_idx); // Ensure Position attribute is first
+        }
+        // If no position attribute exists, we'll just return the attributes as-is
+        // This can happen with compressed meshes that haven't been decoded yet
 
         original
     }

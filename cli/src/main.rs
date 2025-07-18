@@ -105,7 +105,7 @@ fn transcode_gltf(input_path: &str, output_path: &str) -> Result<()> {
     );
 
     // Perform transcoding
-    transcoder.transcode(&file_options)
+    transcoder.transcode_file(&file_options)
         .map_err(|e| anyhow::anyhow!("Failed to transcode: {:?}", e))?;
 
     Ok(())

@@ -15,6 +15,8 @@ pub enum Err {
     CompressionError(String),
     #[error("Encoding Error: {0}")]
     EncodingError(#[from] crate::io::gltf::encode::Err),
+    #[error("Decoding Error: {0}")]
+    DecodingError(#[from] crate::io::gltf::decode::Err),
 }
 
 /// Struct to hold Draco transcoding options.
@@ -126,20 +128,32 @@ impl DracoTranscoder {
     }
 
 
-    /// Encodes the input with Draco compression using the compression options
+    /// Encodes the input file with Draco compression using the compression options
     /// passed in the Create function. The recommended use case is to create a
     /// transcoder once and call Transcode for multiple files.
-    pub fn transcode(&mut self, file_options: &FileOptions) -> Result<(), Err> {
-        self.read_scene(file_options)?;
+    pub fn transcode_file(&mut self, file_options: &FileOptions) -> Result<(), Err> {
+        self.read_scene_from_file(file_options)?;
         self.compress_scene()?;
-        self.write_scene(file_options)?;
+        self.write_scene_to_file(file_options)?;
+        Ok(())
+    }
+
+    /// Encodes the input buffer with Draco compression using the compression options
+    /// passed in the Create function. The recommended use case is to create a
+    /// transcoder once and call Transcode for multiple files.
+    pub fn transcode_buffer<W>(&mut self, in_buffer: &[u8], writer: &mut W) -> Result<(), Err> 
+        where W: std::io::Write,
+    {
+        self.read_scene_from_buffer(in_buffer)?;
+        self.compress_scene()?;
+        self.write_scene_to_buffer(writer)?;
         Ok(())
     }
 
     // Private methods
 
     /// Read scene from file.
-    fn read_scene(&mut self, file_options: &FileOptions) -> Result<(), Err> {
+    fn read_scene_from_file(&mut self, file_options: &FileOptions) -> Result<(), Err> {
         if file_options.input_filename.is_empty() {
             return Err(Err::InvalidInput("Input filename is empty.".to_string()));
         }
@@ -147,15 +161,40 @@ impl DracoTranscoder {
             return Err(Err::InvalidInput("Output filename is empty.".to_string()));
         }
 
-        self.scene = Some(Box::new(self.read_scene_from_file(&file_options.input_filename, Vec::new())?));
+        let filename = &file_options.input_filename;
+        self.scene = match get_scene_file_format(filename) {
+            SceneFileFormat::Gltf => {
+                let mut decoder = crate::io::gltf::decode::GltfDecoder::new();
+                let scene = decoder.decode_from_file_to_scene_with_files(filename, Vec::new())?;
+                Some(Box::new(scene))
+            }
+            SceneFileFormat::Usd => {
+                return Err(Err::TranscodingError("USD is not supported yet.".to_string()))
+            }
+            _ => {
+                return Err(Err::TranscodingError("Unknown input file format.".to_string()))
+            }
+        };
+        Ok(())
+    }
+
+    /// Read scene from buffer.
+    fn read_scene_from_buffer(&mut self, buffer: &[u8]) -> Result<(), Err> {
+        let mut decoder = crate::io::gltf::decode::GltfDecoder::new();
+        self.scene = Some(Box::new(decoder.decode_from_buffer_to_scene(&buffer)?));
         Ok(())
     }
 
     /// Write scene to file.
-    fn write_scene(&mut self, file_options: &FileOptions) -> Result<(), Err> {
+    fn write_scene_to_file(&mut self, file_options: &FileOptions) -> Result<(), Err> {
         let scene = self.scene.as_ref().ok_or_else(|| {
             Err::TranscodingError("No scene loaded for writing".to_string())
         })?;
+
+        // Debug output for metadata
+        if let Some(mesh_features) = scene.metadata().get_entry("mesh_features_json") {
+            println!("DEBUG: mesh_features_json: {}", mesh_features);
+        }
 
         if !file_options.output_bin_filename.is_empty() 
             && !file_options.output_resource_directory.is_empty() {
@@ -183,6 +222,25 @@ impl DracoTranscoder {
         Ok(())
     }
 
+    /// Write scene to buffer.
+    fn write_scene_to_buffer<W: std::io::Write>(&mut self, writer: &mut W) -> Result<(), Err> {
+        let scene = self.scene.as_ref().ok_or_else(|| {
+            Err::TranscodingError("No scene loaded for writing".to_string())
+        })?;
+
+        // Debug output for metadata
+        if let Some(mesh_features) = scene.metadata().get_entry("mesh_features_json") {
+            println!("DEBUG: mesh_features_json: {}", mesh_features);
+        }
+
+        self.gltf_encoder.encode_scene_to_buffer(
+            scene,
+            writer,
+        )?;
+
+        Ok(())
+    }
+
     /// Apply compression settings to the scene.
     fn compress_scene(&mut self) -> Result<(), Err> {
         if let Some(ref mut scene) = self.scene {
@@ -194,25 +252,6 @@ impl DracoTranscoder {
             }
         }
         Ok(())
-    }
-
-    /// Helper function to read scene from file.
-    fn read_scene_from_file(&self, filename: &str, files: Vec<String>) -> Result<Scene, Err> {
-        // Determine the file format and decode accordingly.
-        // For now, only GLTF is supported.
-        match get_scene_file_format(filename) {
-            SceneFileFormat::Gltf => {
-                let mut decoder = crate::io::gltf::decode::GltfDecoder::new();
-                decoder.decode_from_file_to_scene_with_files(filename, files)
-                    .map_err(|e| Err::TranscodingError(format!("GLTF decode error: {:?}", e)))
-            }
-            SceneFileFormat::Usd => {
-                Err(Err::TranscodingError("USD is not supported yet.".to_string()))
-            }
-            _ => {
-                Err(Err::TranscodingError("Unknown input file format.".to_string()))
-            }
-        }
     }
 
     /// Apply Draco compression options to all meshes in the scene.
@@ -241,5 +280,59 @@ impl DracoTranscoder {
         
         // For the transcoder, the compression will happen when the scene is encoded to the output file
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transcode_buffer_equals_transcode_file() {
+        // Read the actual Duck.glb test file
+        // let test_glb_path = "../private_tests/bad_files/39769_bldg_Building.glb";
+        let test_glb_path = "tests/data/Duck/Duck.glb";
+        let test_glb = std::fs::read(test_glb_path).expect("Failed to read Duck.glb test file");
+        
+        // Create transcoder with default options
+        let mut transcoder1 = DracoTranscoder::create(None).unwrap();
+        
+        // Transcode using buffer method
+        let mut buffer_output = Vec::new();
+        transcoder1.transcode_buffer(&test_glb, &mut buffer_output)
+            .expect("Failed to transcode buffer");
+        
+        // Reset transcoder and use file method on the same instance
+        let mut transcoder2 = DracoTranscoder::create(None).unwrap();
+        
+        // Write test GLB to a temporary file for file-based transcoding
+        let temp_dir = std::env::temp_dir();
+        let input_path = temp_dir.join("test_duck_input.glb");
+        let output_path = temp_dir.join("test_duck_output.glb");
+        
+        std::fs::write(&input_path, &test_glb)
+            .expect("Failed to write temporary input file");
+        
+        // Transcode using file method
+        let file_options = FileOptions::new(
+            input_path.to_string_lossy().to_string(),
+            output_path.to_string_lossy().to_string(),
+        );
+        transcoder2.transcode_file(&file_options)
+            .expect("Failed to transcode file");
+        
+        // Read the file output
+        let file_output = std::fs::read(&output_path)
+            .expect("Failed to read output file");
+        
+        // Clean up temporary files
+        let _ = std::fs::remove_file(&input_path);
+        let _ = std::fs::remove_file(&output_path);
+        
+        // Compare outputs
+        assert_eq!(buffer_output.len(), file_output.len(), 
+            "transcode_buffer and transcode_file outputs have different lengths");
+        assert_eq!(buffer_output, file_output, 
+            "transcode_buffer output should match transcode_file output");
     }
 }

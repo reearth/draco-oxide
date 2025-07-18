@@ -16,5 +16,5 @@ fn main() {
     );
 
     // transcode the GLTF file
-    transcoder.transcode(&file_options).unwrap();
+    transcoder.transcode_file(&file_options).unwrap();
 }
