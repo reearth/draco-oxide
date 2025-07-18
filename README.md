@@ -2,6 +2,9 @@
 
 &#x20;&#x20;
 
+[![Crates.io](https://img.shields.io/crates/v/draco-oxide)](https://crates.io/crates/draco-oxide)
+[![Documentation](https://docs.rs/draco-oxide/badge.svg)](https://docs.rs/draco-oxide) 
+
 `draco-oxide` is a high-performance Rust re-write of Google’s [Draco](https://github.com/google/draco) 3D-mesh compression library, featuring efficient streaming I/O and seamless WebAssembly integration.
 
 > **Status:** **Alpha** – Encoder is functional; decoder implementation is **work‑in‑progress**.
@@ -14,12 +17,12 @@
 | ------------------     | -----  | ------------------ |
 | Mesh Encoder           | ✅     | Performance optimization |
 | Mesh Decoder           | ❌     | ✅                  |
-| GLTF Transcoder (basic)| ✅     | Animation and many more extensions  |
+| glTF Transcoder (basic)| ✅     | Animation and many more extensions  |
 
 ### Encoder Highlights
 
 * Triangle‑mesh compression with configurable speed/ratio presets.
-* Basic GLTF transcoder (`*.gltf` or `*.glb` → `*.glb` with mesh buffer compressed via [KHR_draco_mesh_compression extension](https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_draco_mesh_compression)).
+* Basic glTF transcoder (`*.gltf` or `*.glb` → `*.glb` with mesh buffer compressed via [KHR_draco_mesh_compression extension](https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_draco_mesh_compression)).
 * Pure‑Rust implementation.
 * `no_std` + `alloc` compatible; builds to **WASM32**, **x86\_64**, **aarch64**, and more.
 
@@ -37,7 +40,7 @@ Planned for the **beta** milestone.
 draco-oxide = "0.1.0-alpha.1"
 ```
 
-### Example: Encode a GLTF Scene
+### Example: Encode a glTF Scene
 
 ```rust
 use draco_oxide::{encode::{self, encode}, io::obj::load_obj};
@@ -49,7 +52,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mesh = load_obj("mesh.obj").unwrap();
 
     // Create a buffer that we write the encoded data to.
-    // This time we use 'Vec<u8>' as the output buffer, but draco-oxide can stream-write to anything 
+    // This time we use 'Vec<u8>' as the output buffer, but 
+    // draco-oxide can stream-write to anything 
     // that implements 'draco_oxide::prelude::ByteWriter'.
     let mut buffer = Vec::new();
     
@@ -72,7 +76,7 @@ cargo run --bin cli -- -i path/to/input.obj -o path/to/output.drc
 
 # transcode gltf.obj into a draco compressed glb file output.glb as specified 
 # in KHR_draco_mesh_compression extension.
-cargo run --bin cli -- --transcode path/to/input.glb -o path/to/output.glb
+cargo run --bin cli -- --transcode -i path/to/input.glb -o path/to/output.glb
 ```
 ---
 

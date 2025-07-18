@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use gltf::accessor::Dimensions;
 use gltf::Accessor;
 use gltf::Primitive;
+use gltf::Semantic;
 
-use crate::core::attribute::AttributeDomain;
-use crate::core::attribute::AttributeId;
+use crate::core::attribute::{AttributeDomain, AttributeId};
 use crate::core::mesh::Mesh;
 use crate::core::mesh::meh_features::MeshFeatures;
 use crate::core::attribute::ComponentDataType;
@@ -196,8 +196,7 @@ pub struct GltfDecoder {
     // TODO: Replace with actual texture type once implemented
     gltf_image_to_draco_texture: HashMap<i32, ()>,
 
-    // TODO: Replace with actual scene type once implemented
-    scene: Option<()>,
+    scene: Option<Scene>,
 
     // Selected mode of the decoded scene graph.
     gltf_scene_graph_mode: GltfSceneGraphMode,
@@ -210,6 +209,12 @@ pub struct GltfDecoder {
     
     // WebP image information for restoration during encoding
     webp_info: Option<String>,
+    
+    // Temporary storage for document-level structural metadata
+    temp_document_structural_metadata: Option<serde_json::Value>,
+    
+    // Temporary storage for mesh features JSON
+    temp_mesh_features_json: Option<String>,
 }
 
 impl Default for GltfDecoder {
@@ -242,6 +247,8 @@ impl GltfDecoder {
             deduplicate_vertices: true,
             extension_attributes: Vec::new(),
             webp_info: None,
+            temp_document_structural_metadata: None,
+            temp_mesh_features_json: None,
         }
     }
 
@@ -332,10 +339,57 @@ impl GltfDecoder {
     /// input files when provided.
     fn load_file(&mut self, file_name: &str, input_files: Option<&mut Vec<String>>) -> Result<(), Err> {
         use std::path::Path;
+        use std::fs::File;
+        use std::io::Read;
         
-        // Load glTF document using the gltf crate
-        let (gltf, buffers, _images) = gltf::import(file_name)
-            .map_err(|e| Err::IoError(format!("Failed to load glTF file: {}", e)))?;
+        // Try to load glTF document using the standard import
+        let (gltf, buffers, _images) = match gltf::import(file_name) {
+            Ok(result) => result,
+            Err(e) => {
+                // If validation fails, load the file manually without validation
+                let mut file = File::open(file_name)
+                    .map_err(|io_e| Err::IoError(format!("Failed to open file: {}", io_e)))?;
+                let mut contents = Vec::new();
+                file.read_to_end(&mut contents)
+                    .map_err(|io_e| Err::IoError(format!("Failed to read file: {}", io_e)))?;
+                
+                // Check if it's a binary glTF (.glb) file
+                if file_name.ends_with(".glb") {
+                    // Parse as GLB
+                    let glb = gltf::Glb::from_slice(&contents)
+                        .map_err(|glb_e| Err::IoError(format!("Failed to parse GLB: {}", glb_e)))?;
+                    
+                    // Load without validation
+                    let gltf = gltf::Gltf::from_slice_without_validation(&glb.json)
+                        .map_err(|gltf_e| Err::IoError(format!("Failed to load glTF: {} (validation error: {})", gltf_e, e)))?;
+                    
+                    // Parse extension attributes from the raw JSON
+                    self.parse_extension_attributes_from_json(&glb.json)?;
+                    
+                    let buffers = glb.bin
+                        .map(|data| vec![gltf::buffer::Data(data.to_vec())])
+                        .unwrap_or_default();
+                    
+                    (gltf.document, buffers, vec![])
+                } else {
+                    // Parse as JSON glTF
+                    let gltf = gltf::Gltf::from_slice_without_validation(&contents)
+                        .map_err(|gltf_e| Err::IoError(format!("Failed to load glTF: {} (validation error: {})", gltf_e, e)))?;
+                    
+                    // Parse extension attributes from the raw JSON
+                    self.parse_extension_attributes_from_json(&contents)?;
+                    
+                    // Import buffers separately
+                    let base_path = Path::new(file_name).parent()
+                        .ok_or_else(|| Err::IoError("Invalid file path".to_string()))?;
+                    
+                    let buffers = gltf::import_buffers(&gltf.document, Some(base_path), None)
+                        .map_err(|buf_e| Err::IoError(format!("Failed to import buffers: {}", buf_e)))?;
+                    
+                    (gltf.document, buffers, vec![])
+                }
+            }
+        };
 
 
         // Track input files if requested
@@ -385,18 +439,55 @@ impl GltfDecoder {
 
     /// Loads gltf_model from buffer in GLB format.
     fn load_buffer(&mut self, buffer: &[u8]) -> Result<(), Err> {
-        // Load glTF document from binary buffer using the gltf crate
-        let gltf = gltf::Gltf::from_slice(buffer)
-            .map_err(|e| Err::LoadError(format!("failed to load glb buffer: {}", e)))?;
+        // Try to load glTF document from binary buffer, following the same pattern as load_file
+        // First attempt with validation using gltf::Gltf::from_slice, then without if it fails
+        let (gltf, buffers, _images): (gltf::Document, Vec<gltf::buffer::Data>, Vec<gltf::image::Data>) = match gltf::Gltf::from_slice(buffer) {
+            Ok(gltf) => {
+                // Successfully loaded with validation
+                let gltf_doc = gltf.document;
+                let gltf_buffers = gltf.blob.map(|blob| vec![gltf::buffer::Data(blob)]).unwrap_or_default();
+                (gltf_doc, gltf_buffers, vec![])
+            }
+            Err(e) => {
+                // If validation fails, load manually without validation (same as load_file)
+                // Check if it's a binary glTF (.glb) file
+                if buffer.len() >= 12 && &buffer[0..4] == b"glTF" {
+                    // Parse as GLB using the same method as load_file
+                    let glb = gltf::Glb::from_slice(buffer)
+                        .map_err(|glb_e| Err::IoError(format!("Failed to parse GLB: {}", glb_e)))?;
+                    
+                    // Load without validation
+                    let gltf = gltf::Gltf::from_slice_without_validation(&glb.json)
+                        .map_err(|gltf_e| Err::IoError(format!("Failed to load glTF: {} (validation error: {})", gltf_e, e)))?;
+                    
+                    // Parse extension attributes from the raw JSON
+                    self.parse_extension_attributes_from_json(&glb.json)?;
+                    
+                    let buffers = glb.bin
+                        .map(|data| vec![gltf::buffer::Data(data.to_vec())])
+                        .unwrap_or_default();
+                    
+                    (gltf.document, buffers, vec![])
+                } else {
+                    // Parse as JSON glTF
+                    let gltf = gltf::Gltf::from_slice_without_validation(buffer)
+                        .map_err(|gltf_e| Err::IoError(format!("Failed to load glTF: {} (validation error: {})", gltf_e, e)))?;
+                    
+                    // Parse extension attributes from the raw JSON
+                    self.parse_extension_attributes_from_json(buffer)?;
+                    
+                    // For JSON glTF from buffer, we can't import external buffers
+                    // so we just use empty buffer list
+                    (gltf.document, vec![], vec![])
+                }
+            }
+        };
 
-        let gltf_doc = gltf.document;
-        let gltf_buffers = gltf.blob.map(|blob| vec![gltf::buffer::Data(blob)]).unwrap_or_default();
-        
         // Store the loaded glTF document
-        self.gltf_model = Some(gltf_doc);
-        
+        self.gltf_model = Some(gltf);
+
         // Store the buffers
-        self.buffers = Some(gltf_buffers);
+        self.buffers = Some(buffers);
 
         // Check for unsupported features
         self.check_unsupported_features()?;
@@ -405,6 +496,155 @@ impl GltfDecoder {
         self.input_file_name.clear();
         
         Ok(())
+    }
+
+    /// Parse extension attributes from raw glTF JSON
+    fn parse_extension_attributes_from_json(&mut self, json_data: &[u8]) -> Result<(), Err> {
+        // Parse the JSON
+        let json: serde_json::Value = serde_json::from_slice(json_data)
+            .map_err(|e| Err::LoadError(format!("Failed to parse glTF JSON: {}", e)))?;
+        
+        // Clear existing extension attributes
+        self.extension_attributes.clear();
+        
+        // Extract document-level extensions, especially EXT_structural_metadata
+        if let Some(extensions) = json.get("extensions").and_then(|e| e.as_object()) {
+            if let Some(structural_metadata) = extensions.get("EXT_structural_metadata") {
+                // Store the structural metadata as a JSON string in a temporary location
+                // We'll add it to the scene later in add_structural_metadata_to_scene
+                if let Ok(_metadata_string) = serde_json::to_string(structural_metadata) {
+                    // Create a temporary field to hold this until we can add it to the scene
+                    // For now, we'll store it in the first primitive's extension attributes
+                    // This is a bit of a hack, but it works within the current architecture
+                    self.temp_document_structural_metadata = Some(structural_metadata.clone());
+                }
+            }
+        }
+        
+        // Get meshes array from JSON
+        if let Some(meshes) = json.get("meshes").and_then(|m| m.as_array()) {
+            for (_mesh_index, mesh) in meshes.iter().enumerate() {
+                let mut mesh_primitives = Vec::new();
+                
+                // Get primitives array for this mesh
+                if let Some(primitives) = mesh.get("primitives").and_then(|p| p.as_array()) {
+                    for (_primitive_index, primitive) in primitives.iter().enumerate() {
+                        let mut ext_attrs = ExtensionAttributes::default();
+                        
+                        // Extract custom attributes (those starting with _)
+                        if let Some(attributes) = primitive.get("attributes").and_then(|a| a.as_object()) {
+                            for (attr_name, accessor_index) in attributes {
+                                if attr_name.starts_with("_") {
+                                    // This is a custom attribute, extract its accessor info
+                                    if let Some(accessor_idx) = accessor_index.as_u64() {
+                                        if let Some(accessor_info) = self.extract_accessor_info(&json, accessor_idx as usize)? {
+                                            ext_attrs.attributes.insert(attr_name.clone(), accessor_info);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Extract extensions for this primitive
+                        if let Some(extensions) = primitive.get("extensions").and_then(|e| e.as_object()) {
+                            for (ext_name, ext_data) in extensions {
+                                ext_attrs.extensions.insert(ext_name.clone(), ext_data.clone());
+                            }
+                        }
+                        
+                        mesh_primitives.push(ext_attrs);
+                    }
+                }
+                
+                self.extension_attributes.push(mesh_primitives);
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Extract accessor information from JSON for a given accessor index
+    fn extract_accessor_info(&self, json: &serde_json::Value, accessor_index: usize) -> Result<Option<AccessorInfo>, Err> {
+        // Get accessors array
+        let accessors = json.get("accessors")
+            .and_then(|a| a.as_array())
+            .ok_or_else(|| Err::LoadError("No accessors found in glTF".to_string()))?;
+        
+        if accessor_index >= accessors.len() {
+            return Ok(None);
+        }
+        
+        let accessor = &accessors[accessor_index];
+        
+        // Extract accessor properties
+        let buffer_view_index = accessor.get("bufferView")
+            .and_then(|bv| bv.as_u64())
+            .ok_or_else(|| Err::LoadError("Accessor missing bufferView".to_string()))? as usize;
+        
+        let byte_offset = accessor.get("byteOffset")
+            .and_then(|bo| bo.as_u64())
+            .unwrap_or(0) as usize;
+        
+        let component_type = accessor.get("componentType")
+            .and_then(|ct| ct.as_u64())
+            .ok_or_else(|| Err::LoadError("Accessor missing componentType".to_string()))? as u32;
+        
+        let count = accessor.get("count")
+            .and_then(|c| c.as_u64())
+            .ok_or_else(|| Err::LoadError("Accessor missing count".to_string()))? as usize;
+        
+        let data_type = accessor.get("type")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| Err::LoadError("Accessor missing type".to_string()))?
+            .to_string();
+        
+        // Extract buffer view info
+        let buffer_view_info = self.extract_buffer_view_info(json, buffer_view_index)?;
+        
+        Ok(Some(AccessorInfo {
+            buffer_view_index,
+            byte_offset,
+            component_type,
+            count,
+            data_type,
+            buffer_view_info,
+        }))
+    }
+
+    /// Extract buffer view information from JSON
+    fn extract_buffer_view_info(&self, json: &serde_json::Value, buffer_view_index: usize) -> Result<BufferViewInfo, Err> {
+        let buffer_views = json.get("bufferViews")
+            .and_then(|bv| bv.as_array())
+            .ok_or_else(|| Err::LoadError("No bufferViews found in glTF".to_string()))?;
+        
+        if buffer_view_index >= buffer_views.len() {
+            return Err(Err::LoadError("BufferView index out of range".to_string()));
+        }
+        
+        let buffer_view = &buffer_views[buffer_view_index];
+        
+        let buffer = buffer_view.get("buffer")
+            .and_then(|b| b.as_u64())
+            .ok_or_else(|| Err::LoadError("BufferView missing buffer".to_string()))? as usize;
+        
+        let byte_offset = buffer_view.get("byteOffset")
+            .and_then(|bo| bo.as_u64())
+            .unwrap_or(0) as usize;
+        
+        let byte_length = buffer_view.get("byteLength")
+            .and_then(|bl| bl.as_u64())
+            .ok_or_else(|| Err::LoadError("BufferView missing byteLength".to_string()))? as usize;
+        
+        let byte_stride = buffer_view.get("byteStride")
+            .and_then(|bs| bs.as_u64())
+            .map(|bs| bs as usize);
+        
+        Ok(BufferViewInfo {
+            buffer,
+            byte_offset,
+            byte_length,
+            byte_stride,
+        })
     }
 
     /// Builds mesh from gltf_model.
@@ -477,6 +717,7 @@ impl GltfDecoder {
         Ok(())
     }
 
+
     /// Add attributes to triangle mesh builder
     fn add_attributes_to_draco_mesh_triangle(&mut self) -> Result<(), Err> {
         let mut curr_att_id = 0;
@@ -545,7 +786,7 @@ impl GltfDecoder {
             // Check for required extensions.
             for extension in gltf_model.extensions_required() {
                 match extension {
-                    "KHR_materials_unlit" | "KHR_texture_transform" | "KHR_draco_mesh_compression" => {
+                    "KHR_materials_unlit" | "KHR_texture_transform" | "KHR_draco_mesh_compression" | "EXT_mesh_features" => {
                         // These extensions are supported
                     }
                     _ => {
@@ -563,7 +804,7 @@ impl GltfDecoder {
     /// Decodes a glTF Node as well as any child Nodes. If node contains a mesh
     /// it will process all of the mesh's primitives.
     fn decode_node(&mut self, node: &gltf::Node, parent_matrix: &Matrix4d) -> Result<(), Err> {
-        let trsm: TrsMatrix = TrsMatrix::default(); // Simplified - was get_node_transformation_matrix(&node);
+        let trsm: TrsMatrix = Self::get_node_transformation_matrix(&node);
         let node_matrix: Matrix4d =
             parent_matrix.clone() * trsm.compute_transformation_matrix();
 
@@ -584,14 +825,26 @@ impl GltfDecoder {
     fn decode_primitive_attribute_count(&self, primitive: &Primitive) -> Result<i32, Err> {
         // Use the first primitive attribute as all attributes have the same entry
         // count according to glTF 2.0 spec.
-        let mut attributes = primitive.attributes();
-        if attributes.next().is_none() {
-            return Err(Err::LoadError("Primitive has no attributes.".to_string()));
+        // Try standard semantics first to avoid potential panics from custom attributes
+        if let Some(positions) = primitive.get(&Semantic::Positions) {
+            return Ok(positions.count() as i32);
+        }
+        if let Some(normals) = primitive.get(&Semantic::Normals) {
+            return Ok(normals.count() as i32);
+        }
+        for i in 0..8 {
+            if let Some(texcoords) = primitive.get(&Semantic::TexCoords(i)) {
+                return Ok(texcoords.count() as i32);
+            }
         }
         
-        // Get the first attribute's accessor
-        let (_attribute_name, accessor) = attributes.into_iter().next().unwrap();
-        Ok(accessor.count() as i32)
+        // If no standard attributes found, try the iterator approach (might panic)
+        let mut attributes = primitive.attributes();
+        if let Some((_, accessor)) = attributes.next() {
+            Ok(accessor.count() as i32)
+        } else {
+            Err(Err::LoadError("Primitive has no attributes.".to_string()))
+        }
     }
 
     /// Decodes indices property of a given glTF primitive. If primitive's
@@ -661,7 +914,35 @@ impl GltfDecoder {
         let number_of_points = indices_data.len() as i32;
 
         // Process standard attributes
-        for (attribute_name, accessor) in primitive.attributes() {
+        // Collect attributes safely to avoid panics on custom attributes
+        let mut safe_attributes = Vec::new();
+        
+        // Try standard semantics
+        if let Some(positions) = primitive.get(&Semantic::Positions) {
+            safe_attributes.push((Semantic::Positions, positions));
+        }
+        if let Some(normals) = primitive.get(&Semantic::Normals) {
+            safe_attributes.push((Semantic::Normals, normals));
+        }
+        for i in 0..8 {
+            if let Some(texcoords) = primitive.get(&Semantic::TexCoords(i)) {
+                safe_attributes.push((Semantic::TexCoords(i), texcoords));
+            }
+            if let Some(colors) = primitive.get(&Semantic::Colors(i)) {
+                safe_attributes.push((Semantic::Colors(i), colors));
+            }
+            if let Some(joints) = primitive.get(&Semantic::Joints(i)) {
+                safe_attributes.push((Semantic::Joints(i), joints));
+            }
+            if let Some(weights) = primitive.get(&Semantic::Weights(i)) {
+                safe_attributes.push((Semantic::Weights(i), weights));
+            }
+        }
+        if let Some(tangents) = primitive.get(&Semantic::Tangents) {
+            safe_attributes.push((Semantic::Tangents, tangents));
+        }
+        
+        for (attribute_name, accessor) in safe_attributes {
             let att_id = self.attribute_name_to_draco_mesh_attribute_id
                 .get(attribute_name.to_string().as_str())
                 .cloned()
@@ -831,8 +1112,10 @@ impl GltfDecoder {
         // Extract extension attributes and corresponding accessor info
         for (_mesh_index, mesh_ext_attrs) in self.extension_attributes.iter().enumerate() {
             for (_primitive_index, ext_attrs) in mesh_ext_attrs.iter().enumerate() {
+                // println!("DEBUG: ext_attrs: {:?}", ext_attrs);
                 for (attr_name, accessor_info) in &ext_attrs.attributes {
                     // Only process feature ID and other extension attributes
+                    // println!("DEBUG: Processing extension attribute: {}", attr_name);
                     if attr_name.starts_with("_FEATURE_ID_") || attr_name.starts_with("_") {
                         // Use the stored accessor information instead of looking it up in the sanitized model
                         let component_type = match accessor_info.component_type {
@@ -1358,6 +1641,9 @@ impl GltfDecoder {
         // Add structural metadata to the scene
         self.add_structural_metadata_to_scene(scene)?;
         
+        // Add mesh features to the scene
+        self.add_mesh_features_to_scene(scene)?;
+        
         // Add WebP information to the scene metadata for restoration during encoding
         if let Some(ref webp_info) = self.webp_info {
             scene.metadata_mut().add_entry("webp_info".to_string(), webp_info.clone());
@@ -1466,19 +1752,26 @@ impl GltfDecoder {
 
     /// Decodes glTF structural metadata from glTF model and adds it to scene.
     fn add_structural_metadata_to_scene(&mut self, scene: &mut Scene) -> Result<(), Err> {
-        // Extract structural metadata from the first primitive's extension attributes
-        // (assuming all primitives in the first mesh have the same structural metadata)
-        if let Some(first_mesh_extensions) = self.extension_attributes.first() {
-            if let Some(first_primitive_extensions) = first_mesh_extensions.first() {
-                if let Some(ref structural_metadata) = first_primitive_extensions.structural_metadata {
-                    // Store the JSON as a string in the scene's metadata
-                    // Since the scene's structural metadata uses custom types, we'll need to 
-                    // create a public method to store this for the encoder to access
-                    
-                    // For now, we'll store it as a scene metadata entry
-                    // This is a workaround since the StructuralMetadata type doesn't support JSON directly
-                    scene.metadata_mut().add_entry("structural_metadata_json".to_string(), 
-                        serde_json::to_string(structural_metadata).unwrap_or_default());
+        // First, try to use document-level structural metadata if available
+        if let Some(ref structural_metadata) = self.temp_document_structural_metadata {
+            // Store the JSON as a string in the scene's metadata
+            scene.metadata_mut().add_entry("structural_metadata_json".to_string(), 
+                serde_json::to_string(structural_metadata).unwrap_or_default());
+        } else {
+            // Fallback: Extract structural metadata from the first primitive's extension attributes
+            // (assuming all primitives in the first mesh have the same structural metadata)
+            if let Some(first_mesh_extensions) = self.extension_attributes.first() {
+                if let Some(first_primitive_extensions) = first_mesh_extensions.first() {
+                    if let Some(ref structural_metadata) = first_primitive_extensions.structural_metadata {
+                        // Store the JSON as a string in the scene's metadata
+                        // Since the scene's structural metadata uses custom types, we'll need to 
+                        // create a public method to store this for the encoder to access
+                        
+                        // For now, we'll store it as a scene metadata entry
+                        // This is a workaround since the StructuralMetadata type doesn't support JSON directly
+                        scene.metadata_mut().add_entry("structural_metadata_json".to_string(), 
+                            serde_json::to_string(structural_metadata).unwrap_or_default());
+                    }
                 }
             }
         }
@@ -1751,7 +2044,7 @@ impl GltfDecoder {
         gltf_model: &gltf::Document
     ) -> Result<(), Err> {
         // Get node transformation
-        let trsm = TrsMatrix::default(); // Simplified - was get_node_transformation_matrix(node);
+        let trsm = Self::get_node_transformation_matrix(node);
         
         // Create a scene node with the transformation
         let mut scene_node = crate::core::scene::SceneNode::new();
@@ -1804,6 +2097,15 @@ impl GltfDecoder {
                         // Add the mesh to the scene
                         let mesh_index = scene.add_mesh(draco_mesh);
                         
+                        // Store mesh features information in scene metadata if present
+                        if let Some(ext_attrs) = ext_attrs {
+                            if let Some(mesh_features_ext) = ext_attrs.extensions.get("EXT_mesh_features") {
+                                if let Ok(mesh_features_json) = serde_json::to_string(mesh_features_ext) {
+                                    scene.metadata_mut().add_entry("mesh_features_json".to_string(), mesh_features_json);
+                                }
+                            }
+                        }
+                        
                         // Get material index from primitive
                         let material_index = primitive.material().index().map(|i| i as i32).unwrap_or(-1);
                         
@@ -1833,6 +2135,51 @@ impl GltfDecoder {
         }
         
         Ok(())
+    }
+
+    /// Extract node transformation matrix from glTF node
+    fn get_node_transformation_matrix(node: &gltf::Node) -> TrsMatrix {
+        let mut trsm = TrsMatrix::new();
+        
+        // Extract transformation from glTF node
+        match node.transform() {
+            gltf::scene::Transform::Matrix { matrix } => {
+                // Convert f32 matrix to f64 Matrix4d
+                // glTF matrix is column-major, 16-element array [f32; 16]
+                let mut data = [[0.0f64; 4]; 4];
+                for col in 0..4 {
+                    for row in 0..4 {
+                        data[row][col] = matrix[col][row] as f64;
+                    }
+                }
+                trsm.set_matrix(crate::core::scene::Matrix4d::new(data));
+            }
+            gltf::scene::Transform::Decomposed { translation, rotation, scale } => {
+                // Set translation
+                trsm.set_translation(crate::core::scene::Vector3d::new(
+                    translation[0] as f64,
+                    translation[1] as f64,
+                    translation[2] as f64,
+                ));
+                
+                // Set rotation (quaternion)
+                trsm.set_rotation(crate::core::scene::Quaterniond::new(
+                    rotation[3] as f64, // w
+                    rotation[0] as f64, // x
+                    rotation[1] as f64, // y
+                    rotation[2] as f64, // z
+                ));
+                
+                // Set scale
+                trsm.set_scale(crate::core::scene::Vector3d::new(
+                    scale[0] as f64,
+                    scale[1] as f64,
+                    scale[2] as f64,
+                ));
+            }
+        }
+        
+        trsm
     }
 
     /// Create a Draco Mesh from a GLTF primitive (requires buffers for actual data extraction)
@@ -1937,7 +2284,39 @@ impl GltfDecoder {
         }
         
         // Process standard attributes
-        let mut attributes: Vec<(Semantic, Accessor<'_>)> = primitive.attributes().collect();
+        // We need to handle attributes carefully because primitive.attributes() may panic
+        // on custom attributes when loaded without validation
+        let mut attributes: Vec<(Semantic, Accessor<'_>)> = Vec::new();
+        
+        // Try to get standard attributes by known semantics
+        if let Some(positions) = primitive.get(&Semantic::Positions) {
+            attributes.push((Semantic::Positions, positions));
+        }
+        if let Some(normals) = primitive.get(&Semantic::Normals) {
+            attributes.push((Semantic::Normals, normals));
+        }
+        for i in 0..8 {  // Support up to 8 texture coordinate sets
+            if let Some(texcoords) = primitive.get(&Semantic::TexCoords(i)) {
+                attributes.push((Semantic::TexCoords(i), texcoords));
+            }
+        }
+        for i in 0..8 {  // Support up to 8 color sets
+            if let Some(colors) = primitive.get(&Semantic::Colors(i)) {
+                attributes.push((Semantic::Colors(i), colors));
+            }
+        }
+        for i in 0..8 {  // Support up to 8 joint/weight sets  
+            if let Some(joints) = primitive.get(&Semantic::Joints(i)) {
+                attributes.push((Semantic::Joints(i), joints));
+            }
+            if let Some(weights) = primitive.get(&Semantic::Weights(i)) {
+                attributes.push((Semantic::Weights(i), weights));
+            }
+        }
+        if let Some(tangents) = primitive.get(&Semantic::Tangents) {
+            attributes.push((Semantic::Tangents, tangents));
+        }
+        
         // sort attributes by the name
         attributes.sort_by_key(|(semantic, _)| semantic.to_string());
 
@@ -2004,6 +2383,21 @@ impl GltfDecoder {
         
         // Process extension attributes if provided
         if let Some(ext_attrs) = extension_attributes {
+            // Check if this primitive uses Draco compression
+            if ext_attrs.extensions.contains_key("KHR_draco_mesh_compression") {
+                return Err(Err::LoadError(
+                    "KHR_draco_mesh_compression is not yet supported. \
+                    This file contains Draco-compressed mesh data that needs to be decoded first.".to_string()
+                ));
+            }
+            
+            // Process EXT_mesh_features extension
+            // Note: The actual mesh features JSON is stored in scene metadata by the caller
+            if let Some(_mesh_features_ext) = ext_attrs.extensions.get("EXT_mesh_features") {
+                // EXT_mesh_features is processed by the caller and stored in scene metadata
+                // This ensures the original feature count is preserved for the encoder
+            }
+            
             for (attr_name, accessor_info) in &ext_attrs.attributes {
                 // Use the stored accessor information to extract the data directly from buffers
                 if attr_name.starts_with("_FEATURE_ID_") {
@@ -2237,6 +2631,12 @@ impl GltfDecoder {
         // Decode mesh features from the extension
         self.decode_mesh_features_from_extension(extension, &mut texture_library, &mut mesh_features)?;
         
+        // Store the mesh features JSON in temp storage for later use by the encoder
+        // This preserves the original feature count and other properties
+        if let Ok(mesh_features_json) = serde_json::to_string(extension) {
+            self.temp_mesh_features_json = Some(mesh_features_json);
+        }
+        
         Ok(())
     }
 
@@ -2247,6 +2647,15 @@ impl GltfDecoder {
         // Decode structural metadata from the extension
         self.decode_structural_metadata_from_extension(extension, &mut property_attributes)?;
         
+        Ok(())
+    }
+
+    /// Adds mesh features to the scene.
+    fn add_mesh_features_to_scene(&mut self, scene: &mut Scene) -> Result<(), Err> {
+        // Store the mesh features JSON in the scene metadata for the encoder to access
+        if let Some(ref mesh_features_json) = self.temp_mesh_features_json {
+            scene.metadata_mut().add_entry("mesh_features_json".to_string(), mesh_features_json.clone());
+        }
         Ok(())
     }
 

@@ -52,28 +52,28 @@ fn decode_with_cpp_draco(drc_path: &Path, obj_output_path: &Path) -> io::Result<
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
-    /// Path to the original mesh file
-    #[arg(long)]
-    original: PathBuf,
+    /// Path to the input mesh file
+    #[arg(short = 'i', long)]
+    input: PathBuf,
 }
 
 fn main() {
     let args = Args::parse();
 
     // Check file extension
-    let extension = args.original.extension()
+    let extension = args.input.extension()
         .and_then(|ext| ext.to_str())
         .map(|s| s.to_lowercase());
     
     match extension.as_deref() {
         Some("obj") => {
-            if let Err(e) = generate_html_report(&args.original) {
+            if let Err(e) = generate_html_report(&args.input) {
                 eprintln!("Failed to generate report: {}", e);
                 process::exit(1);
             }
         }
         Some("glb") | Some("gltf") => {
-            if let Err(e) = process_glb_file(&args.original) {
+            if let Err(e) = process_glb_file(&args.input) {
                 eprintln!("Failed to process GLB/glTF file: {}", e);
                 process::exit(1);
             }
@@ -98,11 +98,11 @@ pub fn process_glb_file(original: &PathBuf) -> io::Result<()> {
     let original_extension = original.extension()
         .and_then(|ext| ext.to_str())
         .unwrap_or("glb");
-    let original_file_path = out_dir.join(format!("original.{}", original_extension));
-    copy_gltf_with_dependencies(original, &original_file_path, &out_dir)?;
+    let input_file_path = out_dir.join(format!("input.{}", original_extension));
+    copy_gltf_with_dependencies(original, &input_file_path, &out_dir)?;
 
-    // Create output paths - use "result.glb" to match HTML template expectations
-    let compressed_output_path = out_dir.join("result.glb");
+    // Create output paths - use "output.glb" to match HTML template expectations
+    let compressed_output_path = out_dir.join("output.glb");
     
     // Use DracoTranscoder to compress the GLTF/GLB file
     let transcoding_options = DracoTranscodingOptions::default();
@@ -116,7 +116,7 @@ pub fn process_glb_file(original: &PathBuf) -> io::Result<()> {
 
     // Perform transcoding with Draco compression
     println!("Transcoding {} to {}", original.display(), compressed_output_path.display());
-    match transcoder.transcode(&file_options) {
+    match transcoder.transcode_file(&file_options) {
         Ok(()) => {
             println!("Successfully transcoded with Draco compression");
         }
@@ -134,13 +134,13 @@ pub fn process_glb_file(original: &PathBuf) -> io::Result<()> {
     
     let eval_data = serde_json::json!({
         "file_info": {
-            "original_file": original.file_name().unwrap_or_default().to_string_lossy(),
+            "input_file": original.file_name().unwrap_or_default().to_string_lossy(),
             "file_type": "gltf/glb",
             "processing_method": "DracoTranscoder with Draco compression"
         },
         "compression_info": {
             "status": "Successfully compressed with Draco",
-            "original_size": original_size,
+            "input_size": original_size,
             "compressed_size": compressed_size,
             "compression_ratio": format!("{:.2}x", compression_ratio),
             "size_reduction": format!("{:.1}%", (1.0 - (compressed_size as f64 / original_size as f64)) * 100.0)
@@ -162,14 +162,14 @@ pub fn process_glb_file(original: &PathBuf) -> io::Result<()> {
     let html_content = read_to_string(html_template_path)?;
     let html_content = html_content
         .replace("{{file_type}}", "gltf")
-        .replace("{{original_filename}}", &format!("original.{}", original_extension));
+        .replace("{{original_filename}}", &format!("input.{}", original_extension));
 
     let out_file = out_dir.join("index.html");
     write(out_file, html_content)?;
 
     println!("GLB/glTF processing completed (DracoTranscoder integration ready):");
-    println!("  Original file: {}", original_file_path.display());
-    println!("  Result file: {}", compressed_output_path.display());
+    println!("  Input file: {}", input_file_path.display());
+    println!("  Output file: {}", compressed_output_path.display());
     println!("  Evaluation data: {}", eval_json_path.display());
     println!("  HTML Report: {}/index.html", dir_name);
     println!("  Output directory: {}", dir_name);
@@ -212,7 +212,7 @@ pub struct CompressionConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct CompressionStats {
-    pub original_size: usize,
+    pub input_size: usize,
     pub compressed_size: usize,
     pub encode_time_ms: f32,
     pub decode_time_ms: f32,
@@ -228,8 +228,8 @@ fn compress_and_decompress(original: &PathBuf, out_dir: &Path) -> io::Result<()>
     encode(original_mesh.clone(), &mut writer, encode::Config::default()).unwrap();
     println!("Encoding done.");
 
-    // Copy the input file as "original.obj"
-    std::fs::copy(original, out_dir.join("original.obj"))?;
+    // Copy the input file as "input.obj"
+    std::fs::copy(original, out_dir.join("input.obj"))?;
 
     // write json
     let mut eval_file = std::fs::File::create(
@@ -245,7 +245,7 @@ fn compress_and_decompress(original: &PathBuf, out_dir: &Path) -> io::Result<()>
     std::fs::write(&compressed_file_path, &buffer)?;
 
     println!("Decoding with C++ Draco decoder...");
-    let decoded_obj_path = out_dir.join("result.obj");
+    let decoded_obj_path = out_dir.join("output.obj");
     decode_with_cpp_draco(&compressed_file_path, &decoded_obj_path)?;
     println!("Decoding done.");
 
@@ -269,7 +269,7 @@ fn compress_and_decompress(original: &PathBuf, out_dir: &Path) -> io::Result<()>
 
 
     // // Write the MTL file with a comment containing the clers symbols
-    // let mut mtl_file = std::fs::File::create(out_dir.join("result.mtl")).unwrap();
+    // let mut mtl_file = std::fs::File::create(out_dir.join("output.mtl")).unwrap();
     // writeln!(mtl_file, "# clers_symbols").unwrap();
     // writeln!(mtl_file, "newmtl C\nKd 1.0 0.0 0.0").unwrap();
     // writeln!(mtl_file, "newmtl R\nKd 0.0 1.0 0.0").unwrap();
@@ -279,7 +279,7 @@ fn compress_and_decompress(original: &PathBuf, out_dir: &Path) -> io::Result<()>
     // writeln!(mtl_file, "newmtl M\nKd 0.0 1.0 1.0").unwrap();
     // writeln!(mtl_file, "newmtl H\nKd 1.0 1.0 1.0").unwrap();
 
-    // writeln!(file_writer, "mtllib result.mtl").unwrap();
+    // writeln!(file_writer, "mtllib output.mtl").unwrap();
     
     // let result_attributes = mesh.get_attributes();
     // // The decoded mesh might have different attribute layout

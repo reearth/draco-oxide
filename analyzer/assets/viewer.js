@@ -12,8 +12,8 @@ window.__THREE_CDN__ = threeCDN;
 export function setupComparison(originalPath, resultPath, fileType = 'obj') {
   window.addEventListener('DOMContentLoaded', () => {
     const viewers = [
-      { containerId: 'original_view', filePath: originalPath, mtlPath: './result.mtl', fileType: fileType },
-      { containerId: 'result_view', filePath: resultPath, mtlPath: './result.mtl', fileType: fileType }
+      { containerId: 'input_view', filePath: originalPath, mtlPath: './output.mtl', fileType: fileType },
+      { containerId: 'output_view', filePath: resultPath, mtlPath: './output.mtl', fileType: fileType }
     ];
 
     viewers.forEach(viewer => {

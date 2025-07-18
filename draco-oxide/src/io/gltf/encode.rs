@@ -6,7 +6,6 @@ use crate::core::scene::Scene;
 use crate::core::texture;
 use crate::core::texture::FilterType;
 use crate::core::texture::TextureUtils;
-use crate::prelude::ByteWriter;
 use crate::core::shared::ConfigType;
 use crate::core::shared::Vector;
 use std::io::Write;
@@ -246,7 +245,7 @@ impl GltfEncoder {
 
     /// Encodes scene to out_buffer in glTF 2.0 GLB format.
     pub fn encode_scene_to_buffer<W>(&self, scene: &Scene, writer: &mut W) -> Result<(), Err> 
-        where W: ByteWriter
+        where W: std::io::Write
     {
         let mut gltf_asset = GltfAsset::default();
         gltf_asset.set_output_type(self.output_type);
@@ -257,11 +256,8 @@ impl GltfEncoder {
         // Encode scene into the glTF asset
         self.encode_scene_to_buffer_internal(scene, &mut gltf_asset)?;
 
-        // Create GLB file chunks and write to buffer
-        let mut json_data = Vec::new();
-        gltf_asset.output_with_webp_restoration(scene, &mut json_data)?;
-        
-        self.write_glb_buffer_from_asset(&gltf_asset, json_data, writer)
+        // Write GLB buffer
+        self.write_glb_buffer_from_asset(&mut gltf_asset, scene, writer)
     }
 
     /// Sets the output type for the encoder.
@@ -326,13 +322,18 @@ impl GltfEncoder {
     }
 
     /// Helper function to write GLB buffer from asset
-    fn write_glb_buffer_from_asset<W>(&self, _gltf_asset: &GltfAsset, json_data: Vec<u8>, writer: &mut W) -> Result<(), Err>
-        where W: ByteWriter
+    fn write_glb_buffer_from_asset<W>(&self, gltf_asset: &mut GltfAsset, scene: &Scene, writer: &mut W) -> Result<(), Err>
+        where W: std::io::Write
     {
-        // For now, just write the JSON data (in a full implementation, this would be proper GLB format)
-        for &byte in &json_data {
-            writer.write_u8(byte);
-        }
+        // Generate JSON data with WebP restoration
+        let mut json_data = Vec::new();
+        gltf_asset.output_with_webp_restoration(scene, &mut json_data)?;
+        
+        // Get binary buffer data
+        let binary_data = gltf_asset.buffer();
+        
+        self.write_glb_format(writer, &json_data, binary_data)?;
+        
         Ok(())
     }
 
@@ -913,7 +914,7 @@ impl GltfAsset {
     }
 
     /// Convert a Draco Mesh to glTF data.
-    pub fn add_draco_mesh(&mut self, mesh: &Mesh) -> Result<(), Err> {
+    pub fn add_draco_mesh(&mut self, mesh: &Mesh, scene: &Scene) -> Result<(), Err> {
         
         // Compress the mesh with Draco
         let mut draco_buffer = Vec::new();
@@ -1143,12 +1144,48 @@ impl GltfAsset {
                     if attribute_name.starts_with("_FEATURE_ID_") {
                         // Create MeshFeatures for this feature ID attribute
                         let mut mesh_features = MeshFeatures::new();
-                        mesh_features.set_feature_count(9); // Based on original glTF - this should be determined from actual data
-                        mesh_features.set_attribute_index(iteration_id as i32); // Reference to the draco attribute
-                        mesh_features.set_property_table_index(0); // Based on original glTF
                         
-                        // Add to the primitive's mesh features
-                        primitive.mesh_features.push(mesh_features);
+                        // Try to get the original feature count from scene metadata first
+                        let feature_count = if let Some(mesh_features_json) = scene.metadata().get_entry("mesh_features_json") {
+                            // Parse the stored mesh features JSON to get the original feature count
+                            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(mesh_features_json) {
+                                if let Some(feature_ids) = json_value.get("featureIds").and_then(|v| v.as_array()) {
+                                    if let Some(first_feature_id) = feature_ids.first() {
+                                        if let Some(feature_count) = first_feature_id.get("featureCount").and_then(|v| v.as_i64()) {
+                                            feature_count as i32
+                                        } else {
+                                            // Fallback to calculating from attribute data
+                                            self.calculate_feature_count_from_attribute(mesh, iteration_id)
+                                        }
+                                    } else {
+                                        // Fallback to calculating from attribute data
+                                        self.calculate_feature_count_from_attribute(mesh, iteration_id)
+                                    }
+                                } else {
+                                    // Fallback to calculating from attribute data
+                                    self.calculate_feature_count_from_attribute(mesh, iteration_id)
+                                }
+                            } else {
+                                // Fallback to calculating from attribute data
+                                self.calculate_feature_count_from_attribute(mesh, iteration_id)
+                            }
+                        } else {
+                            // Fallback to calculating from attribute data
+                            self.calculate_feature_count_from_attribute(mesh, iteration_id)
+                        };
+                        
+                        // Only add mesh features if we found actual feature data
+                        if feature_count > 0 {
+                            mesh_features.set_feature_count(feature_count);
+                            mesh_features.set_attribute_index(iteration_id as i32); // Reference to the draco attribute
+                            mesh_features.set_property_table_index(0); // Based on original glTF
+                            
+                            // Add to the primitive's mesh features
+                            primitive.mesh_features.push(mesh_features);
+                        } else {
+                            // Log a warning or handle the case where no feature data was found
+                            eprintln!("Warning: Feature ID attribute '{}' found but no feature data could be extracted", attribute_name);
+                        }
                         
                         // Map the draco attribute index to the glTF accessor index for featureIds.attribute
                         primitive.feature_id_name_indices.insert(iteration_id as i32, accessor_index);
@@ -1583,7 +1620,7 @@ impl GltfAsset {
                             // Get the mesh from the scene
                             if let Some(mesh) = scene.get_mesh(mesh_instance.mesh_index) {
                                 // Encode the mesh with Draco and add to GLB
-                                self.add_draco_mesh(mesh)?;
+                                self.add_draco_mesh(mesh, scene)?;
                                 // Set the mesh index on the node (use the last added mesh)
                                 if mesh_instance_index == 0 {
                                     gltf_node.mesh_index = (self.meshes.len() - 1) as i32;
@@ -2027,22 +2064,58 @@ impl GltfAsset {
                 write!(buf_out, "\"mesh\":{}", node.mesh_index)?;
             }
             
-            // Write transformation matrix if any transformation is set
+            // Write transformation components if any transformation is set
             if node.trs_matrix.transform_set() {
-                if !node.name.is_empty() || !node.children_indices.is_empty() || node.mesh_index >= 0 {
-                    write!(buf_out, ",")?;
-                }
-                let matrix = node.trs_matrix.compute_transformation_matrix();
-                write!(buf_out, "\"matrix\":[")?;
-                for i in 0..4 {
-                    for j in 0..4 {
-                        if i > 0 || j > 0 {
-                            write!(buf_out, ",")?;
-                        }
-                        write!(buf_out, "{}", matrix.data[i][j])?;
+                let mut needs_comma = !node.name.is_empty() || !node.children_indices.is_empty() || node.mesh_index >= 0;
+                
+                // Prefer translation/rotation/scale over matrix when available
+                if node.trs_matrix.translation_set() {
+                    if needs_comma {
+                        write!(buf_out, ",")?;
+                    }
+                    if let Ok(translation) = node.trs_matrix.translation() {
+                        write!(buf_out, "\"translation\":[{},{},{}]", translation.x, translation.y, translation.z)?;
+                        needs_comma = true;
                     }
                 }
-                write!(buf_out, "]")?;
+                
+                if node.trs_matrix.rotation_set() {
+                    if needs_comma {
+                        write!(buf_out, ",")?;
+                    }
+                    if let Ok(rotation) = node.trs_matrix.rotation() {
+                        write!(buf_out, "\"rotation\":[{},{},{},{}]", rotation.x, rotation.y, rotation.z, rotation.w)?;
+                        needs_comma = true;
+                    }
+                }
+                
+                if node.trs_matrix.scale_set() {
+                    if needs_comma {
+                        write!(buf_out, ",")?;
+                    }
+                    if let Ok(scale) = node.trs_matrix.scale() {
+                        write!(buf_out, "\"scale\":[{},{},{}]", scale.x, scale.y, scale.z)?;
+                        needs_comma = true;
+                    }
+                }
+                
+                // Fallback to matrix if no individual components are set but matrix is set
+                if node.trs_matrix.matrix_set() && !node.trs_matrix.translation_set() && !node.trs_matrix.rotation_set() && !node.trs_matrix.scale_set() {
+                    if needs_comma {
+                        write!(buf_out, ",")?;
+                    }
+                    let matrix = node.trs_matrix.compute_transformation_matrix();
+                    write!(buf_out, "\"matrix\":[")?;
+                    for i in 0..4 {
+                        for j in 0..4 {
+                            if i > 0 || j > 0 {
+                                write!(buf_out, ",")?;
+                            }
+                            write!(buf_out, "{}", matrix.data[i][j])?;
+                        }
+                    }
+                    write!(buf_out, "]")?;
+                }
             }
             
             write!(buf_out, "}}")?;
@@ -2954,6 +3027,30 @@ impl GltfAsset {
         if self.copyright.is_empty() {
             self.copyright = "Generated by draco-rs".to_string();
         }
+    }
+
+    /// Calculate feature count from attribute data (fallback method)
+    fn calculate_feature_count_from_attribute(&self, mesh: &Mesh, iteration_id: usize) -> i32 {
+        // Count unique values in the feature ID attribute
+        let mut unique_ids = std::collections::HashSet::new();
+        
+        // Access the attribute data from the mesh
+        if let Some(attr) = mesh.get_attributes().get(iteration_id) {
+            // The attribute contains NdVector values, we need to extract the scalar feature IDs
+            for i in 0..attr.len() {
+                // Feature IDs are stored as single values (scalars) in the attribute
+                // Use the appropriate type based on the attribute
+                use crate::core::shared::NdVector;
+                let value: NdVector<1, f32> = attr.get(i);
+                // Extract the first (and only) component as the feature ID
+                let feature_id = *value.get(0) as i32;
+                unique_ids.insert(feature_id);
+            }
+        }
+        
+        // Use the number of unique feature IDs as the feature count
+        // This represents the actual number of features referenced by the geometry
+        unique_ids.len() as i32
     }
 }
 

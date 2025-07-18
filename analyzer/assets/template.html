@@ -77,8 +77,8 @@
   </div>
 
   <div class="viewer-container">
-    <div class="viewer" id="original_view"></div>
-    <div class="viewer" id="result_view"></div>
+    <div class="viewer" id="input_view"></div>
+    <div class="viewer" id="output_view"></div>
   </div>
   
   
@@ -245,9 +245,9 @@
     // Check if we have GLB files, otherwise fall back to OBJ
     const fileType = '{{file_type}}' || 'obj';
     if (fileType === 'gltf') {
-      setupComparison('./{{original_filename}}', './result.glb', 'gltf');
+      setupComparison('./{{original_filename}}', './output.glb', 'gltf');
     } else {
-      setupComparison('./original.obj', './result.obj', 'obj');
+      setupComparison('./input.obj', './output.obj', 'obj');
     }
   </script>
 </body>
