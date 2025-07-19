@@ -40,7 +40,7 @@ Planned for the **beta** milestone.
 draco-oxide = "0.1.0-alpha.1"
 ```
 
-### Example: Encode a glTF Scene
+### Example: Encode an obj file.
 
 ```rust
 use draco_oxide::{encode::{self, encode}, io::obj::load_obj};
@@ -74,7 +74,7 @@ See the [draco-oxide/examples](draco-oxide/examples/) directory for more.
 # compress input.obj into a draco file output.drc
 cargo run --bin cli -- -i path/to/input.obj -o path/to/output.drc
 
-# transcode gltf.obj into a draco compressed glb file output.glb as specified 
+# transcode input.glb into a draco compressed glb file output.glb as specified 
 # in KHR_draco_mesh_compression extension.
 cargo run --bin cli -- --transcode -i path/to/input.glb -o path/to/output.glb
 ```
