@@ -67,7 +67,7 @@ impl<Data, const N: usize> QuantizationCoordinateWise<Data, N>
     fn portabilize_value(&mut self, val: Data) -> NdVector<N, i32> {
         let diff = val - self.min_values;
         let normalized = diff / self.range_size;
-        let quantized = normalized * Data::Component::from_u64(1<<self.quantization_bits);
+        let quantized = normalized * Data::Component::from_u64((1<<self.quantization_bits)-1);
         let mut out = NdVector::<N, i32>::zero();
         for i in 0..N {
             let half = Data::Component::from_f64(0.5);

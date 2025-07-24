@@ -48,7 +48,7 @@ use draco_oxide::prelude::ConfigType;
 use std::io::Write;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create mesh from an obj file, for example.
+    // Create mesh from an obj file.
     let mesh = load_obj("mesh.obj").unwrap();
 
     // Create a buffer that we write the encoded data to.

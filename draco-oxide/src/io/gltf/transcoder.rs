@@ -191,11 +191,6 @@ impl DracoTranscoder {
             Err::TranscodingError("No scene loaded for writing".to_string())
         })?;
 
-        // Debug output for metadata
-        if let Some(mesh_features) = scene.metadata().get_entry("mesh_features_json") {
-            println!("DEBUG: mesh_features_json: {}", mesh_features);
-        }
-
         if !file_options.output_bin_filename.is_empty() 
             && !file_options.output_resource_directory.is_empty() {
             // Write with both bin filename and resource directory
@@ -227,11 +222,6 @@ impl DracoTranscoder {
         let scene = self.scene.as_ref().ok_or_else(|| {
             Err::TranscodingError("No scene loaded for writing".to_string())
         })?;
-
-        // Debug output for metadata
-        if let Some(mesh_features) = scene.metadata().get_entry("mesh_features_json") {
-            println!("DEBUG: mesh_features_json: {}", mesh_features);
-        }
 
         self.gltf_encoder.encode_scene_to_buffer(
             scene,
@@ -291,8 +281,9 @@ mod tests {
     fn test_transcode_buffer_equals_transcode_file() {
         // Read the actual Duck.glb test file
         // let test_glb_path = "../private_tests/bad_files/39769_bldg_Building.glb";
-        let test_glb_path = "tests/data/Duck/Duck.glb";
-        let test_glb = std::fs::read(test_glb_path).expect("Failed to read Duck.glb test file");
+        // let test_glb_path = "tests/data/Duck/Duck.glb";
+        let test_glb_path = "../39772_bldg_Building.glb";
+        let test_glb = std::fs::read(test_glb_path).expect("Failed to read input glb test file");
         
         // Create transcoder with default options
         let mut transcoder1 = DracoTranscoder::create(None).unwrap();
@@ -307,8 +298,8 @@ mod tests {
         
         // Write test GLB to a temporary file for file-based transcoding
         let temp_dir = std::env::temp_dir();
-        let input_path = temp_dir.join("test_duck_input.glb");
-        let output_path = temp_dir.join("test_duck_output.glb");
+        let input_path = temp_dir.join("test_gltf_input.glb");
+        let output_path = temp_dir.join("test_gltf_output.glb");
         
         std::fs::write(&input_path, &test_glb)
             .expect("Failed to write temporary input file");
@@ -325,14 +316,27 @@ mod tests {
         let file_output = std::fs::read(&output_path)
             .expect("Failed to read output file");
         
-        // Clean up temporary files
+        // Clean up input file
         let _ = std::fs::remove_file(&input_path);
-        let _ = std::fs::remove_file(&output_path);
         
+        // Write the buffer output to a file for comparison
+        let dir = std::env::current_dir()
+            .expect("Failed to get current directory");
+        let buffer_output_path = dir.join("test_gltf_buffer_output.glb");
+        std::fs::write(&buffer_output_path, &buffer_output)
+            .expect("Failed to write buffer output file");
+        
+        // make sure that the outputs are nontrivial
+        assert!(!buffer_output.len() > 10, "Buffer output is too small: size = {}", buffer_output.len());
         // Compare outputs
-        assert_eq!(buffer_output.len(), file_output.len(), 
-            "transcode_buffer and transcode_file outputs have different lengths");
-        assert_eq!(buffer_output, file_output, 
-            "transcode_buffer output should match transcode_file output");
+        assert_eq!(
+            buffer_output.len(), file_output.len(), 
+            "transcode_buffer and transcode_file outputs have different lengths"
+        );
+        
+        assert_eq!(
+            buffer_output, file_output,
+            "transcode_buffer and transcode_file outputs differ"
+        );
     }
 }

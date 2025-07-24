@@ -197,30 +197,42 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for MeshP
                 let values_up_till_now = vertices_up_till_now.iter()
                     .map(|&v| attribute.get_att_idx(v))
                     .collect::<Vec<_>>();
-                if values_up_till_now.contains(&attribute.get_att_idx(opp_v)) {
+                let opp_data = attribute.get_att_idx(opp_v);
+                let next_data = attribute.get_att_idx(
+                    self.corner_table.vertex_idx(
+                        self.corner_table.next(i)
+                    )
+                );
+                let prev_data = attribute.get_att_idx(
+                    self.corner_table.vertex_idx(
+                        self.corner_table.previous(i)
+                    )
+                );
+                if values_up_till_now.contains(&opp_data) 
+                    && values_up_till_now.contains(&next_data)
+                    && values_up_till_now.contains(&prev_data)
+                {
                     // we found the opposite corner
                     [self.corner_table.next(i), self.corner_table.previous(i), opp]
                 } else {
                     // If there is no opposite corner, then we cannot do the parallelogram prediction.
                     // return the most recent value instead.
-                    let last_v = if let Some(last) = vertices_up_till_now.last() {
-                        *last
+                    return if let Some(&last_v) = vertices_up_till_now.last() {
+                        attribute.get(last_v)
                     } else {
                         // If there are no vertices or corners up till now, return a zero vector.
-                        return NdVector::<N, i32>::zero();
+                        NdVector::<N, i32>::zero()
                     };
-                    return attribute.get(last_v);
                 }
             } else {
                 // If there is no opposite corner, then we cannot do the parallelogram prediction.
                 // return the most recent value instead.
-                let last_v = if let Some(last) = vertices_up_till_now.last() {
-                    *last
+                return if let Some(&last_v) = vertices_up_till_now.last() {
+                    attribute.get(last_v)
                 } else {
                     // If there are no vertices or corners up till now, return a zero vector.
-                    return NdVector::<N, i32>::zero();
+                    NdVector::<N, i32>::zero()
                 };
-                return attribute.get(last_v);
             }
         };
         
@@ -231,7 +243,8 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for MeshP
         let a_coord = attribute.get::<NdVector<N,i32>, N>(a).clone();
         let b_coord = attribute.get::<NdVector<N,i32>, N>(b).clone();
         let diagonal_coord = attribute.get::<NdVector<N,i32>, N>(diagonal).clone();
-        a_coord + b_coord - diagonal_coord
+        let out = a_coord + b_coord - diagonal_coord;
+        out
     }
 }
 

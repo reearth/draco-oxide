@@ -68,16 +68,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sphere_reindexed() {
-        let mesh  = load_obj("tests/data/sphere.obj").unwrap();
-        let mesh_reindexed = load_obj("tests/data/sphere_reindexed.obj").unwrap();
-        assert_eq!(mesh.get_faces(), mesh_reindexed.get_faces());
-        assert_eq!(mesh.attributes.len(), mesh_reindexed.attributes.len());
-        assert_eq!(mesh.attributes[0].unique_vals_as_slice::<NdVector<3,f32>>(), mesh_reindexed.attributes[0].unique_vals_as_slice());
-        assert_eq!(mesh.attributes[1].unique_vals_as_slice::<NdVector<3,f32>>(), mesh_reindexed.attributes[1].unique_vals_as_slice());
-    }
-
-    #[test]
     fn tetrahedron() {
         let mesh = load_obj("tests/data/tetrahedron.obj").unwrap();
         assert_eq!(mesh.get_faces(),

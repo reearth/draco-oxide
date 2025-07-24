@@ -279,7 +279,7 @@ impl<'mesh> CornerTable<'mesh> {
             if c == Self::first_corner(f_idx) {
                 let v0 = self.pos_vertex_idx(c);
                 if v0 == source_v || v0 == sink_v || source_v == sink_v {
-                    unimplemented!("Degenerated face found in corner table computation.");
+                    continue; // skip degenerate corners
                 }
             }
 

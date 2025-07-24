@@ -62,17 +62,22 @@ impl MeshBuilder {
     pub fn build(self) -> Result<Mesh, Err> {
         self.dependency_check()?;
 
-        let Self { attributes, mut faces, .. } = self;
+        let Self { attributes, faces, .. } = self;
 
-        let mut attributes = Self::get_sorted_attributes(attributes);
-
-        Self::remove_unused_vertices(&mut attributes, &mut faces)?;
-
+        let attributes = Self::get_sorted_attributes(attributes);
+        
         // Always perform vertex deduplication based on positions
-        let (attributes, faces) = Self::deduplicate_vertices_based_on_positions(attributes, faces)?;
-
+        let (mut attributes, faces) = Self::deduplicate_vertices_based_on_positions(attributes, faces)?;
+        
+        // Remove degenerate faces
+        let mut faces = faces.into_iter()
+            .filter(|f| f[0]!=f[1] && f[1]!=f[2] && f[2]!=f[0]) // filter out degenerate faces
+            .collect::<Vec<_>>();
+    
+        Self::remove_unused_vertices(&mut attributes, &mut faces)?;
         // Ensure that the connectivity is valid
         Self::assert_connectivity_validity(&faces);
+
         // Ensure that the attributes are valid
         Self::assert_attributes_validity(&attributes);
         

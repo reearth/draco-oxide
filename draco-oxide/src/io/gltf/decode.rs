@@ -577,9 +577,15 @@ impl GltfDecoder {
         let accessor = &accessors[accessor_index];
         
         // Extract accessor properties
-        let buffer_view_index = accessor.get("bufferView")
-            .and_then(|bv| bv.as_u64())
-            .ok_or_else(|| Err::LoadError("Accessor missing bufferView".to_string()))? as usize;
+        // Note: bufferView might be missing for accessors that are part of Draco-compressed data
+        let buffer_view_index = match accessor.get("bufferView").and_then(|bv| bv.as_u64()) {
+            Some(bv) => bv as usize,
+            None => {
+                // Accessor doesn't have a bufferView - this is valid for Draco-compressed attributes
+                // Return None to indicate this accessor should be skipped
+                return Ok(None);
+            }
+        };
         
         let byte_offset = accessor.get("byteOffset")
             .and_then(|bo| bo.as_u64())
@@ -1112,10 +1118,8 @@ impl GltfDecoder {
         // Extract extension attributes and corresponding accessor info
         for (_mesh_index, mesh_ext_attrs) in self.extension_attributes.iter().enumerate() {
             for (_primitive_index, ext_attrs) in mesh_ext_attrs.iter().enumerate() {
-                // println!("DEBUG: ext_attrs: {:?}", ext_attrs);
                 for (attr_name, accessor_info) in &ext_attrs.attributes {
                     // Only process feature ID and other extension attributes
-                    // println!("DEBUG: Processing extension attribute: {}", attr_name);
                     if attr_name.starts_with("_FEATURE_ID_") || attr_name.starts_with("_") {
                         // Use the stored accessor information instead of looking it up in the sanitized model
                         let component_type = match accessor_info.component_type {
@@ -1644,6 +1648,9 @@ impl GltfDecoder {
         // Add mesh features to the scene
         self.add_mesh_features_to_scene(scene)?;
         
+        // Add property table buffer data to the scene for preservation during encoding
+        self.add_property_table_buffer_data_to_scene(scene)?;
+        
         // Add WebP information to the scene metadata for restoration during encoding
         if let Some(ref webp_info) = self.webp_info {
             scene.metadata_mut().add_entry("webp_info".to_string(), webp_info.clone());
@@ -1747,6 +1754,88 @@ impl GltfDecoder {
         // Placeholder for structural metadata processing
         // In full implementation, this would process glTF extensions for metadata
         let _ = geometry;
+        Ok(())
+    }
+
+    /// Adds property table buffer data to the scene for preservation during encoding.
+    fn add_property_table_buffer_data_to_scene(&mut self, scene: &mut Scene) -> Result<(), Err> {
+        // Only process if we have buffers and a glTF model
+        if let (Some(gltf_model), Some(buffers)) = (self.gltf_model.as_ref(), self.buffers.as_ref()) {
+            // Extract buffer views information
+            let mut buffer_views_json = Vec::new();
+            let mut property_buffer_data = Vec::new();
+            
+            // Check if we have property tables in the structural metadata
+            if let Some(ref structural_metadata) = self.temp_document_structural_metadata {
+                if let Some(property_tables) = structural_metadata.get("propertyTables").and_then(|pt| pt.as_array()) {
+                    if !property_tables.is_empty() {
+                        // We have property tables, so we need to preserve the buffer data
+                        
+                        // Collect all buffer views
+                        for (index, buffer_view) in gltf_model.views().enumerate() {
+                            let mut bv_json = serde_json::Map::new();
+                            bv_json.insert("buffer".to_string(), serde_json::Value::Number(buffer_view.buffer().index().into()));
+                            bv_json.insert("byteOffset".to_string(), serde_json::Value::Number(buffer_view.offset().into()));
+                            bv_json.insert("byteLength".to_string(), serde_json::Value::Number(buffer_view.length().into()));
+                            
+                            if let Some(stride) = buffer_view.stride() {
+                                bv_json.insert("byteStride".to_string(), serde_json::Value::Number(stride.into()));
+                            }
+                            
+                            if let Some(target) = buffer_view.target() {
+                                bv_json.insert("target".to_string(), serde_json::Value::Number((target as u32).into()));
+                            }
+                            
+                            // Store name if available (from JSON)
+                            if let Some(name) = buffer_view.name() {
+                                bv_json.insert("name".to_string(), serde_json::Value::String(name.to_string()));
+                            }
+                            
+                            buffer_views_json.push(serde_json::Value::Object(bv_json));
+                            
+                            // We'll extract all buffer data later in a second pass
+                        }
+                        
+                        // Now extract the property buffer data from the correct offsets
+                        // Find the min and max offsets for property data (excluding buffer view 0)
+                        let mut min_offset = usize::MAX;
+                        let mut max_end = 0;
+                        
+                        for (index, buffer_view) in gltf_model.views().enumerate() {
+                            if index > 0 {  // Skip buffer view 0 (mesh data)
+                                let start = buffer_view.offset();
+                                let end = start + buffer_view.length();
+                                min_offset = min_offset.min(start);
+                                max_end = max_end.max(end);
+                            }
+                        }
+                        
+                        // Extract the property data from the buffer
+                        if min_offset < max_end && !buffers.is_empty() {
+                            let buffer_data = &buffers[0];  // Assuming single buffer for GLB
+                            if max_end <= buffer_data.0.len() {
+                                property_buffer_data = buffer_data.0[min_offset..max_end].to_vec();
+                                
+                                // Store the starting offset so encoder knows where property data begins
+                                scene.metadata_mut().add_entry("property_buffer_start_offset".to_string(), 
+                                    min_offset.to_string());
+                            }
+                        }
+                        
+                        // Store buffer views JSON in scene metadata
+                        scene.metadata_mut().add_entry("property_buffer_views_json".to_string(), 
+                            serde_json::to_string(&buffer_views_json).unwrap_or_default());
+                        
+                        // Store property buffer data as base64 encoded string
+                        if !property_buffer_data.is_empty() {
+                            use base64::{Engine as _, engine::general_purpose};
+                            let encoded = general_purpose::STANDARD.encode(&property_buffer_data);
+                            scene.metadata_mut().add_entry("property_buffer_data_base64".to_string(), encoded);
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2547,7 +2636,18 @@ impl GltfDecoder {
                 features.set_label(label);
             }
             
-            if let Some(attribute_index) = obj.get("attribute").and_then(|v| v.as_i64()) {
+            // Handle both string and numeric attribute references for backward compatibility
+            if let Some(attribute_name) = obj.get("attribute").and_then(|v| v.as_str()) {
+                // String format: attribute name like "_FEATURE_ID_0"
+                if let Some(feature_id_str) = attribute_name.strip_prefix("_FEATURE_ID_") {
+                    if let Ok(feature_id) = feature_id_str.parse::<i32>() {
+                        if let Some(&att_index) = self.feature_id_attribute_indices.get(&feature_id) {
+                            features.set_attribute_index(att_index);
+                        }
+                    }
+                }
+            } else if let Some(attribute_index) = obj.get("attribute").and_then(|v| v.as_i64()) {
+                // Numeric format (legacy): attribute index
                 // Convert index in feature ID vertex attribute name like _FEATURE_ID_5
                 // to attribute index in draco::Mesh.
                 if let Some(&att_index) = self.feature_id_attribute_indices.get(&(attribute_index as i32)) {

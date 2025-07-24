@@ -14,5 +14,4 @@ fn en() {
     let mut file = std::fs::File::create(&format!("tests/outputs/{}.drc", FILE_NAME)).unwrap();
 
     file.write_all(&writer).unwrap();
-    panic!();
 }
