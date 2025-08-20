@@ -1,10 +1,11 @@
-use crate::{core::{attribute::Attribute, corner_table::GenericCornerTable}, prelude::{NdVector, Vector}};
+use crate::{core::{attribute::Attribute, corner_table::GenericCornerTable, shared::{CornerIdx, VertexIdx}}, prelude::{NdVector, Vector}};
 use super::PredictionSchemeImpl;
 use std::mem;
 
 pub struct DeltaPrediction<'parents, C, const N: usize> 
 {
 	faces: &'parents [[usize; 3]],
+	corner_table: &'parents C,
 	_marker: std::marker::PhantomData<&'parents C>,
 }
 
@@ -17,13 +18,14 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for Delta
 	
 	type AdditionalDataForMetadata = ();
 	
-	fn new(_parents: &[&'parents Attribute], _corner_table: &'parents C) -> Self {
+	fn new(_parents: &[&'parents Attribute], corner_table: &'parents C) -> Self {
         // Note: Connectivity is now passed via conn_att parameter instead of parent attributes
         // For now, use an empty slice as this prediction scheme needs to be updated for the new architecture
         let faces: &[[usize; 3]] = &[];
 
         Self {
             faces,
+			corner_table,
 			_marker: std::marker::PhantomData,
         }   
 	}
@@ -53,18 +55,19 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for Delta
 	
 	fn predict(
 		&mut self,
-		_i: usize,
-		vertices_or_corners_processed_up_till_now: &[usize],
+		_i: CornerIdx,
+		vertices_up_till_now: &[VertexIdx],
 		att: &Attribute,
 	) -> NdVector<N, i32>
 	{
-		let prev_v = if let Some(prev_v) = vertices_or_corners_processed_up_till_now.last() {
+		let prev_v = if let Some(prev_v) = vertices_up_till_now.last() {
 			*prev_v
 		} else {
 			// If there are no previous vertices, we cannot predict the value.
 			return NdVector::zero();
 		};
-		att.get(prev_v)
+		let prev_pt = self.corner_table.point_idx(self.corner_table.left_most_corner(prev_v));
+		att.get(prev_pt)
 	}
 }
 

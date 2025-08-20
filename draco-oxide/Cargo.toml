@@ -27,6 +27,8 @@ gltf = { version = "1.4", features = ["extensions", "guess_mime_type", "image", 
 image = { version = "0.25", features = ["webp"] }
 base64 = "0.21"
 indexmap = "2.0"
+paste = "1.0"
+
 
 [features]
 default = []

@@ -1,14 +1,14 @@
-use crate::{core::{corner_table::CornerTable, shared::{CornerIdx, VertexIdx}}, prelude::Attribute};
+use crate::{core::{corner_table::CornerTable, shared::{AttributeValueIdx, CornerIdx, VecVertexIdx, VertexIdx}}, prelude::Attribute};
 use crate::core::corner_table::GenericCornerTable;
 
 #[derive(Debug, Clone)]
 pub(crate) struct AttributeCornerTable {
     corner_to_vertex: Vec<VertexIdx>,
-    vertex_to_attribute_entry: Vec<usize>,
+    vertex_to_attribute_map: VecVertexIdx<AttributeValueIdx>,
     /// A vector that indicates whether the edge opposite to the corner is a seam edge.
     is_edge_on_seam: Vec<bool>,
     is_vertex_on_seam: Vec<bool>,
-    left_most_corners: Vec<usize>,
+    left_most_corners: Vec<CornerIdx>,
     num_vertices: usize,
 }
 
@@ -23,98 +23,82 @@ impl AttributeCornerTable {
         // We check which of the mesh vertices is part of an attribute seam, because seams require
         // special handling.
         for c in 0..corner_table.num_corners() {
-            let opp_corner = if let Some(opp_corner) = corner_table.opposite(c) {
+            let c_idx = CornerIdx::from(c);
+            let opp_corner = if let Some(opp_corner) = corner_table.opposite(c_idx) {
                 opp_corner
             } else {
                 // Boundary. Mark it as seam edge.
                 is_edge_on_seam[c] = true;
                 // Mark seam vertices.
-                let mut v = corner_table.pos_vertex_idx(corner_table.next(c));
-                is_vertex_on_seam[v] = true;
-                v = corner_table.pos_vertex_idx(corner_table.previous(c));
-                is_vertex_on_seam[v] = true;
+                let mut v = corner_table.vertex_idx(corner_table.next(c_idx));
+                is_vertex_on_seam[usize::from(v)] = true;
+                v = corner_table.vertex_idx(corner_table.previous(c_idx));
+                is_vertex_on_seam[usize::from(v)] = true;
                 continue;
             };
-            if opp_corner < c {
+            if usize::from(opp_corner) < c {
                 continue;  // Opposite corner was already processed.
             }
 
             // otherwise check for the non-trivial attribute seam.
-            let mut curr_c = c;
-            let mut curr_c_2 = opp_corner;
+            let mut c1 = c_idx;
+            let mut c2 = opp_corner;
             for _ in 0..2 {
-                curr_c = corner_table.next(curr_c);
-                curr_c_2 = corner_table.previous(curr_c_2);
-                let i1 = corner_table.get_mesh_faces()[curr_c/3][curr_c%3];
-                let i2 = corner_table.get_mesh_faces()[curr_c_2/3][curr_c_2%3];
-                if att.get_att_idx(i1) != att.get_att_idx(i2) {
+                c1 = corner_table.next(c1);
+                c2 = corner_table.previous(c2);
+                let c1 = usize::from(c1);
+                let c2 = usize::from(c2);
+                let i1 = corner_table.get_mesh_faces()[c1/3][c1%3];
+                let i2 = corner_table.get_mesh_faces()[c2/3][c2%3];
+                if att.get_unique_val_idx(i1) != att.get_unique_val_idx(i2) {
                     is_edge_on_seam[c] = true;
-                    is_edge_on_seam[opp_corner] = true;
+                    is_edge_on_seam[usize::from(opp_corner)] = true;
                     // Mark seam vertices.
-                    is_vertex_on_seam[corner_table.pos_vertex_idx(corner_table.next(c))] = true;
-                    is_vertex_on_seam[corner_table.pos_vertex_idx(corner_table.previous(c))] = true;
-                    is_vertex_on_seam[corner_table.pos_vertex_idx(corner_table.next(opp_corner))] = true;
-                    is_vertex_on_seam[corner_table.pos_vertex_idx(corner_table.previous(opp_corner))] = true;
+                    is_vertex_on_seam[usize::from(corner_table.vertex_idx(corner_table.next(c_idx)))] = true;
+                    is_vertex_on_seam[usize::from(corner_table.vertex_idx(corner_table.previous(c_idx)))] = true;
+                    is_vertex_on_seam[usize::from(corner_table.vertex_idx(corner_table.next(opp_corner)))] = true;
+                    is_vertex_on_seam[usize::from(corner_table.vertex_idx(corner_table.previous(opp_corner)))] = true;
                     break;
                 }
             }
         }
 
         let mut out = Self {
-            corner_to_vertex: vec![0; corner_table.num_corners()],
-            vertex_to_attribute_entry: Vec::new(),
+            corner_to_vertex: vec![0.into(); corner_table.num_corners()],
+            vertex_to_attribute_map: VecVertexIdx::new(),
             is_edge_on_seam,
             is_vertex_on_seam,
             left_most_corners: Vec::new(),
             num_vertices: corner_table.num_vertices(),
         };
 
-        out.recompute_vertices(Some(att), corner_table);
+        out.recompute_vertices(att, corner_table);
         out
     }
 
     pub fn recompute_vertices(
         &mut self,
-        att: Option<&mut Attribute>,
+        att: &Attribute,
         corner_table: &CornerTable
     ) {
-        if let Some(att) = att {
-            self.recompute_vertices_impl::<true>(Some(&*att), corner_table);
-            assert_eq!(self.vertex_to_attribute_entry.len(), self.num_vertices());
-            att.set_vertex_to_att_val_map(
-                Some(self.vertex_to_attribute_entry.clone()) // ToDo: Avoid clone here.
-            );
-        } else {
-            self.recompute_vertices_impl::<false>(None, corner_table);
-        }
-    }
-
-    pub fn recompute_vertices_impl<const INIT_VERTEX_TO_ATTRIBUTE_ENTRIES: bool>(
-        &mut self,
-        att: Option<&Attribute>,
-        corner_table: &CornerTable
-    ) {
-        self.vertex_to_attribute_entry.clear();
+        self.vertex_to_attribute_map.clear();
         self.left_most_corners.clear();
         let mut num_new_vertices = 0;
 
         for v in 0..corner_table.num_vertices() {
+            let v = VertexIdx::from(v);
             let c = corner_table.left_most_corner(v);
             let mut first_vert_id = num_new_vertices;
             num_new_vertices += 1;
-            if INIT_VERTEX_TO_ATTRIBUTE_ENTRIES {
-                let att = att.unwrap(); // ToDo: This can even be unwrap_unchecked.
-                let v = corner_table.vertex_idx(c);
-                self.vertex_to_attribute_entry.push(att.get_att_idx(v));
-            } else {
-                // Identity mapping
-                self.vertex_to_attribute_entry.push(first_vert_id);
-            }
+            
+            let p = corner_table.point_idx(c);
+            self.vertex_to_attribute_map.push(att.get_unique_val_idx(p));
+
             let mut first_c = c;
             let mut maybe_curr_c;
             // Check if the vertex is on a seam edge, if it is we need to find the first
             // attribute entry on the seam edge in traversing in the CCW direction.
-            if self.is_vertex_on_seam[v] {
+            if self.is_vertex_on_seam[usize::from(v)] {
                 // Try to swing left on the modified corner table. We need to get the
                 // first corner that defines an attribute seam.
                 maybe_curr_c = self.swing_left(first_c, corner_table);
@@ -127,7 +111,7 @@ impl AttributeCornerTable {
                     maybe_curr_c = self.swing_left(curr_c, corner_table);
                 }
             }
-            self.corner_to_vertex[first_c] = first_vert_id;
+            self.corner_to_vertex[usize::from(first_c)] = first_vert_id.into();
             self.left_most_corners.push(first_c);
             let mut maybe_curr_c = corner_table.swing_right(first_c);
             // Now swing right from the left most corner until we reach the first corner that is opposite to the seam edge.
@@ -138,18 +122,13 @@ impl AttributeCornerTable {
                 if self.is_corner_opposite_to_seam_edge(corner_table.next(curr_c)) {
                     first_vert_id = num_new_vertices;
                     num_new_vertices += 1;
-                    if INIT_VERTEX_TO_ATTRIBUTE_ENTRIES {
-                        let att = att.unwrap(); // ToDo: This can even be unwrap_unchecked.
-                        let v = corner_table.vertex_idx(curr_c);
-                        self.vertex_to_attribute_entry.push(
-                            att.get_att_idx(v));
-                    } else {
-                        // Identity mapping.
-                        self.vertex_to_attribute_entry.push(first_vert_id);
-                    }
+
+                    let p = corner_table.point_idx(curr_c);
+                    self.vertex_to_attribute_map.push(att.get_unique_val_idx(p));
+                    
                     self.left_most_corners.push(curr_c);
                 }
-                self.corner_to_vertex[curr_c] = first_vert_id;
+                self.corner_to_vertex[usize::from(curr_c)] = first_vert_id.into();
                 maybe_curr_c = corner_table.swing_right(curr_c);
             }
         }
@@ -157,23 +136,28 @@ impl AttributeCornerTable {
         self.num_vertices = num_new_vertices;
     }
 
-    pub(crate) fn pos_vertex_idx(&self, c: usize) -> VertexIdx {
-        self.corner_to_vertex[c]
+    #[allow(unused)]
+    pub(crate) fn get_vertex_to_attribute_map(&self) -> &VecVertexIdx<AttributeValueIdx> {
+        &self.vertex_to_attribute_map
+    }
+
+    pub(crate) fn vertex_idx(&self, c: CornerIdx) -> VertexIdx {
+        self.corner_to_vertex[usize::from(c)]
     }
 
     pub(crate) fn num_vertices(&self) -> usize {
         self.num_vertices
     }
 
-    pub(crate) fn next(&self, c: usize, corner_table: &CornerTable) -> usize {
+    pub(crate) fn next(&self, c: CornerIdx, corner_table: &CornerTable) -> CornerIdx {
         corner_table.next(c)
     }
 
-    pub(crate) fn previous(&self, c: usize, corner_table: &CornerTable) -> usize {
+    pub(crate) fn previous(&self, c: CornerIdx, corner_table: &CornerTable) -> CornerIdx {
         corner_table.previous(c)
     }
 
-    pub(crate) fn opposite(&self, c: usize, corner_table: &CornerTable) -> Option<usize> {
+    pub(crate) fn opposite(&self, c: CornerIdx, corner_table: &CornerTable) -> Option<CornerIdx> {
         if self.is_corner_opposite_to_seam_edge(c) {
             None
         } else {
@@ -182,7 +166,7 @@ impl AttributeCornerTable {
     }
 
     #[allow(unused)]
-    pub(crate) fn swing_right(&self, corner: usize, corner_table: &CornerTable) -> Option<usize> {
+    pub(crate) fn swing_right(&self, corner: CornerIdx, corner_table: &CornerTable) -> Option<CornerIdx> {
         if let Some(corner) = self.opposite(self.previous(corner, corner_table), corner_table) {
             Some(self.previous(corner, corner_table))
         } else {
@@ -190,7 +174,7 @@ impl AttributeCornerTable {
         }
     }
 
-    pub(crate) fn swing_left(&self, corner: usize, corner_table: &CornerTable) -> Option<usize> {
+    pub(crate) fn swing_left(&self, corner: CornerIdx, corner_table: &CornerTable) -> Option<CornerIdx> {
         if let Some(corner) = self.opposite(self.next(corner, corner_table), corner_table) {
             Some(self.next(corner, corner_table))
         } else {
@@ -198,12 +182,12 @@ impl AttributeCornerTable {
         }
     }
 
-    pub(crate) fn is_corner_opposite_to_seam_edge(&self, corner: usize) -> bool {
-        self.is_edge_on_seam[corner]
+    pub(crate) fn is_corner_opposite_to_seam_edge(&self, corner: CornerIdx) -> bool {
+        self.is_edge_on_seam[usize::from(corner)]
     }
 
     pub(crate) fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx {
-        self.left_most_corners[vertex]
+        self.left_most_corners[usize::from(vertex)]
     }
 }
 
@@ -226,23 +210,25 @@ mod tests {
         let attr_corner_table = AttributeCornerTable::new(&corner_table, att);
         assert_eq!(attr_corner_table.num_vertices(), corner_table.num_vertices());
         assert_eq!(attr_corner_table.corner_to_vertex.len(), corner_table.num_corners());
-        assert_eq!(attr_corner_table.vertex_to_attribute_entry.len(), corner_table.num_vertices());
+        assert_eq!(attr_corner_table.vertex_to_attribute_map.len(), corner_table.num_vertices());
         assert_eq!(attr_corner_table.left_most_corners.len(), corner_table.num_vertices());
         assert_eq!(attr_corner_table.is_edge_on_seam.len(), corner_table.num_corners());
         assert_eq!(attr_corner_table.is_vertex_on_seam.len(), corner_table.num_vertices());
         assert!(attr_corner_table.is_edge_on_seam.iter().all(|&x| x == false));
         assert!(attr_corner_table.is_vertex_on_seam.iter().all(|&x| x == false));
-        assert!(attr_corner_table.left_most_corners.iter().all(|&x| x < corner_table.num_corners()));
-        assert!(attr_corner_table.corner_to_vertex.iter().all(|&x| x < corner_table.num_vertices()));
+        assert!(attr_corner_table.left_most_corners.iter().all(|&x| usize::from(x) < corner_table.num_corners()));
+        assert!(attr_corner_table.corner_to_vertex.iter().all(|&x| usize::from(x) < corner_table.num_vertices()));
 
-        // check the opprosite corners
+        // check the opposite corners
         for c in 0..corner_table.num_corners() {
+            let c = CornerIdx::from(c);
             assert_eq!(attr_corner_table.opposite(c, &corner_table), corner_table.opposite(c));
         }
 
         // check vertices
         for c in 0..corner_table.num_corners() {
-            assert_eq!(attr_corner_table.pos_vertex_idx(c), corner_table.vertex_idx(c), 
+            let c = CornerIdx::from(c);
+            assert_eq!(attr_corner_table.vertex_idx(c), corner_table.vertex_idx(c), 
                 "attr corner_to_vertex: {:?}\noriginal corner_to_vertex: {:?}", 
                 attr_corner_table.corner_to_vertex, 
                 corner_table.corner_to_vertex
@@ -267,32 +253,35 @@ mod tests {
         let attr_corner_table = AttributeCornerTable::new(&corner_table, tex_att);
         assert_eq!(attr_corner_table.num_vertices(), corner_table.num_vertices()+2);
         assert_eq!(attr_corner_table.corner_to_vertex.len(), corner_table.num_corners());
-        assert_eq!(attr_corner_table.corner_to_vertex[0], 0);
-        assert_eq!(attr_corner_table.swing_left(4, &corner_table), None);
-        assert_eq!(attr_corner_table.swing_right(4, &corner_table), None);
-        assert_eq!(attr_corner_table.swing_left(8, &corner_table), None);
-        assert_eq!(attr_corner_table.swing_right(8, &corner_table), None);
-        assert_eq!(attr_corner_table.swing_left(10, &corner_table), None);
-        assert_eq!(attr_corner_table.swing_right(10, &corner_table), None);
+        assert_eq!(attr_corner_table.corner_to_vertex[0], 0.into());
+        assert_eq!(attr_corner_table.swing_left(4.into(), &corner_table), None);
+        assert_eq!(attr_corner_table.swing_right(4.into(), &corner_table), None);
+        assert_eq!(attr_corner_table.swing_left(8.into(), &corner_table), None);
+        assert_eq!(attr_corner_table.swing_right(8.into(), &corner_table), None);
+        assert_eq!(attr_corner_table.swing_left(10.into(), &corner_table), None);
+        assert_eq!(attr_corner_table.swing_right(10.into(), &corner_table), None);
         let seam_edge_corners = [
             3,5,6,7,9,11
         ];
         for c in seam_edge_corners {
+            let c = CornerIdx::from(c);
             assert!(
                 attr_corner_table.is_corner_opposite_to_seam_edge(c),
-                "Corner {} is not opposite to a seam edge, but it should be. is_edge_on_seam: {:?}",
+                "Corner {:?} is not opposite to a seam edge, but it should be. is_edge_on_seam: {:?}",
                 c, attr_corner_table.is_edge_on_seam
             )
         }
         let left_most_corners = [
             6,5,11,10,8,4
         ];
-        for (i, left_most_corner) in left_most_corners.into_iter().enumerate() {
+        for (v, left_most_corner) in left_most_corners.into_iter().enumerate() {
+            let v = VertexIdx::from(v);
+            let left_most_corner = CornerIdx::from(left_most_corner);
             assert_eq!(
-                attr_corner_table.left_most_corner(i), left_most_corner,
-                "Left most corner for vertex {} is {}, but it should be {}. left_most_corners: {:?}",
-                i,
-                attr_corner_table.left_most_corner(i),
+                attr_corner_table.left_most_corner(v), left_most_corner,
+                "Left most corner for vertex {:?} is {:?}, but it should be {:?}. left_most_corners: {:?}",
+                v,
+                attr_corner_table.left_most_corner(v),
                 left_most_corner,
                 attr_corner_table.left_most_corners
             );

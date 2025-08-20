@@ -4,7 +4,7 @@ use std::{
 
 use crate::core::attribute::{AttributeDomain, ComponentDataType};
 use crate::core::corner_table::GenericCornerTable;
-use crate::core::shared::{DataValue, NdVector, VertexIdx};
+use crate::core::shared::{CornerIdx, DataValue, NdVector};
 use crate::core::attribute::Attribute;
 use crate::encode::connectivity::ConnectivityEncoderOutput;
 use crate::encode::entropy::symbol_coding::encode_symbols;
@@ -278,7 +278,7 @@ impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'enc
     fn encode_impl_edgebreaker<const WRITE_NOW: bool, CT, S, Data, const N: usize>(mut self, corner_table: &CT, sequence: S) -> Result<Attribute, Err>
         where
             CT: GenericCornerTable,
-            S: Iterator<Item = VertexIdx> + Clone,
+            S: Iterator<Item = CornerIdx> + Clone,
             Data: Vector<N> + Portable,
             NdVector<N, i32>: Vector<N, Component = i32>,
     {
@@ -314,7 +314,7 @@ impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'enc
     fn encode_portabilized<CT, S, const N: usize>(&mut self, corner_table: &CT, sequence: S, port_att: Attribute, port_info_buffer: Vec<u8>) -> Result<Attribute, Err>
         where 
             CT: GenericCornerTable,
-            S: Iterator<Item = VertexIdx>,
+            S: Iterator<Item = CornerIdx>,
             NdVector<N, i32>: Vector<N, Component = i32> + Portable,
     {
         let mut prediction_scheme = prediction_scheme::PredictionScheme::new(
@@ -329,18 +329,14 @@ impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'enc
         );
         
         // Predict and transform the values
-        let mut predicted_values = Vec::with_capacity(port_att.len());
         let mut sequence_record = Vec::new();
+
         for c in sequence {
             let val = prediction_scheme.predict(c, &sequence_record, &port_att);
-            let v = if port_att.get_attribute_type()==AttributeType::Position {
-                corner_table.vertex_idx(c)
-            } else {
-                corner_table.pos_vertex_idx(c)
-            };
+            let v = corner_table.vertex_idx(c);
             sequence_record.push(v);
-            predicted_values.push(val);
-            transform.map_with_tentative_metadata(port_att.get(v), val);
+            let p = corner_table.point_idx(c);
+            transform.map_with_tentative_metadata(port_att.get(p), val);
         }
 
         // Write the output

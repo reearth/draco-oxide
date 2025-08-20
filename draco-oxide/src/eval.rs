@@ -1,64 +1,7 @@
 use std::vec::IntoIter;
 use std::mem;
 
-use serde::Serialize;
-
-use crate::core::attribute::{AttributeId, ComponentDataType};
 use crate::core::bit_coder::ByteWriter;
-use crate::prelude::{Attribute, AttributeType};
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CompressionInfo {
-    pub connectivity: ConnectivityInfo,
-    pub attributes: Vec<AttributeInfo>,
-    pub original_size: usize,
-    pub compressed_size: usize,
-    pub time_taken: f32,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ConnectivityInfo {
-    pub num_faces: usize,
-    pub num_vertices: usize,
-    pub connectivirty_encoder: ConnectivityEncoder,
-    pub compressed_size: usize,
-    pub time_taken: f32,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub enum ConnectivityEncoder {
-    Sequential(Sequential),
-    Edgebreaker(Edgebreaker),
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Sequential {
-    pub index_size: usize,
-    pub faces: Vec<[usize; 3]>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Edgebreaker {
-    pub clers_string: Vec<char>
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AttributeInfo {
-    pub time_taken: f32,
-    pub attribute_type: AttributeType,
-    
-    /// The size of the original data in bytes.
-    /// This is the size of the attribute values, but not the size of the attribute itself, that is,
-    /// the size of the other fields in the `Attribute` struct (such as the size of the
-    /// attribute type) is not included.
-    pub original_size: usize,
-    pub compressed_size: usize,
-    pub component_type: ComponentDataType,
-    pub num_components: usize,
-    pub num_parents: usize,
-    pub parents: Vec<AttributeId>,
-    pub attribute: Attribute,
-}
 
 
 const EVAL_BEGIN: u8 = 0xB7;

@@ -3,6 +3,7 @@ use crate::core::material::TransparencyMode;
 use crate::core::mesh::meh_features::MeshFeatures;
 use crate::core::mesh::Mesh;
 use crate::core::scene::Scene;
+use crate::core::shared::PointIdx;
 use crate::core::texture;
 use crate::core::texture::FilterType;
 use crate::core::texture::TextureUtils;
@@ -820,7 +821,7 @@ impl GltfAsset {
         }
         
         // Get the first value to initialize bounds
-        let first: NdVector<3, f32> = attr.get(0);
+        let first: NdVector<3, f32> = attr.get(PointIdx::from(0));
         let mut min_x = *first.get(0);
         let mut min_y = *first.get(1); 
         let mut min_z = *first.get(2);
@@ -830,7 +831,7 @@ impl GltfAsset {
         
         // Iterate through all values to find actual bounds
         for i in 1..attr.len() {
-            let val: NdVector<3, f32> = attr.get(i);
+            let val: NdVector<3, f32> = attr.get(PointIdx::from(i));
             min_x = min_x.min(*val.get(0));
             min_y = min_y.min(*val.get(1));
             min_z = min_z.min(*val.get(2));
@@ -862,7 +863,7 @@ impl GltfAsset {
         }
         
         // Get the first value to initialize bounds
-        let first: NdVector<4, f32> = attr.get(0);
+        let first: NdVector<4, f32> = attr.get(PointIdx::from(0));
         let mut min_x = *first.get(0);
         let mut min_y = *first.get(1);
         let mut min_z = *first.get(2);
@@ -874,7 +875,7 @@ impl GltfAsset {
         
         // Iterate through all values to find actual bounds
         for i in 1..attr.len() {
-            let val: NdVector<4, f32> = attr.get(i);
+            let val: NdVector<4, f32> = attr.get(PointIdx::from(i));
             min_x = min_x.min(*val.get(0));
             min_y = min_y.min(*val.get(1));
             min_z = min_z.min(*val.get(2));
@@ -914,22 +915,27 @@ impl GltfAsset {
     }
 
     /// Convert a Draco Mesh to glTF data.
-    pub fn add_draco_mesh(&mut self, mesh: &Mesh, scene: &Scene) -> Result<(), Err> {
-        
+    pub fn add_draco_mesh(&mut self, mesh: &Mesh, scene: &Scene, material_index: Option<i32>) -> Result<(), Err> {
         // Compress the mesh with Draco
         let mut draco_buffer = Vec::new();
         // TODO: The evaluation data is not used. Change this to return the eval data.
         {
-            #[cfg(feature = "evaluation")]
-            let mut draco_buffer = EvalWriter::new(&mut draco_buffer);
             let config = crate::encode::Config::default();
             
             // Clone the mesh to avoid borrowing issues
             // TODO: This clone can be expensive; look into ways to avoid it.
             let mesh_copy = mesh.clone();
             
-            crate::encode::encode(mesh_copy, &mut draco_buffer, config)?;
-        } // draco_buffer: EvalWriter goes out of scope here even if it is enabled.
+            #[cfg(feature = "evaluation")]
+            {
+                let mut eval_writer = EvalWriter::new(&mut draco_buffer);
+                crate::encode::encode(mesh_copy, &mut eval_writer, config)?;
+            }
+            #[cfg(not(feature = "evaluation"))]
+            {
+                crate::encode::encode(mesh_copy, &mut draco_buffer, config)?;
+            }
+        }
 
         // Add the compressed data to the GLB buffer
         let buffer_start_offset = self.buffer.len();
@@ -1210,9 +1216,13 @@ impl GltfAsset {
             }
         }
         
-        // Determine the correct material index to use
-        let material_index = self.determine_material_index_for_mesh(mesh);
-        primitive.material = material_index;
+        // Use the provided material index, or determine one if not provided
+        let material_idx = if let Some(idx) = material_index {
+            idx
+        } else {
+            self.determine_material_index_for_mesh(mesh)
+        };
+        primitive.material = material_idx;
         
         // Add a default material if none exists
         if self.material_library.num_materials() == 0 {
@@ -1503,6 +1513,33 @@ impl GltfAsset {
         (self.scenes.len() - 1) as i32
     }
 
+    /// Find texture index that should be used for a given material texture
+    fn find_texture_index_for_material_texture(
+        &self,
+        material_index: usize,
+        _texture: &crate::core::texture::Texture,
+    ) -> Option<i32> {
+        // For material-based texture lookup, we use the material index to determine 
+        // which texture should be used. This assumes textures were added in material order.
+        
+        // Count how many materials with textures we've seen so far
+        let mut texture_count = 0;
+        for i in 0..material_index {
+            if let Some(material) = self.material_library.get_material(i) {
+                if material.get_texture_map_by_type(crate::core::texture::Type::Color).is_some() {
+                    texture_count += 1;
+                }
+            }
+        }
+        
+        // The texture index should correspond to this count
+        if texture_count < self.textures.len() {
+            Some(texture_count as i32)
+        } else {
+            None
+        }
+    }
+
     /// Gets the image index for a texture, using existing index if available or adding new image
     fn get_or_add_image_index(
         &mut self,
@@ -1510,21 +1547,18 @@ impl GltfAsset {
         texture: &crate::core::texture::Texture,
         num_components: i32,
     ) -> Result<i32, Err> {
-        // Use texture filename as a stable key instead of pointer address
-        let texture_key = texture.get_source_image().get_filename();
+        // Use texture pointer as a stable key since we already processed textures in process_materials_and_add_images
+        let texture_ptr = texture as *const crate::core::texture::Texture as usize;
         
-        // Search for existing image with the same filename
-        for (index, existing_image) in self.images.iter_mut().enumerate() {
-            if let Some(ref existing_texture) = existing_image.texture {
-                let existing_filename = existing_texture.get_source_image().get_filename();
-                if existing_filename == texture_key {
-                    // Update num_components if needed
-                    if existing_image.num_components < num_components {
-                        existing_image.num_components = num_components;
-                    }
-                    return Ok(index as i32);
+        // Check if we already have this texture in our pointer map from add_image
+        if let Some(&image_index) = self.texture_to_image_index_map.get(&texture_ptr) {
+            // Already have an image for this texture, update num_components if needed
+            if let Some(image) = self.images.get_mut(image_index as usize) {
+                if image.num_components < num_components {
+                    image.num_components = num_components;
                 }
             }
+            return Ok(image_index);
         }
         
         // Texture not found, add new image
@@ -1629,8 +1663,8 @@ impl GltfAsset {
                         if let Some(mesh_instance) = mesh_group.get_mesh_instance(mesh_instance_index) {
                             // Get the mesh from the scene
                             if let Some(mesh) = scene.get_mesh(mesh_instance.mesh_index) {
-                                // Encode the mesh with Draco and add to GLB
-                                self.add_draco_mesh(mesh, scene)?;
+                                // Encode the mesh with Draco and add to GLB, preserving the original material index
+                                self.add_draco_mesh(mesh, scene, Some(mesh_instance.material_index))?;
                                 // Set the mesh index on the node (use the last added mesh)
                                 if mesh_instance_index == 0 {
                                     gltf_node.mesh_index = (self.meshes.len() - 1) as i32;
@@ -1715,7 +1749,28 @@ impl GltfAsset {
                         };
                         
                         // Add the image to the GltfAsset
-                        if let Ok(_image_index) = self.add_image(&texture_stem, texture, num_components) {
+                        if let Ok(image_index) = self.add_image(&texture_stem, texture, num_components) {
+                            // Create a default texture sampler
+                            let sampler = TextureSampler::new(
+                                texture_map.min_filter(),
+                                texture_map.mag_filter(),
+                                texture_map.get_wrapping_mode()
+                            );
+                            
+                            // Find or add the sampler
+                            let sampler_index = if let Some(pos) = self.texture_samplers.iter().position(|s| s == &sampler) {
+                                pos as i32
+                            } else {
+                                let index = self.texture_samplers.len() as i32;
+                                self.texture_samplers.push(sampler);
+                                index
+                            };
+                            
+                            // Create and add texture object if it doesn't exist
+                            let texture_obj = GltfTexture::new(image_index, sampler_index);
+                            if !self.textures.iter().any(|t| t == &texture_obj) {
+                                self.textures.push(texture_obj);
+                            }
                         }
                     }
                 }
@@ -1751,6 +1806,48 @@ impl GltfAsset {
         }
     }
 
+    /// Get image buffer view indices by checking the actual buffer data for image signatures
+    fn get_image_buffer_view_indices(&self, buffer_views_array: &[serde_json::Value], property_data: &[u8], original_start_offset: usize) -> std::collections::HashSet<usize> {
+        let mut image_buffer_views = std::collections::HashSet::new();
+        
+        for (i, bv_json) in buffer_views_array.iter().enumerate() {
+            if let Some(bv_obj) = bv_json.as_object() {
+                let original_offset = bv_obj.get("byteOffset")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                let byte_length = bv_obj.get("byteLength")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                
+                // Handle the case where original_offset might be smaller than original_start_offset
+                if original_offset < original_start_offset {
+                    continue;
+                }
+                let data_offset = original_offset - original_start_offset;
+                
+                // Check if we can read the data and if it has image signatures
+                if byte_length > 0 && data_offset + byte_length <= property_data.len() {
+                    let sample_size = std::cmp::min(20, byte_length);
+                    let sample_data = &property_data[data_offset..data_offset + sample_size];
+                    
+                    // Check for image signatures
+                    if sample_data.starts_with(b"RIFF") && sample_data.len() >= 12 && &sample_data[8..12] == b"WEBP" {
+                        // WebP image
+                        image_buffer_views.insert(i);
+                    } else if sample_data.starts_with(b"\x89PNG") {
+                        // PNG image  
+                        image_buffer_views.insert(i);
+                    } else if sample_data.starts_with(b"\xFF\xD8\xFF") {
+                        // JPEG image
+                        image_buffer_views.insert(i);
+                    }
+                }
+            } 
+        }
+        
+        image_buffer_views
+    }
+
     /// Restores property table buffer data and views if preserved from decoding
     fn restore_property_table_buffers(&mut self, scene: &Scene) -> Result<(), Err> {
         // Check if we have property buffer views stored
@@ -1770,12 +1867,22 @@ impl GltfAsset {
                     .and_then(|s| s.parse::<usize>().ok())
                     .unwrap_or(0);
                 
-                // We need to skip the first buffer view (index 0) which is for vertices
-                // and recreate buffer views starting from index 1
+                // Get image buffer view indices to exclude them (they're handled separately)
+                let image_buffer_view_indices = self.get_image_buffer_view_indices(&buffer_views_array, &property_data, original_start_offset);
+                
+                // Create a mapping from old buffer view indices to new ones
+                // This is critical for EXT_mesh_features and EXT_structural_metadata
+                let mut buffer_view_mapping = std::collections::HashMap::new();
+                
                 for (i, bv_json) in buffer_views_array.iter().enumerate() {
                     if i == 0 {
                         // Skip the first buffer view - it's for the mesh data which will be 
                         // replaced by Draco-compressed data
+                        continue;
+                    }
+                    
+                    // Skip image buffer views - they're handled separately by image processing
+                    if image_buffer_view_indices.contains(&i) {
                         continue;
                     }
                     
@@ -1792,8 +1899,13 @@ impl GltfAsset {
                         let data_offset = original_offset - original_start_offset;
                         
                         if byte_length > 0 && data_offset + byte_length <= property_data.len() {
+                            // Add property buffer views after Draco buffer views
+                            // This preserves the relative indexing for EXT_mesh_features
+                            let new_buffer_view_index = self.buffer_views.len();
+                            buffer_view_mapping.insert(i, new_buffer_view_index);
+                            
                             // Create a new buffer view
-                            let mut buffer_view = GltfBufferView {
+                            let buffer_view = GltfBufferView {
                                 buffer_byte_offset: self.buffer.len() as i64,
                                 byte_length: byte_length as i64,
                                 byte_stride: bv_obj.get("byteStride")
@@ -1809,14 +1921,46 @@ impl GltfAsset {
                             // Append the property data to the main buffer
                             self.buffer.extend_from_slice(&property_data[data_offset..data_offset + byte_length]);
                             
-                            // Add the buffer view
+                            // Add the buffer view (don't overwrite Draco buffer views)
                             self.buffer_views.push(buffer_view);
+                        }
+                    }
+                }
+                
+                // Update structural metadata with new buffer view indices
+                self.update_structural_metadata_buffer_views(&buffer_view_mapping);
+            }
+        }
+        Ok(())
+    }
+
+    /// Updates structural metadata buffer view references with new indices
+    fn update_structural_metadata_buffer_views(&mut self, buffer_view_mapping: &std::collections::HashMap<usize, usize>) {
+        if let Some(ref mut metadata_json) = self.structural_metadata_json {
+            if let Some(property_tables) = metadata_json.get_mut("propertyTables").and_then(|pt| pt.as_array_mut()) {
+                for property_table in property_tables {
+                    if let Some(properties) = property_table.get_mut("properties").and_then(|p| p.as_object_mut()) {
+                        for (_prop_name, prop_value) in properties {
+                            if let Some(prop_obj) = prop_value.as_object_mut() {
+                                // Update 'values' buffer view index
+                                if let Some(values_index) = prop_obj.get("values").and_then(|v| v.as_u64()) {
+                                    if let Some(&new_index) = buffer_view_mapping.get(&(values_index as usize)) {
+                                        prop_obj.insert("values".to_string(), serde_json::Value::Number(serde_json::Number::from(new_index)));
+                                    }
+                                }
+                                
+                                // Update 'stringOffsets' buffer view index
+                                if let Some(string_offsets_index) = prop_obj.get("stringOffsets").and_then(|v| v.as_u64()) {
+                                    if let Some(&new_index) = buffer_view_mapping.get(&(string_offsets_index as usize)) {
+                                        prop_obj.insert("stringOffsets".to_string(), serde_json::Value::Number(serde_json::Number::from(new_index)));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-        Ok(())
     }
 
     /// Restores WebP images from scene metadata
@@ -2032,20 +2176,54 @@ impl GltfAsset {
         let has_texture_coords = mesh.get_attributes().iter()
             .any(|attr| attr.get_attribute_type() == crate::core::attribute::AttributeType::TextureCoordinate);
         
-        if has_texture_coords && self.material_library.num_materials() > 1 {
-            // If the mesh has texture coordinates and we have multiple materials,
-            // use the material with the texture (typically at index 1)
-            for material_index in 0..self.material_library.num_materials() {
-                if let Some(material) = self.material_library.get_material(material_index) {
-                    // Check if this material has a color texture
-                    if material.get_texture_map_by_type(crate::core::texture::Type::Color).is_some() {
-                        return material_index as i32;
+        if self.material_library.num_materials() > 1 {
+            if has_texture_coords {
+                // For textured meshes, assign materials based on mesh order
+                // Count how many textured meshes we've processed so far
+                let textured_mesh_count = self.meshes.iter()
+                    .filter(|gltf_mesh| {
+                        gltf_mesh.primitives.iter().any(|prim| {
+                            // Check if this primitive has texture coordinates
+                            prim.attributes.contains_key("TEXCOORD_0")
+                        })
+                    })
+                    .count();
+                
+                // Find the textured_mesh_count-th material with a texture
+                let mut found_textured_materials = 0;
+                for material_index in 0..self.material_library.num_materials() {
+                    if let Some(material) = self.material_library.get_material(material_index) {
+                        if material.get_texture_map_by_type(crate::core::texture::Type::Color).is_some() {
+                            if found_textured_materials == textured_mesh_count {
+                                return material_index as i32;
+                            }
+                            found_textured_materials += 1;
+                        }
+                    }
+                }
+                
+                // Fallback: use the first textured material
+                for material_index in 0..self.material_library.num_materials() {
+                    if let Some(material) = self.material_library.get_material(material_index) {
+                        if material.get_texture_map_by_type(crate::core::texture::Type::Color).is_some() {
+                            return material_index as i32;
+                        }
+                    }
+                }
+            } else {
+                // Mesh has NO texture coordinates - find a material WITHOUT texture
+                for material_index in 0..self.material_library.num_materials() {
+                    if let Some(material) = self.material_library.get_material(material_index) {
+                        // Check if this material has NO color texture
+                        if material.get_texture_map_by_type(crate::core::texture::Type::Color).is_none() {
+                            return material_index as i32;
+                        }
                     }
                 }
             }
         }
         
-        // Default to material 0 if no textured material is found or mesh has no texture coords
+        // Default to material 0 if no appropriate material is found or only one material exists
         0
     }
 
@@ -2581,11 +2759,21 @@ impl GltfAsset {
 
             // Possibly encode baseColorTexture (translation of color texture logic)
             if let Some(color_map) = material.get_texture_map_by_type(texture::Type::Color) {
-                let texture_stem = TextureUtils::get_or_generate_target_stem(
-                    color_map.get_texture(), i, "_BaseColor"
-                );
-                let image_index = self.get_or_add_image_index(&texture_stem, color_map.get_texture(), 4)?;
-                self.encode_texture_map("baseColorTexture", image_index, color_map.tex_coord_index() as i32, &material, color_map, buf_out)?;
+                // Try to find existing texture first, fallback to creating new one
+                if let Some(texture_index) = self.find_texture_index_for_material_texture(i, color_map.get_texture()) {
+                    // Found existing texture, use it directly
+                    write!(buf_out, "\"baseColorTexture\":{{")?;
+                    write!(buf_out, "\"index\":{}", texture_index)?;
+                    write!(buf_out, ",\"texCoord\":{}", color_map.tex_coord_index())?;
+                    write!(buf_out, "}}")?;
+                } else {
+                    // Fallback to old method
+                    let texture_stem = TextureUtils::get_or_generate_target_stem(
+                        color_map.get_texture(), i, "_BaseColor"
+                    );
+                    let image_index = self.get_or_add_image_index(&texture_stem, color_map.get_texture(), 4)?;
+                    self.encode_texture_map("baseColorTexture", image_index, color_map.tex_coord_index() as i32, &material, color_map, buf_out)?;
+                }
             }
 
             // Possibly combine metallic & occlusion maps (translation of combined logic)
@@ -2814,7 +3002,8 @@ impl GltfAsset {
                 write!(buf_out, "{{")?;
                 // Possibly handle extension for ktx2 or webp
                 if self.images[tex.image_index as usize].mime_type == "image/webp" {
-                    write!(buf_out, "\"extensions\":{{\"EXT_texture_webp\":{{\"source\":{}}}}}", tex.image_index)?;
+                    write!(buf_out, "\"source\":{}", tex.image_index)?;
+                    write!(buf_out, ",\"extensions\":{{\"EXT_texture_webp\":{{\"source\":{}}}}}", tex.image_index)?;
                     if tex.sampler_index >= 0 {
                         write!(buf_out, ",\"sampler\":{}", tex.sampler_index)?;
                     }
@@ -3089,7 +3278,13 @@ impl GltfAsset {
     fn encode_buffers_property(&self, buf_out: &mut Vec<u8>) -> Result<(), Err> {        
         write!(buf_out, "\"buffers\":[")?;
         write!(buf_out, "{{")?;
-        write!(buf_out, "\"byteLength\":{}", self.buffer.len())?;
+        // Ensure buffer length is correctly aligned to 4 bytes as required by GLB spec
+        let aligned_length = if self.buffer.len() % 4 == 0 {
+            self.buffer.len()
+        } else {
+            self.buffer.len() + (4 - (self.buffer.len() % 4))
+        };
+        write!(buf_out, "\"byteLength\":{}", aligned_length)?;
         
         if !self.buffer_name.is_empty() {
             write!(buf_out, ",\"uri\":\"{}\"", self.buffer_name)?;
@@ -3136,7 +3331,7 @@ impl GltfAsset {
                 // Feature IDs are stored as single values (scalars) in the attribute
                 // Use the appropriate type based on the attribute
                 use crate::core::shared::NdVector;
-                let value: NdVector<1, f32> = attr.get(i);
+                let value: NdVector<1, f32> = attr.get(PointIdx::from(i));
                 // Extract the first (and only) component as the feature ID
                 let feature_id = *value.get(0) as i32;
                 unique_ids.insert(feature_id);

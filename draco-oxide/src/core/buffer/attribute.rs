@@ -2,7 +2,7 @@ use std::{ptr, mem};
 use serde::ser::SerializeSeq;
 use serde::Serialize;
 
-use crate::core::shared::DataValue;
+use crate::core::shared::{AttributeValueIdx, DataValue};
 use crate::core::attribute::ComponentDataType;
 use crate::core::shared::Vector;
 
@@ -46,17 +46,18 @@ impl AttributeBuffer {
     }
 
 
-    pub(crate) fn get<Data, const N: usize>(&self, idx: usize) -> Data 
+    pub(crate) fn get<Data, const N: usize>(&self, idx: AttributeValueIdx) -> Data 
         where 
             Data: Vector<N>,
             Data::Component: DataValue
     {
+        let idx_usize = usize::from(idx);
         assert!(
             size_of::<Data>() == self.component_type.size() * self.num_components, 
             "Cannot read from buffer: Trying to read data of size {}, but the buffer stores the elements of size {} with {} components", 
             size_of::<Data>(), self.component_type.size(), self.num_components
         );
-        assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
+        assert!(idx_usize < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx_usize, self.len);
         // just checked the condition
         unsafe{ self.get_unchecked::<Data, N>(idx) }
     }
@@ -65,11 +66,12 @@ impl AttributeBuffer {
     /// Two checks are ignored in this function:
     /// (1) 'std::mem::size_of::<Data>()==component.size() * num_components', and
     /// (2) idx < self.len
-    pub(crate) unsafe fn get_unchecked<Data, const N: usize>(&self, idx: usize) -> Data 
+    pub(crate) unsafe fn get_unchecked<Data, const N: usize>(&self, idx: AttributeValueIdx) -> Data 
         where 
             Data: Vector<N>,
             Data::Component: DataValue
     {
+        let idx = usize::from(idx);
         debug_assert!(
             size_of::<Data>() == self.component_type.size() * self.num_components, 
             "Cannot read from buffer: Trying to read {}, but the buffer stores the elements of type {} with {} components", 

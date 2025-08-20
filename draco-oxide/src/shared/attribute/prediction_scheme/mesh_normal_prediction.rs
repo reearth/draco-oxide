@@ -1,4 +1,4 @@
-use crate::core::shared::{CornerIdx, Cross, Dot};
+use crate::core::shared::{CornerIdx, Cross, Dot, VertexIdx};
 use crate::encode::attribute::prediction_transform::geom::{into_faithful_oct_quantization, octahedral_transform};
 use crate::encode::entropy::rans::RabsCoder;
 use crate::utils::bit_coder::leb128_write;
@@ -24,8 +24,8 @@ impl<'parents, C, const N: usize> MeshNormalPrediction<'parents, C, N>
         let c_next = self.corner_table.next(c);
         let c_prev = self.corner_table.previous(c);
 
-        let pos_next = self.pos.get::<NdVector<3,i32>, 3>(self.corner_table.vertex_idx(c_next));
-        let pos_prev = self.pos.get::<NdVector<3,i32>, 3>(self.corner_table.vertex_idx(c_prev));
+        let pos_next = self.pos.get::<NdVector<3,i32>, 3>(self.corner_table.point_idx(c_next));
+        let pos_prev = self.pos.get::<NdVector<3,i32>, 3>(self.corner_table.point_idx(c_prev));
 
         // Compute the difference to next and prev.
         let delta_next = pos_next - pos_c;
@@ -74,16 +74,20 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for MeshN
 	
 	fn predict(
 		&mut self,
-        c: usize,
-		_vertices_up_till_now: &[usize],
+        c: CornerIdx,
+		_vertices_up_till_now: &[VertexIdx],
         attribute: &Attribute,
 	) -> NdVector<N, i32> {
-        let pos_c = self.pos.get(self.corner_table.vertex_idx(c));
-        let mut sum = self.compute_normal_of_face(c, pos_c);
+        let pos_c = self.pos.get(self.corner_table.point_idx(c));
         let mut curr_c = c;
+        while let Some(left_c) = self.corner_table.swing_left(curr_c) {
+            curr_c = left_c;
+        }
+        let start_c = curr_c;
+        let mut sum = self.compute_normal_of_face(curr_c, pos_c);
         while let Some(next_c) = self.corner_table.swing_right(curr_c) {
             curr_c = next_c;
-            if curr_c == c {
+            if curr_c == start_c {
                 break;
             }
             sum += self.compute_normal_of_face(curr_c, pos_c);
@@ -114,7 +118,7 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for MeshN
                 let quantized = val_oct * ((1<<8-1)-1) as f32; // TODO: Stop hardcoding the quantization bits.
                 let mut out = NdVector::<2, i32>::zero();
                 for i in 0..2 {
-                    *out.get_mut(i) = *quantized.get(i) as i32;
+                    *out.get_mut(i) = (*quantized.get(i)) as i32;
                 }
                 let quant_out = into_faithful_oct_quantization(out);
                 let mut out = NdVector::<N, i32>::zero();
@@ -123,7 +127,7 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for MeshN
                 out
             }
         };
-        let actual_val = attribute.get::<NdVector<N,i32>,N>(self.corner_table.pos_vertex_idx(c));
+        let actual_val = attribute.get::<NdVector<N,i32>,N>(self.corner_table.point_idx(c));
         let diff1 = out - actual_val;
         let diff2 = out * -1 - actual_val;
         if diff1.dot(diff1) > diff2.dot(diff2) {

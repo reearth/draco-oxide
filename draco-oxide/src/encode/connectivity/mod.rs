@@ -5,7 +5,7 @@ pub(crate) mod sequential;
 use std::fmt::Debug;
 
 use crate::core::bit_coder::ByteWriter;
-use crate::core::shared::{ConfigType, FaceIdx};
+use crate::core::shared::{ConfigType, PointIdx};
 use crate::encode::connectivity::edgebreaker::{DefaultTraversal, ValenceTraversal};
 use crate::prelude::{Attribute, AttributeType};
 use crate::shared::connectivity::edgebreaker::EdgebreakerKind;
@@ -15,7 +15,7 @@ use crate::eval;
 
 /// entry point for encoding connectivity.
 pub fn encode_connectivity<'faces, W>(
-    faces: &'faces[[usize; 3]],
+    faces: &'faces[[PointIdx; 3]],
     atts: &mut [Attribute],
     writer: &mut W,
     #[allow(unused)] // This parameter is unused in the current implementation, as we only support default configuration.
@@ -34,7 +34,7 @@ pub fn encode_connectivity<'faces, W>(
 }
 
 pub fn encode_connectivity_datatype_unpacked<'faces, W>(
-    faces: &'faces[[usize; 3]],
+    faces: &'faces[[PointIdx; 3]],
     atts: &mut [Attribute],
     writer: &mut W,
     cfg: Config,
@@ -91,7 +91,7 @@ pub trait ConnectivityEncoder {
     type Output;
     fn encode_connectivity<W>(
         self, 
-        faces: &[[FaceIdx; 3]],
+        faces: &[[PointIdx; 3]],
         buffer: &mut W
     ) -> Result<Self::Output, Self::Err>
         where W: ByteWriter;

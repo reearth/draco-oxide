@@ -1,5 +1,4 @@
 use draco_nd_vector::impl_ndvector_ops;
-
 use super::attribute::ComponentDataType;
 use crate::core::bit_coder::ReaderErr;
 
@@ -10,10 +9,203 @@ use std::{
     mem,
 };
 
-pub type VertexIdx = usize;
-pub type CornerIdx = usize;
-pub type EdgeIdx = usize;
-pub type FaceIdx = usize;
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AttributeValueIdx(usize);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CornerIdx(usize);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EdgeIdx(usize);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FaceIdx(usize);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PointIdx(usize);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct VertexIdx(usize);
+
+macro_rules! idx_op_impl {
+    ($($trait_:ident, $method:ident, $op:tt, $t:ty);*) => {
+        $(
+            impl ops::$trait_<$t> for $t {
+                type Output = Self;
+
+                fn $method(self, other: Self) -> Self::Output {
+                    Self( self.0 $op other.0 )
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! all_idx_ops_impl {
+    ($($t:ty),*) => {
+        $(
+            idx_op_impl! {
+                Add, add, +, $t;
+                Sub, sub, -, $t;
+                Mul, mul, *, $t;
+                Div, div, /, $t
+            }
+        )*
+    };
+}
+
+all_idx_ops_impl!{
+    AttributeValueIdx,
+    CornerIdx,
+    EdgeIdx,
+    FaceIdx,
+    PointIdx,
+    VertexIdx
+}
+
+macro_rules! idx_debug_impl {
+    ($($t:ty),*) => {
+        $(
+            impl fmt::Debug for $t {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    self.0.fmt(f)
+                }
+            }
+        )*
+    };
+}
+
+idx_debug_impl!{
+    AttributeValueIdx,
+    CornerIdx,
+    EdgeIdx,
+    FaceIdx,
+    PointIdx,
+    VertexIdx
+}
+
+macro_rules! vec_with_new_idx {
+    ($($Idx:ident),*) => {
+        $(
+            paste::paste! {
+                /// Vector wrapper indexed by `$Idx` and named `Vec$Idx` (e.g. `VecIsize`).
+                #[derive(Debug, Clone, Default, PartialEq, Eq)]
+                pub struct [<Vec $Idx:camel>]<T> {
+                    inner: ::std::vec::Vec<T>,
+                }
+
+                impl<T: Clone> [<Vec $Idx:camel>]<T> {
+                    /// Create an empty vector.
+                    pub fn new() -> Self {
+                        Self { inner: ::std::vec::Vec::new() }
+                    }
+
+                    /// Create with pre-allocated capacity.
+                    pub fn with_capacity(capacity: usize) -> Self {
+                        Self { inner: ::std::vec::Vec::with_capacity(capacity) }
+                    }
+
+                    /// Push a value onto the end.
+                    pub fn push(&mut self, value: T) {
+                        self.inner.push(value)
+                    }
+
+                    pub fn len(&self) -> usize { self.inner.len() }
+                    pub fn is_empty(&self) -> bool { self.inner.is_empty() }
+
+                    pub fn resize(&mut self, new_len: usize, value: T) {
+                        self.inner.resize(new_len, value);
+                    }
+
+                    pub fn reserve(&mut self, additional: usize) {
+                        self.inner.reserve(additional);
+                    }
+
+                    /// Take the inner Vec if you need it back.
+                    pub fn into_inner(self) -> ::std::vec::Vec<T> { self.inner }
+
+                    pub fn iter(&self) -> impl Iterator<Item = &T> {
+                        self.inner.iter()
+                    }
+
+                    pub fn remove(&mut self, idx: $Idx) -> T {
+                        self.inner.remove(usize::from(idx))
+                    }
+
+                    pub fn clear(&mut self) {
+                        self.inner.clear();
+                    }
+                }
+
+                impl<T> ::std::ops::Index<$Idx> for [<Vec $Idx:camel>]<T> {
+                    type Output = T;
+                    fn index(&self, idx: $Idx) -> &Self::Output {
+                        // Convert the `$Idx` (e.g., isize) to usize, panicking if negative/overflow.
+                        let i: usize = ::std::convert::TryInto::<usize>::try_into(idx)
+                            .ok()
+                            .expect("index does not fit in usize (negative or too large)");
+                        &self.inner[i]
+                    }
+                }
+
+                impl<T> ::std::ops::IndexMut<$Idx> for [<Vec $Idx:camel>]<T> {
+                    fn index_mut(&mut self, idx: $Idx) -> &mut Self::Output {
+                        let i: usize = ::std::convert::TryInto::<usize>::try_into(idx)
+                            .ok()
+                            .expect("index does not fit in usize (negative or too large)");
+                        &mut self.inner[i]
+                    }
+                }
+
+                impl<T> ::std::convert::From<::std::vec::Vec<T>> for [<Vec $Idx:camel>]<T> {
+                    fn from(inner: ::std::vec::Vec<T>) -> Self {
+                        Self { inner }
+                    }
+                }
+
+                impl<T> ::std::iter::IntoIterator for [<Vec $Idx:camel>]<T> {
+                    type Item = T;
+                    type IntoIter = ::std::vec::IntoIter<T>;
+
+                    fn into_iter(self) -> Self::IntoIter {
+                        self.inner.into_iter()
+                    }
+                }
+            }
+        )*
+    };
+}
+
+vec_with_new_idx!(
+    AttributeValueIdx,
+    CornerIdx,
+    EdgeIdx,
+    FaceIdx,
+    PointIdx,
+    VertexIdx
+);
+
+macro_rules! idx_impl {
+    ($($t:ty),*) => {
+        $(
+            impl From<usize> for $t {
+                fn from(idx: usize) -> Self {
+                    Self(idx)
+                }
+            }
+
+            impl From<$t> for usize {
+                fn from(idx: $t) -> Self {
+                    idx.0
+                }
+            }
+        )*
+    };
+}
+
+idx_impl! {
+    AttributeValueIdx,
+    CornerIdx,
+    EdgeIdx,
+    FaceIdx,
+    PointIdx,
+    VertexIdx
+}
 
 
 pub trait Float: DataValue + ops::Div<Output=Self> + ops::Neg<Output=Self> {

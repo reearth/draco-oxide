@@ -65,6 +65,8 @@ fn load_tex_coords(mesh: &tobj::Mesh) -> (Vec<NdVector<2, f32>>, AttributeDomain
 
 #[cfg(test)]
 mod tests {
+    use crate::core::shared::PointIdx;
+
     use super::*;
 
     #[test]
@@ -72,7 +74,10 @@ mod tests {
         let mesh = load_obj("tests/data/tetrahedron.obj").unwrap();
         assert_eq!(mesh.get_faces(),
             vec![
-                [0, 1, 2], [0, 3, 1], [0, 2, 4], [1, 5, 2]
+                [PointIdx::from(0), PointIdx::from(1), PointIdx::from(2)], 
+                [PointIdx::from(0), PointIdx::from(3), PointIdx::from(1)], 
+                [PointIdx::from(0), PointIdx::from(2), PointIdx::from(4)], 
+                [PointIdx::from(1), PointIdx::from(5), PointIdx::from(2)]
             ]
         );
         assert_eq!(mesh.attributes.len(), 3);

@@ -792,7 +792,7 @@ impl GltfDecoder {
             // Check for required extensions.
             for extension in gltf_model.extensions_required() {
                 match extension {
-                    "KHR_materials_unlit" | "KHR_texture_transform" | "KHR_draco_mesh_compression" | "EXT_mesh_features" => {
+                    "KHR_materials_unlit" | "KHR_texture_transform" | "KHR_draco_mesh_compression" | "EXT_mesh_features" | "EXT_texture_webp" => {
                         // These extensions are supported
                     }
                     _ => {
@@ -1772,7 +1772,7 @@ impl GltfDecoder {
                         // We have property tables, so we need to preserve the buffer data
                         
                         // Collect all buffer views
-                        for (index, buffer_view) in gltf_model.views().enumerate() {
+                        for buffer_view in gltf_model.views() {
                             let mut bv_json = serde_json::Map::new();
                             bv_json.insert("buffer".to_string(), serde_json::Value::Number(buffer_view.buffer().index().into()));
                             bv_json.insert("byteOffset".to_string(), serde_json::Value::Number(buffer_view.offset().into()));
@@ -2511,6 +2511,7 @@ impl GltfDecoder {
                         if let Some(attribute) = mesh_builder.attributes.last_mut() {
                             attribute.set_name(attr_name.to_string());
                         }
+                        
                         
                     }
                 }

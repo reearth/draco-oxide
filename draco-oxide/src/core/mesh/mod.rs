@@ -3,7 +3,7 @@ pub mod metadata;
 pub mod meh_features;
 
 use super::{attribute::{AttributeType, ComponentDataType, Attribute}, shared::{Float, Vector}};
-use crate::core::{material::MaterialLibrary, shared::{NdVector, VertexIdx}};
+use crate::core::{material::MaterialLibrary, shared::{NdVector, PointIdx}};
 use crate::utils::geom::point_to_face_distance_3d;
 
 /// Represents a 3D mesh.
@@ -11,7 +11,7 @@ use crate::utils::geom::point_to_face_distance_3d;
 /// and a list of attributes ([Attribute]) that can be associated with the mesh.
 #[derive(Clone, Debug)]
 pub struct Mesh {
-    pub(crate) faces: Vec<[VertexIdx; 3]>,
+    pub(crate) faces: Vec<[PointIdx; 3]>,
 	pub(crate) attributes: Vec<Attribute>,
 
 
@@ -27,7 +27,7 @@ impl Mesh {
         &self.attributes
     }
 
-    pub fn get_faces(&self) -> &[[VertexIdx; 3]] {
+    pub fn get_faces(&self) -> &[[PointIdx; 3]] {
         &self.faces
     }
 
@@ -111,9 +111,9 @@ impl Mesh {
 
 fn sum_of_squared_dist_unpack_datatype(
     position_att: &Attribute, 
-    faces: &[[usize;3]], 
+    faces: &[[PointIdx;3]], 
     other_position_att: &Attribute, 
-    other_faces: &[[usize;3]]
+    other_faces: &[[PointIdx;3]]
 ) -> f64 {
     // Safety:
     // 1. The number of components is checked to be 3.
@@ -140,9 +140,9 @@ fn sum_of_squared_dist_unpack_datatype(
 // # Safety: it must be safe to cast the first argument to &[Data]
 unsafe fn sum_of_squared_dist_impl<F>(
     self_pos_att: &Attribute, 
-    self_faces: &[[usize;3]], 
+    self_faces: &[[PointIdx;3]], 
     other_pos_att: &Attribute, 
-    other_faces: &[[usize;3]]
+    other_faces: &[[PointIdx;3]]
 ) -> F
     where
         F: Float,
@@ -178,15 +178,15 @@ unsafe fn sum_of_squared_dist_impl<F>(
     sum_of_squared_dist.sqrt()
 }
 
-fn min_dist_point_to_faces<F>(p: NdVector<3,F>, faces: &[[usize;3]], pos_att: &[NdVector<3,F>]) -> F 
+fn min_dist_point_to_faces<F>(p: NdVector<3,F>, faces: &[[PointIdx;3]], pos_att: &[NdVector<3,F>]) -> F 
     where 
         F: Float,
 {
     let mut min_dist = F::MAX_VALUE;
     for face in faces {
-        let v0 = pos_att[face[0]];
-        let v1 = pos_att[face[1]];
-        let v2 = pos_att[face[2]];
+        let v0 = pos_att[usize::from(face[0])];
+        let v1 = pos_att[usize::from(face[1])];
+        let v2 = pos_att[usize::from(face[2])];
         let dist = point_to_face_distance_3d(p, [v0, v1, v2]);
         if dist < min_dist {
             min_dist = dist;

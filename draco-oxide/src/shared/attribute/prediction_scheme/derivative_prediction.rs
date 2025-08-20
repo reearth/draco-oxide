@@ -1,6 +1,6 @@
 use crate::core::attribute::{Attribute, AttributeType};
 use crate::core::corner_table::GenericCornerTable;
-use crate::core::shared::{Float, NdVector, Vector};
+use crate::core::shared::{CornerIdx, Float, NdVector, Vector, VertexIdx};
 use super::PredictionSchemeImpl;
 
 pub struct DerivativePredictionForTextureCoordinates<'a, C, const N: usize> 
@@ -295,8 +295,8 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for Deriv
 	/// predicts the attribute from the given information. 
 	fn predict (
 		&mut self,
-        _i: usize,
-        _vertices_or_corners_processed_up_till_now: &[usize],
+        _i: CornerIdx,
+        _vertices_processed_up_till_now: &[VertexIdx],
         _attribute: &Attribute,
 	) -> NdVector<N, i32> {
         unimplemented!()

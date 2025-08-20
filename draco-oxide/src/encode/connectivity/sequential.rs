@@ -1,4 +1,4 @@
-use crate::core::shared::VertexIdx;
+use crate::core::shared::PointIdx;
 use crate::core::shared::ConfigType;
 use crate::debug_write;
 use crate::encode::connectivity::ConnectivityEncoder;
@@ -22,7 +22,7 @@ impl Sequential {
 
     fn encode_direct_indices<W>(
         &self,
-        faces: &[[VertexIdx; 3]],
+        faces: &[[PointIdx; 3]],
         writer: &mut W
     ) -> Result<(), Err> 
         where  W: ByteWriter,
@@ -36,27 +36,27 @@ impl Sequential {
         if index_size == 21 {
             // varint encoding
             for face in faces {
-                leb128_write(face[0] as u64, writer);
-                leb128_write(face[1] as u64, writer);
-                leb128_write(face[2] as u64, writer);
+                leb128_write(usize::from(face[0]) as u64, writer);
+                leb128_write(usize::from(face[1]) as u64, writer);
+                leb128_write(usize::from(face[2]) as u64, writer);
             }
         } else {
             // non-varint encoding
             match index_size {
                 8 => for face in faces {
-                    writer.write_u8(face[0] as u8);
-                    writer.write_u8(face[1] as u8);
-                    writer.write_u8(face[2] as u8);
+                    writer.write_u8(usize::from(face[0]) as u8);
+                    writer.write_u8(usize::from(face[1]) as u8);
+                    writer.write_u8(usize::from(face[2]) as u8);
                 }
                 16 => for face in faces {
-                    writer.write_u16(face[0] as u16);
-                    writer.write_u16(face[1] as u16);
-                    writer.write_u16(face[2] as u16);
+                    writer.write_u16(usize::from(face[0]) as u16);
+                    writer.write_u16(usize::from(face[1]) as u16);
+                    writer.write_u16(usize::from(face[2]) as u16);
                 },
                 32 => for face in faces {
-                    writer.write_u32(face[0] as u32);
-                    writer.write_u32(face[1] as u32);
-                    writer.write_u32(face[2] as u32);
+                    writer.write_u32(usize::from(face[0]) as u32);
+                    writer.write_u32(usize::from(face[1]) as u32);
+                    writer.write_u32(usize::from(face[2]) as u32);
                 },
                 _ => unreachable!()
             }
@@ -72,7 +72,7 @@ impl ConnectivityEncoder for Sequential {
 
     fn encode_connectivity<W>(
         self, 
-        faces: &[[VertexIdx; 3]],
+        faces: &[[PointIdx; 3]],
         writer: &mut W
     ) -> Result<(), Err> 
         where  W: ByteWriter,
