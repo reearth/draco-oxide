@@ -45,6 +45,7 @@ pub(crate) trait GenericCornerTable {
         self.opposite(self.next(corner))
     }
 
+    #[allow(unused)]
     fn vertex_to_attribute_map(&self) -> Option<&VecVertexIdx<AttributeValueIdx>> {
         None
     }

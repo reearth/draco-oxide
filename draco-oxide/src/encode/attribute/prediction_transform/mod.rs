@@ -114,6 +114,7 @@ impl PredictionTransformType {
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
 	pub ty: PredictionTransformType,
+	#[allow(unused)]
 	pub portabilization: super::portabilization::Config,
 }
 

@@ -20,7 +20,7 @@ impl<Data, const N: usize> Portabilization<Data, N>
     where 
         Data: Vector<N> + Portable,
         NdVector<N, i32>: Vector<N, Component = i32>,
-            
+        NdVector<N, f32>: Vector<N, Component = f32> + Portable,
 {
     /// creates a new instance of the portabilization, computes the metadata, and 
     /// writes the metadata to the stream.
@@ -84,7 +84,7 @@ pub enum PortabilizationType {
 impl PortabilizationType {
     pub(crate) fn get_id(&self) -> u8 {
         match self {
-            PortabilizationType::ToBits => 0,
+            PortabilizationType::ToBits => 1,
             PortabilizationType::Integer => 1, // Integer is not used in the current implementation, but kept for compatibility.
             PortabilizationType::QuantizationCoordinateWise => 2,
             PortabilizationType::OctahedralQuantization => 3,
@@ -101,6 +101,7 @@ impl PortabilizationType {
     pub(crate) fn default_for(ty: AttributeType) -> Self {
         match ty {
             AttributeType::Normal => PortabilizationType::OctahedralQuantization,
+            AttributeType::Custom => PortabilizationType::ToBits,
             _ => PortabilizationType::QuantizationCoordinateWise, // default
         }
     }
@@ -133,8 +134,8 @@ impl Config {
                 quantization_bits: 10,
             },
             AttributeType::Custom => Config {
-                type_: PortabilizationType::QuantizationCoordinateWise,
-                quantization_bits: 11, // default quantization bits
+                type_: PortabilizationType::ToBits,
+                quantization_bits: 11, // default quantization bits (not used for ToBits)
             },
             _ => Self::default(), 
         }

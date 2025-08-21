@@ -82,6 +82,9 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for MeshN
         let mut curr_c = c;
         while let Some(left_c) = self.corner_table.swing_left(curr_c) {
             curr_c = left_c;
+            if curr_c == c {
+                break;
+            }
         }
         let start_c = curr_c;
         let mut sum = self.compute_normal_of_face(curr_c, pos_c);

@@ -925,32 +925,23 @@ impl GltfAsset {
             return Ok(());
         }
         
-        // Now add this filtered mesh as a primitive using the existing logic
         self.add_draco_mesh_internal(&filtered_mesh, scene, Some(material_index), gltf_mesh)
     }
     
     /// Internal method to add a Draco Mesh as a primitive to a glTF mesh.
     fn add_draco_mesh_internal(&mut self, mesh: &Mesh, scene: &Scene, material_index: Option<i32>, gltf_mesh: &mut GltfMesh) -> Result<(), Err> {
-        // Check if we need to filter the mesh by material
-        let filtered_mesh = if let Some(target_material) = material_index {
-            self.filter_mesh_by_material(mesh, target_material)?
-        } else {
-            mesh.clone()
-        };
-        
         // Skip empty meshes (can happen when filtering results in no faces)
-        if filtered_mesh.get_faces().is_empty() {
+        if mesh.get_faces().is_empty() {
             return Ok(());
         }
         
         // Compress the mesh with Draco
         let mut draco_buffer = Vec::new();
-        // TODO: The evaluation data is not used. Change this to return the eval data.
         {
             let config = crate::encode::Config::default();
             
-            // Use the filtered mesh
-            let mesh_copy = filtered_mesh;
+            // Use the provided mesh
+            let mesh_copy = mesh.clone();
             
             #[cfg(feature = "evaluation")]
             {
@@ -1307,7 +1298,7 @@ impl GltfAsset {
         let mut next_vertex_idx = 0;
         
         // Collect all unique vertices used by filtered faces
-        for &face_idx in &filtered_face_indices {
+        for &face_idx in filtered_face_indices.iter() {
             let face = &faces[face_idx];
             
             for i in 0..3 {
@@ -1323,7 +1314,7 @@ impl GltfAsset {
         let mut old_vertex_indices: Vec<_> = vertex_remap.keys().copied().collect();
         old_vertex_indices.sort_by_key(|idx| vertex_remap[idx]);
         
-        for old_attr in mesh.get_attributes() {
+        for (_attr_idx, old_attr) in mesh.get_attributes().iter().enumerate() {
             // Skip empty attributes
             if old_attr.len() == 0 {
                 continue;
@@ -1399,7 +1390,8 @@ impl GltfAsset {
         }
         builder.set_connectivity_attribute(new_faces);
         
-        Ok(builder.build().map_err(|e| Err::InvalidInput(e.to_string()))?)
+        let result = builder.build().map_err(|e| Err::InvalidInput(e.to_string()))?;
+        Ok(result)
     }
 
     /// Convert a Draco Scene to glTF data.

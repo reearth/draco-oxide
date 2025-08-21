@@ -345,10 +345,15 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         
-        // Read the test file - use 39764_bldg_Building.glb
-        let test_glb_path = "../39764_bldg_Building.glb";
-        let test_glb = std::fs::read(test_glb_path)
-            .expect("Failed to read 39764_bldg_Building.glb - make sure it exists in parent directory");
+        // add some test for your purpose.
+        // If the test file does not exist, it will return. (No test will be run)
+        let test_glb_path = "../private_tests/some_test.glb";
+        let test_glb = if let Ok(glb) = std::fs::read(test_glb_path) {
+            glb
+        } else {
+            println!("Test file {} does not exist, skipping deterministic test.", test_glb_path);
+            return;
+        };
         
         println!("Testing deterministic behavior with 1000 buffer transcoding runs...");
         println!("Input file: {} ({} bytes)", test_glb_path, test_glb.len());

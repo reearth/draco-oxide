@@ -99,7 +99,7 @@ impl GroupConfig {
                 },
                 prediction_transform: prediction_transform::Config{
                     ty: prediction_transform::PredictionTransformType::WrappedDifference,
-                    portabilization: portabilization::Config::default(),
+                    portabilization: portabilization::Config::default_for(AttributeType::Custom),
                 }
             },
             _ => Self::default_with_size(size),
@@ -156,10 +156,8 @@ impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'enc
     }
 	
 	pub(super) fn encode<const WRITE_NOW: bool, const BOOST: bool>(self) -> Result<Attribute, Err> {
-        if self.cfg.group_cfgs[0].prediction_transform.portabilization.type_ != portabilization::PortabilizationType::ToBits {
-            (&self.cfg.group_cfgs[0]).prediction_scheme.ty.write_to(self.writer);
-            self.cfg.group_cfgs[0].prediction_transform.ty.write_to(self.writer);
-        }
+        (&self.cfg.group_cfgs[0]).prediction_scheme.ty.write_to(self.writer);
+        self.cfg.group_cfgs[0].prediction_transform.ty.write_to(self.writer);
 
         let component_type = self.att.get_component_type();
         match component_type {
@@ -233,6 +231,7 @@ impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'enc
             T: DataValue + Copy,
             NdVector<N, T>: Vector<N> + Portable,
             NdVector<N, i32>: Vector<N, Component = i32>,
+            NdVector<N, f32>: Vector<N, Component = f32> + Portable,
     {
         if !BOOST {
             match self.conn_out {
@@ -278,9 +277,11 @@ impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'enc
             S: Iterator<Item = CornerIdx> + Clone,
             Data: Vector<N> + Portable,
             NdVector<N, i32>: Vector<N, Component = i32>,
+            NdVector<N, f32>: Vector<N, Component = f32> + Portable
     {
 
         let por_cfg = portabilization::Config::default_for(self.att.get_attribute_type());
+
         
         let mut att = Attribute::new(
             Vec::<Data>::new(), 
@@ -296,7 +297,7 @@ impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'enc
             &mut port_info_buffer,
         );
         let port_att = portabilization.portabilize();
-
+        
         match port_att.get_num_components() {
             1 => self.encode_portabilized::<CT, S, 1>(&corner_table, sequence, port_att, port_info_buffer),
             2 => self.encode_portabilized::<CT, S, 2>(&corner_table, sequence, port_att, port_info_buffer),
@@ -307,19 +308,19 @@ impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'enc
             }
         }
     }
-
+    
     fn encode_portabilized<CT, S, const N: usize>(&mut self, corner_table: &CT, sequence: S, port_att: Attribute, port_info_buffer: Vec<u8>) -> Result<Attribute, Err>
-        where 
-            CT: GenericCornerTable,
-            S: Iterator<Item = CornerIdx>,
-            NdVector<N, i32>: Vector<N, Component = i32> + Portable,
+    where 
+    CT: GenericCornerTable,
+    S: Iterator<Item = CornerIdx>,
+    NdVector<N, i32>: Vector<N, Component = i32> + Portable,
     {
         let mut prediction_scheme = prediction_scheme::PredictionScheme::new(
             self.cfg.group_cfgs[0].prediction_scheme.ty.clone(),
             self.parents,
             corner_table
         );
-
+        
         // Transform the predicted values
         let mut transform = PredictionTransform::new(
             self.cfg.group_cfgs[0].prediction_transform,
@@ -327,7 +328,7 @@ impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'enc
         
         // Predict and transform the values
         let mut sequence_record = Vec::new();
-
+        
         for c in sequence {
             let val = prediction_scheme.predict(c, &sequence_record, &port_att);
             let v = corner_table.vertex_idx(c);
@@ -335,33 +336,26 @@ impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'enc
             let p = corner_table.point_idx(c);
             transform.map_with_tentative_metadata(port_att.get(p), val);
         }
-
+        
         // Write the output
         let mut transform_info_buffer = Vec::new();
         let output = transform.squeeze(&mut transform_info_buffer);
 
-        if self.cfg.group_cfgs[0].prediction_transform.portabilization.type_ != portabilization::PortabilizationType::ToBits {
-            self.writer.write_u8(self.cfg.rans_encoding as u8);
-            if self.cfg.rans_encoding {
-                // ToDo: This can be a lot smarter.
-                let symbols = output.iter()
-                    .map(|v| (0..N).map(|i| *v.get(i) as u64))
-                    .flatten()
-                    .collect::<Vec<_>>();
-                encode_symbols(symbols, N, SymbolEncodingMethod::DirectCoded, self.writer)?
-            } else {
-                // If RANS encoding is not used, we write the output directly
-                for value in output {
-                    value.write_to(self.writer);
-                }
-            }
+        self.writer.write_u8(self.cfg.rans_encoding as u8);
+        if self.cfg.rans_encoding {
+            // ToDo: This can be a lot smarter.
+            let symbols = output.iter()
+                .map(|v| (0..N).map(|i| *v.get(i) as u64))
+                .flatten()
+                .collect::<Vec<_>>();
+            encode_symbols(symbols, N, SymbolEncodingMethod::DirectCoded, self.writer)?
         } else {
-            // if ToBits is selected as the portabilization method, then we write the output directly
+            // If RANS encoding is not used, we write the output directly
             for value in output {
                 value.write_to(self.writer);
             }
-        };
-
+        }
+        
         // We need to write the metadata for the prediction, prediction scheme, and transform.
         // This part is a bit tricky, as we need to swap the order of transform and prediction metadata
         // depending on the prediction type, in order to be compatible with the draco decoder.
@@ -386,7 +380,7 @@ impl<'parents, 'encoder, 'writer, 'co, 'mesh, W> AttributeEncoder<'parents, 'enc
                 self.writer.write_u8(byte);
             }
         }
-
+        
         for byte in port_info_buffer {
             self.writer.write_u8(byte);
         }

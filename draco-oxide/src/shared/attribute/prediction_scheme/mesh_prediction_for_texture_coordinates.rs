@@ -233,7 +233,8 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for MeshP
             };
             self.orientation.iter().map(|&o| compare(o) ).filter(|&o| !o).count()
         };
-        let zero_prob = (((freq_count_0 as f32 / self.orientation.len() as f32) * 256.0 + 0.5) as u16).clamp(1,255) as u8;
+        let orientation_len_float = self.orientation.len() as f32 + 0.001; 
+        let zero_prob = (((freq_count_0 as f32 / orientation_len_float) * 256.0 + 0.5) as u16).clamp(1,255) as u8;
         let mut rabs_coder: RabsCoder<> = RabsCoder::new(zero_prob as usize, None);
         writer.write_u32(self.orientation.len() as u32);
         writer.write_u8(zero_prob);
