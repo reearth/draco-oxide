@@ -191,11 +191,6 @@ impl DracoTranscoder {
             Err::TranscodingError("No scene loaded for writing".to_string())
         })?;
 
-        // Debug output for metadata
-        if let Some(mesh_features) = scene.metadata().get_entry("mesh_features_json") {
-            println!("DEBUG: mesh_features_json: {}", mesh_features);
-        }
-
         if !file_options.output_bin_filename.is_empty() 
             && !file_options.output_resource_directory.is_empty() {
             // Write with both bin filename and resource directory

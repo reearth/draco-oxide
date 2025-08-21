@@ -90,43 +90,53 @@ macro_rules! vec_with_new_idx {
                 }
 
                 impl<T: Clone> [<Vec $Idx:camel>]<T> {
+                    #[allow(unused)]
                     /// Create an empty vector.
                     pub fn new() -> Self {
                         Self { inner: ::std::vec::Vec::new() }
                     }
 
+                    #[allow(unused)]
                     /// Create with pre-allocated capacity.
                     pub fn with_capacity(capacity: usize) -> Self {
                         Self { inner: ::std::vec::Vec::with_capacity(capacity) }
                     }
 
+                    #[allow(unused)]
                     /// Push a value onto the end.
                     pub fn push(&mut self, value: T) {
                         self.inner.push(value)
                     }
 
+                    #[allow(unused)]
                     pub fn len(&self) -> usize { self.inner.len() }
+                    #[allow(unused)]
                     pub fn is_empty(&self) -> bool { self.inner.is_empty() }
-
+                    #[allow(unused)]
                     pub fn resize(&mut self, new_len: usize, value: T) {
                         self.inner.resize(new_len, value);
                     }
 
+                    #[allow(unused)]
                     pub fn reserve(&mut self, additional: usize) {
                         self.inner.reserve(additional);
                     }
 
+                    #[allow(unused)]
                     /// Take the inner Vec if you need it back.
                     pub fn into_inner(self) -> ::std::vec::Vec<T> { self.inner }
 
+                    #[allow(unused)]
                     pub fn iter(&self) -> impl Iterator<Item = &T> {
                         self.inner.iter()
                     }
 
+                    #[allow(unused)]
                     pub fn remove(&mut self, idx: $Idx) -> T {
                         self.inner.remove(usize::from(idx))
                     }
 
+                    #[allow(unused)]
                     pub fn clear(&mut self) {
                         self.inner.clear();
                     }
