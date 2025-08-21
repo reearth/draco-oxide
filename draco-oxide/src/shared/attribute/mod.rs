@@ -6,6 +6,7 @@ pub(crate) mod portabilization;
 pub mod sequence;
 
 #[derive(thiserror::Error, Debug)]
+#[allow(unused)]
 pub enum Err {
     #[error("Reader Error: {0}")]
     ReaderError(#[from] ReaderErr),
