@@ -1118,8 +1118,10 @@ impl GltfDecoder {
         // Extract extension attributes and corresponding accessor info
         for (_mesh_index, mesh_ext_attrs) in self.extension_attributes.iter().enumerate() {
             for (_primitive_index, ext_attrs) in mesh_ext_attrs.iter().enumerate() {
+                // println!("DEBUG: ext_attrs: {:?}", ext_attrs);
                 for (attr_name, accessor_info) in &ext_attrs.attributes {
                     // Only process feature ID and other extension attributes
+                    // println!("DEBUG: Processing extension attribute: {}", attr_name);
                     if attr_name.starts_with("_FEATURE_ID_") || attr_name.starts_with("_") {
                         // Use the stored accessor information instead of looking it up in the sanitized model
                         let component_type = match accessor_info.component_type {

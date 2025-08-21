@@ -1208,6 +1208,9 @@ impl GltfAsset {
                             
                             // Add to the primitive's mesh features
                             primitive.mesh_features.push(mesh_features);
+                        } else {
+                            // Log a warning or handle the case where no feature data was found
+                            eprintln!("Warning: Feature ID attribute '{}' found but no feature data could be extracted", attribute_name);
                         }
                         
                         // Map the draco attribute index to the attribute name for featureIds.attribute
