@@ -18,6 +18,7 @@ pub(crate) trait PredictionSchemeImpl<'parents, C, const N: usize>
 {
 	/// Id of the prediction method. This value is encoded to buffer in order
 	/// for the decoder to identify the prediction method.
+	#[allow(dead_code)]
 	const ID: u32 = 0;
 	
 	type AdditionalDataForMetadata;
