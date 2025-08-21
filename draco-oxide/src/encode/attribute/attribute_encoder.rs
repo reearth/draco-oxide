@@ -94,15 +94,12 @@ impl GroupConfig {
             AttributeType::Custom => Self {
                 range: vec![0..size],
                 prediction_scheme: prediction_scheme::Config{
-                    ty: prediction_scheme::PredictionSchemeType::NoPrediction,
+                    ty: prediction_scheme::PredictionSchemeType::MeshParallelogramPrediction,
                     ..prediction_scheme::Config::default()
                 },
                 prediction_transform: prediction_transform::Config{
-                    ty: prediction_transform::PredictionTransformType::NoTransform,
-                    portabilization: portabilization::Config {
-                        type_: portabilization::PortabilizationType::ToBits,
-                        quantization_bits: 0, // does not matter
-                    },
+                    ty: prediction_transform::PredictionTransformType::WrappedDifference,
+                    portabilization: portabilization::Config::default(),
                 }
             },
             _ => Self::default_with_size(size),

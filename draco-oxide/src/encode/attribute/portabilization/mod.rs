@@ -101,7 +101,6 @@ impl PortabilizationType {
     pub(crate) fn default_for(ty: AttributeType) -> Self {
         match ty {
             AttributeType::Normal => PortabilizationType::OctahedralQuantization,
-            AttributeType::Custom => PortabilizationType::ToBits,
             _ => PortabilizationType::QuantizationCoordinateWise, // default
         }
     }
@@ -134,8 +133,8 @@ impl Config {
                 quantization_bits: 10,
             },
             AttributeType::Custom => Config {
-                type_: PortabilizationType::ToBits,
-                quantization_bits: 0, // does not matter
+                type_: PortabilizationType::QuantizationCoordinateWise,
+                quantization_bits: 11, // default quantization bits
             },
             _ => Self::default(), 
         }

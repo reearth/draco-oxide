@@ -321,6 +321,48 @@ impl MeshBuilder {
                     attribute.remove::<NdVector<2, f32>, 2>(p);
                 }
             },
+            (ComponentDataType::F32, 1) => {
+                for p in removed_vertices.into_iter().rev() {
+                    // Remove the vertex from the mapping
+                    let p = PointIdx::from(p);
+                    attribute.remove::<f32, 1>(p);
+                }
+            },
+            (ComponentDataType::F32, 4) => {
+                for p in removed_vertices.into_iter().rev() {
+                    // Remove the vertex from the mapping
+                    let p = PointIdx::from(p);
+                    attribute.remove::<NdVector<4, f32>, 4>(p);
+                }
+            },
+            (ComponentDataType::U32, 1) => {
+                for p in removed_vertices.into_iter().rev() {
+                    // Remove the vertex from the mapping
+                    let p = PointIdx::from(p);
+                    attribute.remove::<u32, 1>(p);
+                }
+            },
+            (ComponentDataType::I32, 1) => {
+                for p in removed_vertices.into_iter().rev() {
+                    // Remove the vertex from the mapping
+                    let p = PointIdx::from(p);
+                    attribute.remove::<i32, 1>(p);
+                }
+            },
+            (ComponentDataType::I8, 1) => {
+                for p in removed_vertices.into_iter().rev() {
+                    // Remove the vertex from the mapping
+                    let p = PointIdx::from(p);
+                    attribute.remove::<i8, 1>(p);
+                }
+            },
+            (ComponentDataType::U16, 1) => {
+                for p in removed_vertices.into_iter().rev() {
+                    // Remove the vertex from the mapping
+                    let p = PointIdx::from(p);
+                    attribute.remove::<u16, 1>(p);
+                }
+            },
             _ => return Err(Err::DeduplicationError(format!(
                 "Unsupported attribute type combination: {:?} with {} components",
                 attribute.get_component_type(),

@@ -85,9 +85,6 @@ impl<'faces, 'table> GenericCornerTable for RefAttributeCornerTable<'faces, 'tab
     fn num_vertices(&self) -> usize {
         self.corner_table.attribute_tables.get(self.idx).unwrap().num_vertices()
     }
-    fn pos_vertex_idx(&self, corner: CornerIdx) -> crate::core::shared::VertexIdx {
-        self.corner_table.universal_corner_table().pos_vertex_idx(corner)
-    }
     fn point_idx(&self, corner: CornerIdx) -> crate::core::shared::PointIdx {
         self.corner_table.universal_corner_table().point_idx(corner)
     }

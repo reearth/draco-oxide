@@ -10,7 +10,6 @@ pub(crate) trait GenericCornerTable {
     fn num_faces(&self) -> usize;
     fn num_corners(&self) -> usize;
     fn num_vertices(&self) -> usize;
-    fn pos_vertex_idx(&self, corner: CornerIdx) -> VertexIdx;
     fn point_idx(&self, corner: CornerIdx) -> PointIdx;
     fn vertex_idx(&self, corner: CornerIdx) -> VertexIdx;
     fn opposite(&self, corner: CornerIdx) -> Option<CornerIdx>;
@@ -481,12 +480,6 @@ impl<'mesh> GenericCornerTable for CornerTable<'mesh> {
     }
 
     #[inline]
-    fn pos_vertex_idx(&self, corner: CornerIdx) -> VertexIdx {
-        let corner = usize::from(corner);
-        self.conn_faces[corner / 3][corner % 3]
-    }
-
-    #[inline]
     fn point_idx(&self, corner: CornerIdx) -> PointIdx {
         let corner = usize::from(corner);
         self.get_mesh_faces()[corner / 3][corner % 3]
@@ -563,12 +556,6 @@ mod tests {
         assert_eq!(corner_table.num_faces(), 2);
         assert_eq!(corner_table.num_corners(), 6);
         assert_eq!(corner_table.num_vertices(), 4);
-        assert_eq!(corner_table.pos_vertex_idx(CornerIdx::from(0)), VertexIdx::from(0));
-        assert_eq!(corner_table.pos_vertex_idx(CornerIdx::from(1)), VertexIdx::from(1));
-        assert_eq!(corner_table.pos_vertex_idx(CornerIdx::from(2)), VertexIdx::from(2));
-        assert_eq!(corner_table.pos_vertex_idx(CornerIdx::from(3)), VertexIdx::from(2));
-        assert_eq!(corner_table.pos_vertex_idx(CornerIdx::from(4)), VertexIdx::from(1));
-        assert_eq!(corner_table.pos_vertex_idx(CornerIdx::from(5)), VertexIdx::from(3));
         assert_eq!(corner_table.face_idx_containing(CornerIdx::from(0)), FaceIdx::from(0));
         assert_eq!(corner_table.face_idx_containing(CornerIdx::from(1)), FaceIdx::from(0));
         assert_eq!(corner_table.face_idx_containing(CornerIdx::from(2)), FaceIdx::from(0));

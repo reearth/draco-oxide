@@ -914,17 +914,43 @@ impl GltfAsset {
         &self.buffer
     }
 
-    /// Convert a Draco Mesh to glTF data.
-    pub fn add_draco_mesh(&mut self, mesh: &Mesh, scene: &Scene, material_index: Option<i32>) -> Result<(), Err> {
+    /// Add a Draco Mesh as a primitive to an existing glTF mesh.
+    /// The material_index specifies which material to filter for.
+    fn add_draco_mesh_as_primitive(&mut self, mesh: &Mesh, scene: &Scene, material_index: i32, gltf_mesh: &mut GltfMesh) -> Result<(), Err> {
+        // Filter the mesh by material to create a primitive for this specific material
+        let filtered_mesh = self.filter_mesh_by_material(mesh, material_index)?;
+        
+        // Skip empty meshes (can happen when filtering results in no faces)
+        if filtered_mesh.get_faces().is_empty() {
+            return Ok(());
+        }
+        
+        // Now add this filtered mesh as a primitive using the existing logic
+        self.add_draco_mesh_internal(&filtered_mesh, scene, Some(material_index), gltf_mesh)
+    }
+    
+    /// Internal method to add a Draco Mesh as a primitive to a glTF mesh.
+    fn add_draco_mesh_internal(&mut self, mesh: &Mesh, scene: &Scene, material_index: Option<i32>, gltf_mesh: &mut GltfMesh) -> Result<(), Err> {
+        // Check if we need to filter the mesh by material
+        let filtered_mesh = if let Some(target_material) = material_index {
+            self.filter_mesh_by_material(mesh, target_material)?
+        } else {
+            mesh.clone()
+        };
+        
+        // Skip empty meshes (can happen when filtering results in no faces)
+        if filtered_mesh.get_faces().is_empty() {
+            return Ok(());
+        }
+        
         // Compress the mesh with Draco
         let mut draco_buffer = Vec::new();
         // TODO: The evaluation data is not used. Change this to return the eval data.
         {
             let config = crate::encode::Config::default();
             
-            // Clone the mesh to avoid borrowing issues
-            // TODO: This clone can be expensive; look into ways to avoid it.
-            let mesh_copy = mesh.clone();
+            // Use the filtered mesh
+            let mesh_copy = filtered_mesh;
             
             #[cfg(feature = "evaluation")]
             {
@@ -954,14 +980,7 @@ impl GltfAsset {
         
         self.buffer_views.push(buffer_view);
         
-        // Add the mesh to the primitives of the last mesh (assuming one mesh per call)
-        if self.meshes.is_empty() {
-            let mut gltf_mesh = GltfMesh::default();
-            gltf_mesh.name = "Mesh".to_string(); // Match C++ output
-            self.meshes.push(gltf_mesh);
-        }
-        
-        let mesh_index = self.meshes.len() - 1;
+        // Create a new primitive
         let mut primitive = GltfPrimitive::default();
         
         // Set up the Draco extension
@@ -1236,8 +1255,151 @@ impl GltfAsset {
             }
         }
         
-        self.meshes[mesh_index].primitives.push(primitive);
+        gltf_mesh.primitives.push(primitive);
         Ok(())
+    }
+
+    /// Filter a mesh to include only faces belonging to a specific material.
+    /// This is used to handle multi-primitive meshes correctly.
+    fn filter_mesh_by_material(&self, mesh: &Mesh, target_material: i32) -> Result<Mesh, Err> {
+        use crate::core::mesh::builder::MeshBuilder;
+        use crate::core::attribute::{AttributeType, AttributeDomain};
+        use std::collections::HashMap;
+        
+        // Find the Material attribute
+        let material_attr = mesh.get_attributes().iter()
+            .find(|attr| attr.get_attribute_type() == AttributeType::Material);
+            
+        let material_attr = match material_attr {
+            Some(attr) => attr,
+            None => {
+                // If no material attribute, return the original mesh
+                return Ok(mesh.clone());
+            }
+        };
+        
+        // Collect faces that belong to the target material
+        let mut filtered_face_indices = Vec::new();
+        let faces = mesh.get_faces();
+        
+        for (face_idx, face) in faces.iter().enumerate() {
+            // Check if any vertex of this face has the target material
+            let v0_material: crate::core::shared::NdVector<1, i32> = material_attr.get(face[0]);
+            let v1_material: crate::core::shared::NdVector<1, i32> = material_attr.get(face[1]);
+            let v2_material: crate::core::shared::NdVector<1, i32> = material_attr.get(face[2]);
+            
+            // If any vertex has the target material, include this face
+            if *v0_material.get(0) == target_material || *v1_material.get(0) == target_material || *v2_material.get(0) == target_material {
+                filtered_face_indices.push(face_idx);
+            }
+        }
+        
+        // If no faces match, return an empty mesh
+        if filtered_face_indices.is_empty() {
+            return Ok(MeshBuilder::new().build().map_err(|e| Err::InvalidInput(e.to_string()))?);
+        }
+        
+        // Create a new mesh with only the filtered faces
+        let mut builder = MeshBuilder::new();
+        
+        // Map from old vertex indices to new vertex indices
+        let mut vertex_remap = HashMap::new();
+        let mut next_vertex_idx = 0;
+        
+        // Collect all unique vertices used by filtered faces
+        for &face_idx in &filtered_face_indices {
+            let face = &faces[face_idx];
+            
+            for i in 0..3 {
+                let old_vertex_idx = face[i];
+                if !vertex_remap.contains_key(&old_vertex_idx) {
+                    vertex_remap.insert(old_vertex_idx, crate::core::shared::PointIdx::from(next_vertex_idx));
+                    next_vertex_idx += 1;
+                }
+            }
+        }
+        
+        // Copy vertex attributes for the remapped vertices in the correct order
+        let mut old_vertex_indices: Vec<_> = vertex_remap.keys().copied().collect();
+        old_vertex_indices.sort_by_key(|idx| vertex_remap[idx]);
+        
+        for old_attr in mesh.get_attributes() {
+            // Skip empty attributes
+            if old_attr.len() == 0 {
+                continue;
+            }
+            
+            let attr_type = old_attr.get_attribute_type();
+            
+            // Create new attribute data based on the attribute type
+            match attr_type {
+                AttributeType::Position => {
+                    let mut new_positions = Vec::new();
+                    for &old_idx in &old_vertex_indices {
+                        let pos: crate::core::shared::NdVector<3, f32> = old_attr.get(old_idx);
+                        new_positions.push(pos);
+                    }
+                    builder.add_attribute(new_positions, attr_type, AttributeDomain::Position, vec![]);
+                }
+                AttributeType::Normal => {
+                    let mut new_normals = Vec::new();
+                    for &old_idx in &old_vertex_indices {
+                        let normal: crate::core::shared::NdVector<3, f32> = old_attr.get(old_idx);
+                        new_normals.push(normal);
+                    }
+                    builder.add_attribute(new_normals, attr_type, AttributeDomain::Position, vec![]);
+                }
+                AttributeType::TextureCoordinate => {
+                    let mut new_texcoords = Vec::new();
+                    for &old_idx in &old_vertex_indices {
+                        let texcoord: crate::core::shared::NdVector<2, f32> = old_attr.get(old_idx);
+                        new_texcoords.push(texcoord);
+                    }
+                    builder.add_attribute(new_texcoords, attr_type, AttributeDomain::Position, vec![]);
+                }
+                AttributeType::Color => {
+                    let mut new_colors = Vec::new();
+                    for &old_idx in &old_vertex_indices {
+                        let color: crate::core::shared::NdVector<4, f32> = old_attr.get(old_idx);
+                        new_colors.push(color);
+                    }
+                    builder.add_attribute(new_colors, attr_type, AttributeDomain::Position, vec![]);
+                }
+                AttributeType::Tangent => {
+                    let mut new_tangents = Vec::new();
+                    for &old_idx in &old_vertex_indices {
+                        let tangent: crate::core::shared::NdVector<4, f32> = old_attr.get(old_idx);
+                        new_tangents.push(tangent);
+                    }
+                    builder.add_attribute(new_tangents, attr_type, AttributeDomain::Position, vec![]);
+                }
+                AttributeType::Material => {
+                    let mut new_materials = Vec::new();
+                    for &old_idx in &old_vertex_indices {
+                        let material: crate::core::shared::NdVector<1, i32> = old_attr.get(old_idx);
+                        new_materials.push(material);
+                    }
+                    builder.add_attribute(new_materials, attr_type, AttributeDomain::Position, vec![]);
+                }
+                _ => {
+                    // Skip other attribute types for now
+                }
+            }
+        }
+        
+        // Add filtered faces with remapped vertex indices
+        let mut new_faces = Vec::new();
+        for &face_idx in &filtered_face_indices {
+            let old_face = &faces[face_idx];
+            let new_v0 = vertex_remap[&old_face[0]];
+            let new_v1 = vertex_remap[&old_face[1]]; 
+            let new_v2 = vertex_remap[&old_face[2]];
+            
+            new_faces.push([usize::from(new_v0), usize::from(new_v1), usize::from(new_v2)]);
+        }
+        builder.set_connectivity_attribute(new_faces);
+        
+        Ok(builder.build().map_err(|e| Err::InvalidInput(e.to_string()))?)
     }
 
     /// Convert a Draco Scene to glTF data.
@@ -1658,19 +1820,39 @@ impl GltfAsset {
             // Add mesh reference if the node has a mesh group
             if let Some(mesh_group_index) = scene_node.get_mesh_group_index() {
                 if let Some(mesh_group) = scene.get_mesh_group(mesh_group_index) {
+                    // Create a single glTF mesh that will contain all primitives
+                    let gltf_mesh_index = self.meshes.len() as i32;
+                    let mut gltf_mesh = GltfMesh::default();
+                    gltf_mesh.name = format!("mesh_{}", gltf_mesh_index);
+                    
+                    // Track which mesh we're processing to avoid duplicates
+                    let mut processed_mesh_materials = std::collections::HashSet::new();
+                    
                     // Process all mesh instances in the group
                     for mesh_instance_index in 0..mesh_group.num_mesh_instances() {
                         if let Some(mesh_instance) = mesh_group.get_mesh_instance(mesh_instance_index) {
                             // Get the mesh from the scene
                             if let Some(mesh) = scene.get_mesh(mesh_instance.mesh_index) {
-                                // Encode the mesh with Draco and add to GLB, preserving the original material index
-                                self.add_draco_mesh(mesh, scene, Some(mesh_instance.material_index))?;
-                                // Set the mesh index on the node (use the last added mesh)
-                                if mesh_instance_index == 0 {
-                                    gltf_node.mesh_index = (self.meshes.len() - 1) as i32;
+                                // Create a unique key for this mesh+material combination
+                                let key = (mesh_instance.mesh_index, mesh_instance.material_index);
+                                
+                                // Skip if we've already processed this mesh+material combination
+                                if processed_mesh_materials.contains(&key) {
+                                    continue;
                                 }
+                                processed_mesh_materials.insert(key);
+                                
+                                // Add this mesh as a primitive with the correct material filtering
+                                // This will create a filtered primitive for this specific material
+                                self.add_draco_mesh_as_primitive(mesh, scene, mesh_instance.material_index, &mut gltf_mesh)?;
                             }
                         }
+                    }
+                    
+                    // Only add the mesh if it has primitives
+                    if !gltf_mesh.primitives.is_empty() {
+                        self.meshes.push(gltf_mesh);
+                        gltf_node.mesh_index = gltf_mesh_index;
                     }
                 }
             }
