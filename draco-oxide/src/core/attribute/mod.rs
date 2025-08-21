@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::core::shared::Vector;
+use crate::core::shared::{AttributeValueIdx, PointIdx, VecPointIdx, Vector};
 use crate::prelude::{ByteReader, ByteWriter};
 use super::{buffer, shared::DataValue};
 
@@ -22,7 +22,7 @@ pub enum Err {
 /// Note that the struct does not have the static type information, so the attribute value can be a 
 /// vector of any type of any dimension, as long as it implements the `Vector` trait. The information about 
 /// the type of the attribute, component type, and the number of components is stored in dynamically.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Attribute {
 	/// attribute id
 	id: AttributeId,
@@ -39,8 +39,10 @@ pub struct Attribute {
 	/// the reference of the parent, if any
 	parents: Vec<AttributeId>,
 
-	/// an optional mapping from vertex index to the attribute value index in attribute.
-	vertex_to_att_val_map: Option<Vec<usize>>,
+	/// The optional mapping from point index to attribute value index.
+	/// If `None`, then the attribute is defined on the point level, i.e. 
+	/// the i'th element in the attribute corresponds to the i'th point in the mesh.
+	point_to_att_val_map: Option<VecPointIdx<AttributeValueIdx>>,
 
 	/// name of the attribute, if any
 	name: Option<String>,
@@ -59,7 +61,7 @@ impl Attribute {
 			parents,
 			att_type,
 			domain,
-			vertex_to_att_val_map: None,
+			point_to_att_val_map: None,
 			name: None,
 		};
 		out.remove_duplicate_values::<Data, N>();
@@ -77,7 +79,7 @@ impl Attribute {
 			parents: Vec::new(),
 			att_type,
 			domain,
-			vertex_to_att_val_map: None,
+			point_to_att_val_map: None,
 			name: None,
 		}
 	}
@@ -93,7 +95,7 @@ impl Attribute {
 			parents,
 			att_type,
 			domain,
-			vertex_to_att_val_map: None,
+			point_to_att_val_map: None,
 			name: None,
 		};
 		out.remove_duplicate_values::<Data, N>();
@@ -111,21 +113,21 @@ impl Attribute {
 			parents,
 			att_type,
 			domain,
-			vertex_to_att_val_map: None,
+			point_to_att_val_map: None,
 			name: None,
 		};
 		out
 	}
 
-	pub fn get<Data, const N: usize>(&self, v_idx: usize) -> Data 
+	pub fn get<Data, const N: usize>(&self, p_idx: PointIdx) -> Data 
 		where 
 			Data: Vector<N>,
 			Data::Component: DataValue
 	{
-		self.buffer.get(self.get_att_idx(v_idx))
+		self.buffer.get(self.get_unique_val_idx(p_idx))
 	}
 
-	pub fn get_unique_val<Data, const N: usize>(&self, val_idx: usize) -> Data 
+	pub fn get_unique_val<Data, const N: usize>(&self, val_idx: AttributeValueIdx) -> Data 
 		where 
 			Data: Vector<N>,
 			Data::Component: DataValue
@@ -162,12 +164,12 @@ impl Attribute {
 		]
 	}
 
-	pub(crate) fn set_vertex_to_att_val_map(&mut self, vertex_to_att_val_map: Option<Vec<usize>>) {
-		self.vertex_to_att_val_map = vertex_to_att_val_map;
+	pub(crate) fn set_point_to_att_val_map(&mut self, point_to_att_val_map: Option<VecPointIdx<AttributeValueIdx>>) {
+		self.point_to_att_val_map = point_to_att_val_map;
 	}
 
-	pub(crate) fn take_vertex_to_att_val_map(self) -> Option<Vec<usize>> {
-		self.vertex_to_att_val_map
+	pub(crate) fn take_point_to_att_val_map(self) -> Option<VecPointIdx<AttributeValueIdx>> {
+		self.point_to_att_val_map
 	}
 
 	#[inline]
@@ -198,7 +200,7 @@ impl Attribute {
 	/// The number of values of the attribute.
 	#[inline(always)]
 	pub fn len(&self) -> usize {
-		if let Some(f) = &self.vertex_to_att_val_map {
+		if let Some(f) = &self.point_to_att_val_map {
 			f.len()
 		} else {
 			self.buffer.len()
@@ -211,18 +213,19 @@ impl Attribute {
 	}
 
 	#[inline]
-	pub fn get_att_idx(&self, idx: usize) -> usize {
+	pub fn get_unique_val_idx(&self, idx: PointIdx) -> AttributeValueIdx {
+		let idx_usize = usize::from(idx);
 		assert!(
-			idx < self.len(),
+			idx_usize < self.len(),
 			"Index out of bounds: idx = {}, len = {}",
-			idx,
+			idx_usize,
 			self.len()
 		);
-		if let Some(ref vertex_to_att_val_map) = self.vertex_to_att_val_map {
-			vertex_to_att_val_map[idx]
+		if let Some(ref point_to_att_val_map) = self.point_to_att_val_map {
+			point_to_att_val_map[idx]
 		} else {
 			// otherwise, we use identity mapping
-			idx
+			idx_usize.into()
 		}
 	}
 
@@ -350,7 +353,7 @@ impl Attribute {
 	}
 
 
-	pub fn into_parts<Data, const N: usize>(mut self) -> (Vec<Data>, Option<Vec<usize>>, Self)
+	pub fn into_parts<Data, const N: usize>(mut self) -> (Vec<Data>, Option<VecPointIdx<AttributeValueIdx>>, Self)
 		where Data: Vector<N>,
 	{
 		let num_components = self.get_num_components();
@@ -369,10 +372,10 @@ impl Attribute {
 			new_buffer.into_vec_unchecked::<Data, N>()
 		};
 
-		let mut vertex_to_att_val_map = None;
-		std::mem::swap(&mut vertex_to_att_val_map, &mut self.vertex_to_att_val_map);
+		let mut point_to_att_val_map = None;
+		std::mem::swap(&mut point_to_att_val_map, &mut self.point_to_att_val_map);
 
-		(data, vertex_to_att_val_map, self)
+		(data, point_to_att_val_map, self)
 	}
 
 	pub fn set_values<Data, const N: usize>(&mut self, data: Vec<Data>)
@@ -393,7 +396,7 @@ impl Attribute {
 	{
 		let mut duplicate_indeces = Vec::new();
 		// start with identity mapping
-		let mut vertex_to_att_val_map = (0..self.len()).collect::<Vec<_>>();
+		let mut point_to_att_val_map = VecPointIdx::<_>::from( (0..self.len()).map(|i| i.into()).collect::<Vec<AttributeValueIdx>>());
 		for (i, val) in self.unique_vals_as_slice::<Data>().iter().enumerate() {
 			if i == self.len() - 1 {
 				// last element, no need to check for duplicates
@@ -415,28 +418,31 @@ impl Attribute {
 			
 			for &duplicate_idx in local_duplicate_indeces.iter() {
 				// update the mapping
-				vertex_to_att_val_map[duplicate_idx] = i;
+				let duplicate_idx = PointIdx::from(duplicate_idx);
+				point_to_att_val_map[duplicate_idx] = i.into();
 			}
 			duplicate_indeces.extend(local_duplicate_indeces);
 		}
 		let mut curr_max = 0;
-		for i in 0..vertex_to_att_val_map.len() {
-			let val_idx = vertex_to_att_val_map[i];
-			if val_idx == curr_max+1 {
+		for p in 0..point_to_att_val_map.len() {
+			let p = PointIdx::from(p);
+			let val_idx = point_to_att_val_map[p];
+			if usize::from(val_idx) == curr_max+1 {
 				// no gap
 				curr_max += 1;
-			} else if val_idx > curr_max+1 {
+			} else if usize::from(val_idx) > curr_max+1 {
 				// gap found, update the index
 				curr_max += 1;
-				for j in i..vertex_to_att_val_map.len() {
-					if vertex_to_att_val_map[j] == val_idx {
-						vertex_to_att_val_map[j] = curr_max;
+				for q in usize::from(p)..point_to_att_val_map.len() {
+					let q = PointIdx::from(q);
+					if point_to_att_val_map[q] == val_idx {
+						point_to_att_val_map[q] = curr_max.into();
 					}
 				}
 			}
 		}
 		if !duplicate_indeces.is_empty() {
-			self.vertex_to_att_val_map = Some(vertex_to_att_val_map);
+			self.point_to_att_val_map = Some(point_to_att_val_map);
 		}
 		// remove the duplicates from the buffer
 		duplicate_indeces.sort_unstable();
@@ -445,59 +451,64 @@ impl Attribute {
 		}
 	}
 
-	pub(crate) fn remove<Data, const N: usize>(&mut self, v_idx: usize) {
-		assert!(v_idx < self.len(), "Value index out of bounds: {}", v_idx);
-		if let Some(ref mut vertex_to_att_val_map) = self.vertex_to_att_val_map {
+	pub(crate) fn remove<Data, const N: usize>(&mut self, p_idx: PointIdx) {
+		let p_idx_usize = usize::from(p_idx);
+		assert!(p_idx_usize < self.len(), "Point index out of bounds: {}", p_idx_usize);
+		if let Some(ref mut point_to_att_val_map) = self.point_to_att_val_map {
 			// update the mapping
-			if (0..vertex_to_att_val_map.len())
-				.filter(|&v| v!=v_idx)
-				.any(|v| vertex_to_att_val_map[v]==vertex_to_att_val_map[v_idx]) 
+			if (0..point_to_att_val_map.len())
+				.map(PointIdx::from)
+				.filter(|&p| p!=p_idx)
+				.any(|p| point_to_att_val_map[p]==point_to_att_val_map[p_idx]) 
 			{
 				// if there are other vertices with the same value, we just remove the mapping
-				vertex_to_att_val_map.remove(v_idx);
+				point_to_att_val_map.remove(p_idx);
 			} else {
-				let removed_unique_val_idx = vertex_to_att_val_map.remove(v_idx);
-				self.buffer.remove::<Data, N>(removed_unique_val_idx);
+				let removed_unique_val_idx = point_to_att_val_map.remove(p_idx);
+				self.buffer.remove::<Data, N>(removed_unique_val_idx.into());
 				// update the mapping for the remaining vertices
-				for i in 0..vertex_to_att_val_map.len() {
-					if vertex_to_att_val_map[i] > removed_unique_val_idx {
-						vertex_to_att_val_map[i] -= 1;
+				for p in 0..point_to_att_val_map.len() {
+					let p = PointIdx::from(p);
+					if point_to_att_val_map[p] > removed_unique_val_idx {
+						point_to_att_val_map[p] = (usize::from(point_to_att_val_map[p])-1).into();
 					}
 				}
 			}
 		} else {
 			// no mapping, just remove the value
-			self.remove_unique_val::<Data, N>(v_idx);
+			let a_idx = AttributeValueIdx::from(usize::from(p_idx));
+			self.remove_unique_val::<Data, N>(a_idx);
 		}
 	}
 
-	pub(crate) fn remove_dyn(&mut self, v_idx: usize) {
-		assert!(v_idx < self.len(), "Value index out of bounds: {}", v_idx);
+	pub(crate) fn remove_dyn(&mut self, p_idx: PointIdx) {
+		assert!(usize::from(p_idx) < self.len(), "Point index out of bounds: {}", usize::from(p_idx));
 		match self.get_component_type().size() * self.get_num_components() {
-			1 => self.remove::<u8, 1>(v_idx),
-			2 => self.remove::<u16, 1>(v_idx),
-			4 => self.remove::<u32, 1>(v_idx),
-			6 => self.remove::<u16, 3>(v_idx),
-			8 => self.remove::<u64, 1>(v_idx),
-			12 => self.remove::<u32, 3>(v_idx),
-			16 => self.remove::<u64, 2>(v_idx),
-			18 => self.remove::<u64, 3>(v_idx),
+			1 => self.remove::<u8, 1>(p_idx),
+			2 => self.remove::<u16, 1>(p_idx),
+			4 => self.remove::<u32, 1>(p_idx),
+			6 => self.remove::<u16, 3>(p_idx),
+			8 => self.remove::<u64, 1>(p_idx),
+			12 => self.remove::<u32, 3>(p_idx),
+			16 => self.remove::<u64, 2>(p_idx),
+			18 => self.remove::<u64, 3>(p_idx),
 			_ => panic!("Unsupported component size: {}", self.get_component_type().size()),
 		}
 	}
 
-	pub(crate) fn remove_unique_val<Data, const N: usize>(&mut self, val_idx: usize) 
+	pub(crate) fn remove_unique_val<Data, const N: usize>(&mut self, val_idx: AttributeValueIdx) 
 	{
-		assert!(val_idx < self.num_unique_values(), "Value index out of bounds: {}", val_idx);
+		let val_idx = usize::from(val_idx);
+		assert!(val_idx < self.num_unique_values(), "Attribute value index out of bounds: {}", val_idx);
 		self.buffer.remove::<Data, N>(val_idx);
-		if let Some(ref mut _vertex_to_att_val_map) = self.vertex_to_att_val_map {
+		if let Some(ref mut _point_to_att_val_map) = self.point_to_att_val_map {
 			unimplemented!();
 		}
 	}
 
 	pub fn remove_unique_val_dyn(&mut self, val_idx: usize) 
 	{
-		assert!(val_idx < self.num_unique_values(), "Value index out of bounds: {}", val_idx);
+		assert!(val_idx < self.num_unique_values(), "Attribute value index out of bounds: {}", val_idx);
 		match self.get_component_type().size() * self.get_num_components() {
 			1 => self.buffer.remove::<u8, 1>(val_idx),
 			2 => self.buffer.remove::<u16, 1>(val_idx),
@@ -739,7 +750,7 @@ mod tests {
 		];
 		let att = super::Attribute::from(AttributeId::new(0), data.clone(), super::AttributeType::Position, super::AttributeDomain::Position, Vec::new());
 		assert_eq!(att.len(), data.len());
-		assert_eq!(att.get::<NdVector<3,f32>, 3>(0), data[0], "{:b}!={:b}", att.get::<NdVector<3,f32>,3>(0).get(0).to_bits(), data[0].get(0).to_bits());
+		assert_eq!(att.get::<NdVector<3,f32>, 3>(0.into()), data[0], "{:b}!={:b}", att.get::<NdVector<3,f32>,3>(0.into()).get(0).to_bits(), data[0].get(0).to_bits());
 		assert_eq!(att.get_component_type(), super::ComponentDataType::F32);
 		assert_eq!(att.get_num_components(), 3);
 		assert_eq!(att.get_attribute_type(), super::AttributeType::Position);
@@ -764,7 +775,10 @@ mod tests {
         );
 
 		assert_eq!(
-			att.vertex_to_att_val_map.unwrap(),
+			att.point_to_att_val_map.unwrap()
+				.into_iter()
+				.map(|v| usize::from(v))
+				.collect::<Vec<_>>(),
 			vec![0, 1, 2, 0, 1, 3],
 		)
 	}
@@ -789,14 +803,38 @@ mod tests {
 
 		assert_eq!(att.len(), 6);
 		assert_eq!(att.num_unique_values(), 5);
-		assert_eq!(att.vertex_to_att_val_map, Some(vec![0, 1, 2, 3, 2, 4]));
-		att.remove::<NdVector<3,f32>, 3>(2); // remove vertex 2
+		assert_eq!(
+			&att.point_to_att_val_map
+				.as_ref()
+				.unwrap()
+				.iter()
+				.map(|&i| usize::from(i))
+				.collect::<Vec<_>>(), 
+			&vec![0, 1, 2, 3, 2, 4]
+		);
+		att.remove::<NdVector<3,f32>, 3>(PointIdx::from(2)); // remove vertex 2
 		assert_eq!(att.len(), 5);
 		assert_eq!(att.num_unique_values(), 5);
-		assert_eq!(att.vertex_to_att_val_map, Some(vec![0, 1, 3, 2, 4]));
-		att.remove::<NdVector<3,f32>, 3>(1); // remove vertex 1
+		assert_eq!(
+			&att.point_to_att_val_map
+				.as_ref()
+				.unwrap()
+				.iter()
+				.map(|&i| usize::from(i))
+				.collect::<Vec<_>>(), 
+			&vec![0, 1, 3, 2, 4]
+		);
+		att.remove::<NdVector<3,f32>, 3>(PointIdx::from(1)); // remove vertex 1
 		assert_eq!(att.len(), 4);
 		assert_eq!(att.num_unique_values(), 4);
-		assert_eq!(att.vertex_to_att_val_map, Some(vec![0, 2, 1, 3]));
+		assert_eq!(
+			&att.point_to_att_val_map
+				.as_ref()
+				.unwrap()
+				.iter()
+				.map(|&i| usize::from(i))
+				.collect::<Vec<_>>(), 
+			&vec![0, 2, 1, 3]
+		);
 	}
 }

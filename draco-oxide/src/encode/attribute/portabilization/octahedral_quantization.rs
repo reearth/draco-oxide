@@ -1,3 +1,4 @@
+use crate::core::shared::AttributeValueIdx;
 use crate::core::shared::Vector;
 use crate::encode::attribute::prediction_transform::geom::into_faithful_oct_quantization;
 use crate::encode::attribute::prediction_transform::geom::octahedral_transform;
@@ -71,6 +72,7 @@ impl<Data, const N: usize> PortabilizationImpl<N> for OctahedralQuantization<Dat
     fn portabilize(mut self) -> Attribute {
         let mut out = Vec::new();
         for i in 0..self.att.num_unique_values() {
+            let i = AttributeValueIdx::from(i);
             out.push(self.portabilize_value(
                 self.att.get_unique_val::<Data, N>(i)
             ));
@@ -82,7 +84,7 @@ impl<Data, const N: usize> PortabilizationImpl<N> for OctahedralQuantization<Dat
             self.att.get_domain(),
             self.att.get_parents().clone()
         );
-        port_att.set_vertex_to_att_val_map(self.att.take_vertex_to_att_val_map());
+        port_att.set_point_to_att_val_map(self.att.take_point_to_att_val_map());
         port_att
     }
 }

@@ -84,7 +84,6 @@ pub fn encode<W>(mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err>
     
     // Encode connectivity
     let conn_out = connectivity::encode_connectivity(&faces, &mut attributes, writer, &cfg)?;
-
     debug_write!("Connectivity done, now starting attributes.", writer);
 
     // Encode attributes

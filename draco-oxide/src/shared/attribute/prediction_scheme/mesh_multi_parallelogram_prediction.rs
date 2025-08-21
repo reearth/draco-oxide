@@ -1,7 +1,7 @@
 use crate::core::corner_table::GenericCornerTable;
 use crate::prelude::NdVector;
 use crate::shared::attribute::prediction_scheme::PredictionSchemeImpl;
-use crate::core::shared::{Vector, VertexIdx};
+use crate::core::shared::{CornerIdx, Vector, VertexIdx};
 use crate::core::attribute::Attribute;  
 
 pub struct MeshMultiParallelogramPrediction<'parents, C, const N: usize> {
@@ -187,8 +187,8 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for MeshM
 
     fn predict(
 		&mut self,
-		_i: usize,
-		_vertices_or_corners_processed_up_till_now: &[VertexIdx],
+		_i: CornerIdx,
+		_vertices_processed_up_till_now: &[VertexIdx],
 		_attribute: &Attribute,
     ) -> NdVector<N, i32> {
         unimplemented!();

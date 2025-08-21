@@ -1,5 +1,6 @@
 use super::PredictionSchemeImpl;
 use crate::core::corner_table::GenericCornerTable;
+use crate::core::shared::{CornerIdx, VertexIdx};
 use crate::core::{attribute::Attribute, shared::Vector};
 use crate::prelude::NdVector;
 
@@ -184,54 +185,55 @@ impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N> for MeshP
 	
 	fn predict(
 		&mut self,
-        i: usize,
-		vertices_up_till_now: &[usize],
+        c: CornerIdx,
+		vertices_up_till_now: &[VertexIdx],
         attribute: &Attribute,
 	) -> NdVector<N, i32> {
         // Find the the most recent opposite corner.
         // 'diagonal' is the vertex opposite to 'i', and 'a' and 'b' are the other points
         // so that 'a', 'i', 'b', and 'diagonal' form a parallelogram.
         let [a,b,diagonal] = {
-            if let Some(opp) = self.corner_table.opposite(i) {
+            if let Some(opp) = self.corner_table.opposite(c) {
                 let opp_v = self.corner_table.vertex_idx(opp);
-                let values_up_till_now = vertices_up_till_now.iter()
-                    .map(|&v| attribute.get_att_idx(v))
-                    .collect::<Vec<_>>();
-                if values_up_till_now.contains(&attribute.get_att_idx(opp_v)) {
+                let next_v = self.corner_table.vertex_idx(self.corner_table.next(c));
+                let prev_v = self.corner_table.vertex_idx(self.corner_table.previous(c));
+                if vertices_up_till_now.contains(&opp_v) 
+                    && vertices_up_till_now.contains(&next_v)
+                    && vertices_up_till_now.contains(&prev_v)
+                {
                     // we found the opposite corner
-                    [self.corner_table.next(i), self.corner_table.previous(i), opp]
+                    [self.corner_table.next(c), self.corner_table.previous(c), opp]
                 } else {
                     // If there is no opposite corner, then we cannot do the parallelogram prediction.
                     // return the most recent value instead.
-                    let last_v = if let Some(last) = vertices_up_till_now.last() {
-                        *last
+                    return if let Some(&last_v) = vertices_up_till_now.last() {
+                        attribute.get(self.corner_table.point_idx(self.corner_table.left_most_corner(last_v)))
                     } else {
                         // If there are no vertices or corners up till now, return a zero vector.
-                        return NdVector::<N, i32>::zero();
+                        NdVector::<N, i32>::zero()
                     };
-                    return attribute.get(last_v);
                 }
             } else {
                 // If there is no opposite corner, then we cannot do the parallelogram prediction.
                 // return the most recent value instead.
-                let last_v = if let Some(last) = vertices_up_till_now.last() {
-                    *last
+                return if let Some(&last_v) = vertices_up_till_now.last() {
+                    attribute.get(self.corner_table.point_idx(self.corner_table.left_most_corner(last_v)))
                 } else {
                     // If there are no vertices or corners up till now, return a zero vector.
-                    return NdVector::<N, i32>::zero();
+                    NdVector::<N, i32>::zero()
                 };
-                return attribute.get(last_v);
             }
         };
         
-        let diagonal = self.corner_table.vertex_idx(diagonal);
-        let a = self.corner_table.vertex_idx(a);
-        let b = self.corner_table.vertex_idx(b);
+        let diagonal = self.corner_table.point_idx(diagonal);
+        let a = self.corner_table.point_idx(a);
+        let b = self.corner_table.point_idx(b);
 
         let a_coord = attribute.get::<NdVector<N,i32>, N>(a).clone();
         let b_coord = attribute.get::<NdVector<N,i32>, N>(b).clone();
         let diagonal_coord = attribute.get::<NdVector<N,i32>, N>(diagonal).clone();
-        a_coord + b_coord - diagonal_coord
+        let out = a_coord + b_coord - diagonal_coord;
+        out
     }
 }
 

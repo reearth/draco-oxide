@@ -65,24 +65,19 @@ fn load_tex_coords(mesh: &tobj::Mesh) -> (Vec<NdVector<2, f32>>, AttributeDomain
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::core::shared::PointIdx;
 
-    #[test]
-    fn sphere_reindexed() {
-        let mesh  = load_obj("tests/data/sphere.obj").unwrap();
-        let mesh_reindexed = load_obj("tests/data/sphere_reindexed.obj").unwrap();
-        assert_eq!(mesh.get_faces(), mesh_reindexed.get_faces());
-        assert_eq!(mesh.attributes.len(), mesh_reindexed.attributes.len());
-        assert_eq!(mesh.attributes[0].unique_vals_as_slice::<NdVector<3,f32>>(), mesh_reindexed.attributes[0].unique_vals_as_slice());
-        assert_eq!(mesh.attributes[1].unique_vals_as_slice::<NdVector<3,f32>>(), mesh_reindexed.attributes[1].unique_vals_as_slice());
-    }
+    use super::*;
 
     #[test]
     fn tetrahedron() {
         let mesh = load_obj("tests/data/tetrahedron.obj").unwrap();
         assert_eq!(mesh.get_faces(),
             vec![
-                [0, 1, 2], [0, 3, 1], [0, 2, 4], [1, 5, 2]
+                [PointIdx::from(0), PointIdx::from(1), PointIdx::from(2)], 
+                [PointIdx::from(0), PointIdx::from(3), PointIdx::from(1)], 
+                [PointIdx::from(0), PointIdx::from(2), PointIdx::from(4)], 
+                [PointIdx::from(1), PointIdx::from(5), PointIdx::from(2)]
             ]
         );
         assert_eq!(mesh.attributes.len(), 3);

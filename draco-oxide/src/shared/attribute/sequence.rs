@@ -35,14 +35,14 @@ impl<'ct, T> Traverser<'ct, T>
 
 
     pub(crate) fn is_vertex_visited(&self, v: VertexIdx) -> bool {
-        self.visited_vertices[v]
+        self.visited_vertices[usize::from(v)]
     }
 
     pub(crate) fn visit(&mut self, v: VertexIdx, c: CornerIdx) {
-        if !self.visited_vertices[v] {
+        if !self.visited_vertices[usize::from(v)] {
             self.out.push(c);
         }
-        self.visited_vertices[v] = true;
+        self.visited_vertices[usize::from(v)] = true;
     }
 
     pub(crate) fn compute_seqeunce(mut self) -> Vec<CornerIdx> {
@@ -50,16 +50,16 @@ impl<'ct, T> Traverser<'ct, T>
             // If the face has not yet been visited, then the 
             // other vertices of the face are not visited yet either. If this is the case, then
             // we need to store them in self.next_outputs_stack so that they will get processed first.
-            let v = self.corner_table.pos_vertex_idx(curr_corner);
-            if self.visited_faces[self.corner_table.face_idx_containing(curr_corner)] {
+            let v = self.corner_table.vertex_idx(curr_corner);
+            if self.visited_faces[usize::from(self.corner_table.face_idx_containing(curr_corner))] {
                 continue;
             }
             let next_c = self.corner_table.next(curr_corner);
-            let next_v = self.corner_table.pos_vertex_idx(next_c);
+            let next_v = self.corner_table.vertex_idx(next_c);
             let prev_c = self.corner_table.previous(curr_corner);
-            let prev_v = self.corner_table.pos_vertex_idx(prev_c);
+            let prev_v = self.corner_table.vertex_idx(prev_c);
             if !self.is_vertex_visited(next_v) || !self.is_vertex_visited(prev_v) {
-                // We need to return the next corners first, then the previous vertex, and finally the current corner.
+                // We need to return the next corner first, then the previous corner, and finally the current corner.
                 // This order is determined by the draco library.
                 self.visit(next_v, next_c);
                 self.visit(prev_v, prev_c);
@@ -70,8 +70,7 @@ impl<'ct, T> Traverser<'ct, T>
 
             // Coming here means that we are visiting a new face.
             let face_idx = self.corner_table.face_idx_containing(curr_corner);
-            // debug_assert!(!self.visited_faces[face_idx], "Face {} has already been visited, but it should not have. was visiting corner: {:?}, vertex: {}", face_idx, curr_corner, v);
-            self.visited_faces[face_idx] = true;
+            self.visited_faces[usize::from(face_idx)] = true;
 
             // If we have not yet visited the vertex of the current corner and if it is not on a boundary then we can simply return it.
             if !self.is_vertex_visited(v) {
@@ -91,9 +90,9 @@ impl<'ct, T> Traverser<'ct, T>
             let right_face = right_corner.map(|c| self.corner_table.face_idx_containing(c));
             let left_face = left_corner.map(|c| self.corner_table.face_idx_containing(c));
 
-            if right_face.is_some() && self.visited_faces[right_face.unwrap()] {
+            if right_face.is_some() && self.visited_faces[usize::from(right_face.unwrap())] {
                 // Right face has been visited
-                if left_face.is_some() && self.visited_faces[left_face.unwrap()] {
+                if left_face.is_some() && self.visited_faces[usize::from(left_face.unwrap())] {
                     // Both neighboring faces are visited, we can continue traversing. No update to the stack.
                     // check whether the left or right face is a handle.
                     for i in (0..self.corner_traversal_stack.len()).rev() {
@@ -120,7 +119,7 @@ impl<'ct, T> Traverser<'ct, T>
                 }
             } else {
                 // Right face is unvisited or does not exist.
-                if left_face.is_some() && self.visited_faces[left_face.unwrap()] {
+                if left_face.is_some() && self.visited_faces[usize::from(left_face.unwrap())] {
                     // Left face is visited.
                     // check whether the left face is a handle.
                     for i in (0..self.corner_traversal_stack.len()).rev() {
@@ -180,21 +179,30 @@ mod tests {
         let sequence_points = Traverser::new(
             ct_pos,
             corners.clone(),
-        ).compute_seqeunce().iter().map(|c| ct_pos.vertex_idx(*c)).collect::<Vec<_>>();
-        assert_eq!(sequence_points, [3,1,0,2]);
+        ).compute_seqeunce().iter().map(|c| ct_pos.point_idx(*c)).collect::<Vec<_>>();
+        assert_eq!(
+            sequence_points.into_iter().map(|c| usize::from(c)).collect::<Vec<_>>(), 
+            vec![3,1,0,2]
+        );
 
         let ct_nor = &ct.attribute_corner_table(1).unwrap();
         let sequence_normals = Traverser::new(
             ct_nor,
             corners.clone(),
-        ).compute_seqeunce().iter().map(|c| ct_nor.vertex_idx(*c)).collect::<Vec<_>>();
-        assert_eq!(sequence_normals, [3,1,0,2]);
+        ).compute_seqeunce().iter().map(|c| ct_nor.point_idx(*c)).collect::<Vec<_>>();
+        assert_eq!(
+            sequence_normals.into_iter().map(|c| usize::from(c)).collect::<Vec<_>>(), 
+            vec![3,1,0,2]
+        );
 
         let ct_tex = &ct.attribute_corner_table(2).unwrap();
         let sequence_tex_coords = Traverser::new(
             ct_tex,
             corners,
-        ).compute_seqeunce().iter().map(|c| ct_tex.vertex_idx(*c)).collect::<Vec<_>>();
-        assert_eq!(sequence_tex_coords, [3,1,0,2,5,4]);
+        ).compute_seqeunce().iter().map(|c| ct_tex.point_idx(*c)).collect::<Vec<_>>();
+        assert_eq!(
+            sequence_tex_coords.into_iter().map(|c| usize::from(c)).collect::<Vec<_>>(), 
+            vec![3,1,0,2,5,4]
+        );
     }
 }

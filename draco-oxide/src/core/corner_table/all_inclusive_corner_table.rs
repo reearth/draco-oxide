@@ -4,7 +4,7 @@ use crate::core::{
         CornerTable, 
         GenericCornerTable
     }, 
-    shared::CornerIdx
+    shared::{AttributeValueIdx, CornerIdx, FaceIdx, VecVertexIdx}
 };
 
 
@@ -68,7 +68,7 @@ impl<'faces, 'table> RefAttributeCornerTable<'faces, 'table> {
 }
 
 impl<'faces, 'table> GenericCornerTable for RefAttributeCornerTable<'faces, 'table> {
-    fn face_idx_containing(&self, corner: usize) -> usize {
+    fn face_idx_containing(&self, corner: CornerIdx) -> FaceIdx {
         // The face index is the same as in the universal corner table
         self.corner_table.universal.face_idx_containing(corner)
     }
@@ -85,11 +85,11 @@ impl<'faces, 'table> GenericCornerTable for RefAttributeCornerTable<'faces, 'tab
     fn num_vertices(&self) -> usize {
         self.corner_table.attribute_tables.get(self.idx).unwrap().num_vertices()
     }
-    fn pos_vertex_idx(&self, corner: usize) -> crate::core::shared::VertexIdx {
-        self.corner_table.attribute_tables.get(self.idx).unwrap().pos_vertex_idx(corner)
+    fn point_idx(&self, corner: CornerIdx) -> crate::core::shared::PointIdx {
+        self.corner_table.universal_corner_table().point_idx(corner)
     }
     fn vertex_idx(&self, corner: CornerIdx) -> crate::core::shared::VertexIdx {
-        self.corner_table.universal_corner_table().vertex_idx(corner)
+        self.corner_table.attribute_tables.get(self.idx).unwrap().vertex_idx(corner)
     }
     fn next(&self, c: CornerIdx) -> CornerIdx {
         self.corner_table.attribute_tables.get(self.idx).unwrap().next(c, &self.corner_table.universal)
@@ -102,5 +102,8 @@ impl<'faces, 'table> GenericCornerTable for RefAttributeCornerTable<'faces, 'tab
     }
     fn left_most_corner(&self, vertex: crate::core::shared::VertexIdx) -> CornerIdx {
         self.corner_table.attribute_tables.get(self.idx).unwrap().left_most_corner(vertex)
+    }
+    fn vertex_to_attribute_map(&self) -> Option<&VecVertexIdx<AttributeValueIdx>> {
+        self.corner_table.attribute_tables.get(self.idx).map(|att| att.get_vertex_to_attribute_map())
     }
 }

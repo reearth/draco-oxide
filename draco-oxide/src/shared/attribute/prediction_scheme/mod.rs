@@ -5,7 +5,9 @@ pub mod derivative_prediction;
 pub mod mesh_normal_prediction; 
 pub mod mesh_prediction_for_texture_coordinates;
 
-use crate::{core::{attribute::Attribute, corner_table::GenericCornerTable, shared::{ConfigType, Vector, VertexIdx}}, prelude::{ByteReader, ByteWriter, NdVector}};
+use crate::core::{attribute::Attribute, corner_table::GenericCornerTable};
+use crate::core::shared::{ConfigType, CornerIdx, Vector, VertexIdx};
+use crate::prelude::{ByteReader, ByteWriter, NdVector};
 
 /// PredictionScheme traits are not generic and the structs implementing the 
 /// trait are generic. This is so because some of the structs need to store
@@ -32,16 +34,16 @@ pub(crate) trait PredictionSchemeImpl<'parents, C, const N: usize>
 	/// predicts the attribute from the given information. 
 	fn predict (
 		&mut self,
-		// Vertex/corner index to predict.
-		i: usize,
-		// Vertices/corners processed before the call to this function.
+		// Corner index to predict.
+		c: CornerIdx,
+		// Vertices processed before the call to this function.
 		// They must be sorted in the order they were processed.
-		vertices_or_corners_processed_up_till_now: &[VertexIdx],
+		vertices_processed_up_till_now: &[VertexIdx],
 		// The attribute that is being predicted.
 		// When used by the encoder, this is the complete attribute.
 		// When used by the decoder, this is the data that is being decoded, and thus it is not complete.
 		// Hence, expecially in the decoder, the element access can only be done by the index that is
-		// an element of `vertices_or_corners_processed_up_till_now`.
+		// an element of `vertices_processed_up_till_now`.
 		attribute: &Attribute,
 	) -> NdVector<N,i32>;
 
@@ -233,35 +235,35 @@ impl<'parents, C, const N: usize> PredictionScheme<'parents, C, N>
 	pub(crate) fn predict (
 		&mut self,
 		// Vertex/corner index to predict.
-		i: usize,
+		i: CornerIdx,
 		// Vertices/corners processed before the call to this function.
 		// They must be sorted in the order they were processed.
-		vertices_or_corners_processed_up_till_now: &[VertexIdx],
+		vertices_processed_up_till_now: &[VertexIdx],
 		// The attribute that is being predicted.
 		// When used by the encoder, this is the complete attribute.
 		// When used by the decoder, this is the data that is being decoded, and thus it is not complete.
 		// Hence, expecially in the decoder, the element access can only be done by the index that is
-		// an element of `vertices_or_corners_processed_up_till_now`.
+		// an element of `vertices_processed_up_till_now`.
 		attribute: &Attribute,
 	) -> NdVector<N,i32> {
 		match self {
 			PredictionScheme::DeltaPrediction(prediction)=> {
-				prediction.predict(i, vertices_or_corners_processed_up_till_now, attribute)
+				prediction.predict(i, vertices_processed_up_till_now, attribute)
 			}
 			PredictionScheme::DerivativePrediction(prediction) => {
-				prediction.predict(i, vertices_or_corners_processed_up_till_now, attribute)
+				prediction.predict(i, vertices_processed_up_till_now, attribute)
 			}
 			PredictionScheme::MeshMultiParallelogramPrediction(prediction) => {
-				prediction.predict(i, vertices_or_corners_processed_up_till_now, attribute)
+				prediction.predict(i, vertices_processed_up_till_now, attribute)
 			}
 			PredictionScheme::MeshParallelogramPrediction(prediction) => {
-				prediction.predict(i, vertices_or_corners_processed_up_till_now, attribute)
+				prediction.predict(i, vertices_processed_up_till_now, attribute)
 			}
 			PredictionScheme::MeshNormalPrediction(prediction) => {
-				prediction.predict(i, vertices_or_corners_processed_up_till_now, attribute)
+				prediction.predict(i, vertices_processed_up_till_now, attribute)
 			}
 			PredictionScheme::MeshPredictionForTextureCoordinates(prediction) => {
-				prediction.predict(i, vertices_or_corners_processed_up_till_now, attribute)
+				prediction.predict(i, vertices_processed_up_till_now, attribute)
 			}
 			PredictionScheme::NoPrediction(_) => {
 				NdVector::zero()
@@ -351,9 +353,9 @@ impl<'a, C, const N: usize> PredictionSchemeImpl<'a, C, N> for NoPrediction
 	}
 	fn predict(
 		&mut self,
-		_i: usize,
-		_vertices_or_corners_processed_up_till_now: &[VertexIdx],
-		_attribute: &Attribute,
+		_: CornerIdx,
+		_: &[VertexIdx],
+		_: &Attribute,
 	) -> NdVector<N,i32> {
 		unreachable!()
 	}

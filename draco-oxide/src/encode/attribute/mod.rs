@@ -50,7 +50,7 @@ pub fn encode_attributes<W>(
         att.get_component_type().write_to(writer);
         writer.write_u8(att.get_num_components() as u8);
         writer.write_u8(0); // Normalized flag, currently not used.
-        writer.write_u8(att.get_id().as_usize() as u8); // unique id, just write 0 as we have one encoder per attribute.
+        writer.write_u8(att.get_id().as_usize() as u8); // unique id
 
         // write the decoder type.
         PortabilizationType::default_for(att.get_attribute_type()).write_to(writer);

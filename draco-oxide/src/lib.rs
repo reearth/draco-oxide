@@ -41,5 +41,5 @@ pub mod prelude {
 /// When enabled, draco-oxide encoder will spit out the evaluation data mixed with encoded data,
 /// and then the `EvalWriter` is used to filter out the evaluation data. This functionality is
 /// most often used in the development and testing phase.
-#[cfg(any(test, feature = "evaluation"))]
+#[cfg(feature = "evaluation")]
 pub mod eval;

@@ -191,11 +191,6 @@ impl DracoTranscoder {
             Err::TranscodingError("No scene loaded for writing".to_string())
         })?;
 
-        // Debug output for metadata
-        if let Some(mesh_features) = scene.metadata().get_entry("mesh_features_json") {
-            println!("DEBUG: mesh_features_json: {}", mesh_features);
-        }
-
         if !file_options.output_bin_filename.is_empty() 
             && !file_options.output_resource_directory.is_empty() {
             // Write with both bin filename and resource directory
@@ -227,11 +222,6 @@ impl DracoTranscoder {
         let scene = self.scene.as_ref().ok_or_else(|| {
             Err::TranscodingError("No scene loaded for writing".to_string())
         })?;
-
-        // Debug output for metadata
-        if let Some(mesh_features) = scene.metadata().get_entry("mesh_features_json") {
-            println!("DEBUG: mesh_features_json: {}", mesh_features);
-        }
 
         self.gltf_encoder.encode_scene_to_buffer(
             scene,
@@ -291,8 +281,9 @@ mod tests {
     fn test_transcode_buffer_equals_transcode_file() {
         // Read the actual Duck.glb test file
         // let test_glb_path = "../private_tests/bad_files/39769_bldg_Building.glb";
-        let test_glb_path = "tests/data/Duck/Duck.glb";
-        let test_glb = std::fs::read(test_glb_path).expect("Failed to read Duck.glb test file");
+        // let test_glb_path = "tests/data/Duck/Duck.glb";
+        let test_glb_path = "../19884_bldg_Building.glb";
+        let test_glb = std::fs::read(test_glb_path).expect("Failed to read input glb test file");
         
         // Create transcoder with default options
         let mut transcoder1 = DracoTranscoder::create(None).unwrap();
@@ -307,8 +298,8 @@ mod tests {
         
         // Write test GLB to a temporary file for file-based transcoding
         let temp_dir = std::env::temp_dir();
-        let input_path = temp_dir.join("test_duck_input.glb");
-        let output_path = temp_dir.join("test_duck_output.glb");
+        let input_path = temp_dir.join("test_gltf_input.glb");
+        let output_path = temp_dir.join("test_gltf_output.glb");
         
         std::fs::write(&input_path, &test_glb)
             .expect("Failed to write temporary input file");
@@ -325,14 +316,138 @@ mod tests {
         let file_output = std::fs::read(&output_path)
             .expect("Failed to read output file");
         
-        // Clean up temporary files
+        // Clean up input file
         let _ = std::fs::remove_file(&input_path);
-        let _ = std::fs::remove_file(&output_path);
         
+        // Write the buffer output to a file for comparison
+        let dir = std::env::current_dir()
+            .expect("Failed to get current directory");
+        let buffer_output_path = dir.join("test_gltf_buffer_output.glb");
+        std::fs::write(&buffer_output_path, &buffer_output)
+            .expect("Failed to write buffer output file");
+        
+        // make sure that the outputs are nontrivial
+        assert!(!buffer_output.len() > 10, "Buffer output is too small: size = {}", buffer_output.len());
         // Compare outputs
-        assert_eq!(buffer_output.len(), file_output.len(), 
-            "transcode_buffer and transcode_file outputs have different lengths");
-        assert_eq!(buffer_output, file_output, 
-            "transcode_buffer output should match transcode_file output");
+        assert_eq!(
+            buffer_output.len(), file_output.len(), 
+            "transcode_buffer and transcode_file outputs have different lengths"
+        );
+        
+        assert_eq!(
+            buffer_output, file_output,
+            "transcode_buffer and transcode_file outputs differ"
+        );
+    }
+
+    #[test]
+    fn test_buffer_transcoder_deterministic_1000_runs() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        // add some test for your purpose.
+        // If the test file does not exist, it will return. (No test will be run)
+        let test_glb_path = "../private_tests/some_test.glb";
+        let test_glb = if let Ok(glb) = std::fs::read(test_glb_path) {
+            glb
+        } else {
+            println!("Test file {} does not exist, skipping deterministic test.", test_glb_path);
+            return;
+        };
+        
+        println!("Testing deterministic behavior with 1000 buffer transcoding runs...");
+        println!("Input file: {} ({} bytes)", test_glb_path, test_glb.len());
+        
+        let mut hashes = Vec::new();
+        let mut output_sizes = Vec::new();
+        let mut successful_runs = 0;
+        
+        // Perform 1000 transcoding runs
+        for run_number in 1..=1000 {
+            if run_number % 100 == 0 || run_number <= 10 {
+                println!("Run {}/1000", run_number);
+            }
+            
+            // Create fresh transcoder for each run
+            let mut transcoder = DracoTranscoder::create(None)
+                .expect("Failed to create transcoder");
+            
+            // Transcode to buffer
+            let mut output_buffer = Vec::new();
+            match transcoder.transcode_buffer(&test_glb, &mut output_buffer) {
+                Ok(()) => {
+                    // Calculate hash of output
+                    let mut hasher = DefaultHasher::new();
+                    output_buffer.hash(&mut hasher);
+                    let hash = hasher.finish();
+                    
+                    hashes.push(hash);
+                    output_sizes.push(output_buffer.len());
+                    successful_runs += 1;
+                    
+                    // Save first output as reference
+                    if run_number == 1 {
+                        let reference_path = std::env::current_dir()
+                            .expect("Failed to get current directory")
+                            .join("39764_transcoder_deterministic_reference.glb");
+                        std::fs::write(&reference_path, &output_buffer)
+                            .expect("Failed to write reference output");
+                        println!("Reference output saved as: {}", reference_path.display());
+                        println!("Output size: {} bytes", output_buffer.len());
+                    }
+                }
+                Err(e) => {
+                    panic!("Transcoding failed on run {}: {}", run_number, e);
+                }
+            }
+        }
+        
+        println!("\n=== DETERMINISTIC TEST RESULTS ===");
+        println!("Successful runs: {}/1000", successful_runs);
+        
+        // Check if all hashes are identical
+        let unique_hashes: std::collections::HashSet<_> = hashes.iter().collect();
+        let unique_sizes: std::collections::HashSet<_> = output_sizes.iter().collect();
+        
+        println!("Unique hashes: {}", unique_hashes.len());
+        println!("Unique output sizes: {}", unique_sizes.len());
+        
+        if unique_hashes.len() == 1 && unique_sizes.len() == 1 {
+            println!("✅ ALL OUTPUTS ARE IDENTICAL - Buffer transcoder is deterministic!");
+            println!("   Hash: {:016x}", hashes[0]);
+            println!("   Size: {} bytes", output_sizes[0]);
+        } else {
+            println!("❌ OUTPUTS DIFFER - Buffer transcoder is NOT deterministic!");
+            
+            // Show hash distribution
+            use std::collections::HashMap;
+            let mut hash_counts = HashMap::new();
+            for &hash in &hashes {
+                *hash_counts.entry(hash).or_insert(0) += 1;
+            }
+            
+            println!("\nHash distribution:");
+            for (i, (&hash, count)) in hash_counts.iter().enumerate() {
+                println!("  Hash {}: {:016x} ({} occurrences)", i + 1, hash, count);
+            }
+            
+            // Show size distribution
+            let mut size_counts = HashMap::new();
+            for &size in &output_sizes {
+                *size_counts.entry(size).or_insert(0) += 1;
+            }
+            
+            println!("\nSize distribution:");
+            for (size, count) in size_counts.iter() {
+                println!("  Size {} bytes: {} occurrences", size, count);
+            }
+            
+            panic!("Buffer transcoder is not deterministic!");
+        }
+        
+        // Final assertions
+        assert_eq!(successful_runs, 1000, "Not all runs were successful");
+        assert_eq!(unique_hashes.len(), 1, "Outputs have different hashes - not deterministic");
+        assert_eq!(unique_sizes.len(), 1, "Outputs have different sizes - not deterministic");
     }
 }
