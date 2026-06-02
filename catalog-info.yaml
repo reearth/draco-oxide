@@ -1,0 +1,19 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: draco-oxide
+  namespace: reearth
+  description: Rust crate for the Google Draco mesh compression library (WIP)
+  annotations:
+    github.com/project-slug: reearth/draco-oxide
+  links:
+  - url: https://github.com/reearth/draco-oxide
+    title: GitHub
+    icon: github
+  tags:
+  - rust
+  - draco
+spec:
+  type: service
+  lifecycle: production
+  owner: reearth/flow
