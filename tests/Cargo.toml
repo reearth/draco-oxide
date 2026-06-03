@@ -1,0 +1,28 @@
+[package]
+name = "tests"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Internal integration tests for draco-oxide. Holds the declarative TOML-profile test harness, the codegen build.rs, test data, and round-trip tests against Google Draco, so the published `draco-oxide` crate ships without a build script."
+
+# build.rs (auto-detected) generates one `#[test]` per tests/profiles/**/*.toml,
+# each delegating to this crate's `run_profile`. Keeping it here rather than in
+# draco-oxide means downstream crates.io consumers never execute a build script.
+
+[dependencies]
+draco-oxide = { path = "../draco-oxide" }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+tobj = "4.0.3"
+gltf = { version = "1.4", features = ["import"] }
+kiddo = "5.2.4"
+
+[dev-dependencies]
+# Used by tests/eval/mod.rs (behind the `evaluation` feature) to serialize
+# EvalWriter output.
+serde_json = "1.0"
+
+[features]
+# Forwarded so `cargo test -p tests --features evaluation` enables draco-oxide's
+# evaluation APIs used by tests/eval/mod.rs.
+evaluation = ["draco-oxide/evaluation"]

@@ -1,0 +1,29 @@
+# Encode a mesh with draco-oxide, decode it with Google Draco's reference
+# decoder, validate the decoded OBJ, then compare it against the original.
+#
+# Names like "cube_quads.obj" without a prior matching output are resolved
+# from `tests/data/`. Named outputs land in `tests/outputs/encode_round_trip/`
+# and become inputs for later operations.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "cube_quads.obj"
+output = "oxide.drc"
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "cube_quads.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.01 },
+]
