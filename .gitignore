@@ -13,7 +13,11 @@ Cargo.lock
 analyzer/outputs
 
 # test outputs
-draco-oxide/tests/outputs
+tests/outputs
 
 # private test data
 private_tests
+
+# Google Draco built from source for round-trip/benchmark tests
+# (see scripts/build-draco.sh)
+third_party/draco
