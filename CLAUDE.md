@@ -8,10 +8,11 @@ draco-rs is a Rust implementation of Google's Draco mesh compression library for
 
 ## Workspace Structure
 
-This is a Cargo workspace with three crates:
-- **draco-rs/** - Main compression library (published as "draco" crate)
+This is a Cargo workspace with four crates:
+- **draco-oxide/** - Main compression library (published as the "draco-oxide" crate). Ships with no build script.
 - **cli/** - Command-line interface (minimal implementation)
 - **analyzer/** - Mesh analysis tool with HTML visualization reports
+- **tests/** - Internal (unpublished) integration-test crate. Holds the declarative TOML-profile test harness (`src/lib.rs`), the codegen `build.rs`, test data, and the round-trip tests against Google Draco. Its integration tests live at `tests/tests/` (Cargo requires integration tests in a `tests/` subdir of the package).
 
 ## Common Commands
 
@@ -24,23 +25,24 @@ cargo build
 cargo build --features evaluation
 
 # Build specific crate
-cargo build -p draco
+cargo build -p draco-oxide
 cargo build -p analyzer
 ```
 
 ### Testing
 ```bash
-# Run all tests
+# Run all tests (every workspace crate)
 cargo test
 
-# Run tests with evaluation features
-cargo test --features evaluation
+# Integration tests (profiles, round-trip, compatibility) live in the `tests` crate.
+# The `evaluation` feature is defined there and forwards to draco-oxide/evaluation.
+cargo test -p tests
+cargo test -p tests --features evaluation   # also runs the eval test
 
-# Run specific test suites
-cargo test compatibility      # Basic encoding tests
-cargo test integrated_tests  # Full encode/decode cycles
-cargo test obj_reindexing     # OBJ file processing
-cargo test eval              # Evaluation tests (requires --features evaluation)
+# Run specific test suites within the tests crate
+cargo test -p tests --test compatibility       # Basic encoding test
+cargo test -p tests --test integrated_tests    # TOML-profile-driven tests + compatibility/eval
+cargo test -p tests --test draco_decode        # Google Draco round-trip smoke test
 ```
 
 ### Code Quality
@@ -76,8 +78,8 @@ cargo deny check # Check licenses and dependencies
 - `debug_format`: Additional debug output formatting
 
 ### Test Data
-Test meshes are located in `draco-rs/tests/data/`:
-- bunny.obj, sphere.obj, tetrahedron.obj, triangle.obj, torus.obj
+Test meshes are located in `tests/data/` (in the `tests` crate):
+- bunny.obj, sphere.obj, tetrahedron.obj, cube_quads.obj, punctured_sphere.obj, torus.obj
 
 ### Analysis and Evaluation
 When using `--features evaluation`, you can:
@@ -98,12 +100,6 @@ Tests typically follow this pattern:
 2. Convert to internal `Mesh` structure using `MeshBuilder`
 3. Encode using `encode()` function with configuration
 4. For evaluation tests, use `EvalWriter` to capture metrics
-
-### Dependencies
-- `tobj`: OBJ file parsing
-- `faer`: Linear algebra operations
-- `serde`: Serialization for configuration and evaluation data
-- `nd_vector`: Custom macro for N-dimensional vectors
 
 ## Version Requirements
 - Rust 1.84+ (specified in rust-toolchain.toml)
