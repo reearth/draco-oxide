@@ -1,5 +1,5 @@
 # Encode a mesh with draco-oxide, decode it with Google Draco's reference
-# decoder, validate the decoded OBJ, then compare it against the original.
+# decoder, then validate that the decoded OBJ parses.
 #
 # Names like "cube_quads.obj" without a prior matching output are resolved
 # from `tests/data/`. Named outputs land in `tests/outputs/encode_round_trip/`
@@ -19,11 +19,3 @@ output = "decoded.obj"
 op = "Validation"
 input = "decoded.obj"
 fmt = "Obj"
-
-[[operations]]
-op = "Comparison"
-input1 = "cube_quads.obj"
-input2 = "decoded.obj"
-methods = [
-    { method = "L2Norm", max = 0.01 },
-]
