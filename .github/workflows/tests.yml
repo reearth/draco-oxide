@@ -6,8 +6,19 @@ on:
   pull_request:
 
 jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustfmt
+        run: cargo fmt --all --check
+
   tests:
     runs-on: ubuntu-latest
+    # Single source of truth for the pinned Draco version: feeds both the
+    # cache key and build-draco.sh (which reads DRACO_TAG from the env).
+    env:
+      DRACO_TAG: "1.5.7"
     steps:
       - uses: actions/checkout@v4
 
@@ -16,7 +27,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: third_party/draco
-          key: draco-${{ runner.os }}-1.5.7-${{ hashFiles('scripts/build-draco.sh') }}
+          key: draco-${{ runner.os }}-${{ env.DRACO_TAG }}-${{ hashFiles('scripts/build-draco.sh') }}
 
       - name: Build Google Draco reference decoder
         run: ./scripts/build-draco.sh

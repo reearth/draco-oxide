@@ -243,7 +243,7 @@ pub fn impl_ndvector_ops_for_dim(input: TokenStream) -> TokenStream {
 
 #[proc_macro]
 pub fn impl_ndvector_ops(_input: TokenStream) -> TokenStream {
-    let n: usize = env::var("MAX_VECTOR_DIM")
+    let n: usize = env::var("DRACO_OXIDE_MAX_VECTOR_DIM")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(4); // Default max vec size is 4 if missing or invalid
