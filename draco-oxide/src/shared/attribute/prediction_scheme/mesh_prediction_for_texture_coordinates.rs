@@ -13,6 +13,12 @@ pub(crate) struct MeshPredictionForTextureCoordinates<'parents, C, const N: usiz
     corner_table: &'parents C,
     pos_att: &'parents Attribute,
     orientation: Vec<bool>, // Stores orientation for encoder
+    // O(1) "has this vertex been processed yet" membership, replacing a linear
+    // scan of `vertices_up_till_now` on every predict (which made the encode
+    // loop O(corners^2)). Indexed by VertexIdx; `synced` tracks how much of the
+    // growing slice has already been folded in.
+    visited: Vec<bool>,
+    synced: usize,
 }
 
 impl<'parents, C, const N: usize> MeshPredictionForTextureCoordinates<'parents, C, N>
@@ -57,10 +63,11 @@ where
         vertices_up_till_now: &[VertexIdx],
         attribute: &Attribute,
     ) -> NdVector<N, i32> {
-        // Check if next vertex has been processed
+        // Check if next vertex has been processed. `visited` is kept in sync by
+        // `predict`, the only caller, before any fallback is taken.
         let next_corner = self.corner_table.next(c);
         let next_vertex = self.corner_table.vertex_idx(next_corner);
-        if vertices_up_till_now.contains(&next_vertex) {
+        if self.visited[usize::from(next_vertex)] {
             return attribute.get(self.corner_table.point_idx(next_corner));
         }
 
@@ -102,6 +109,8 @@ where
             corner_table,
             pos_att: parents[0],
             orientation: Vec::new(), // Initialize orientation vector
+            visited: vec![false; corner_table.num_vertices()],
+            synced: 0,
         }
     }
 
@@ -121,6 +130,14 @@ where
         // This prediction scheme is specifically for texture coordinates (2D)
         debug_assert_eq!(N, 2, "Texture coordinate prediction is only for 2D vectors");
 
+        // Fold any vertices appended since the last call into the membership set.
+        // `vertices_up_till_now` only ever grows (it is the encoder's running
+        // sequence_record), so its tail beyond `synced` is exactly the new entries.
+        for &v in &vertices_up_till_now[self.synced..] {
+            self.visited[usize::from(v)] = true;
+        }
+        self.synced = vertices_up_till_now.len();
+
         // Get next and previous corners for the current corner
         let next_corner = self.corner_table.next(i);
         let prev_corner = self.corner_table.previous(i);
@@ -134,9 +151,7 @@ where
         let prev_vertex = self.corner_table.vertex_idx(prev_corner);
 
         // Check if both neighboring vertices have already been processed
-        if vertices_up_till_now.contains(&next_vertex)
-            && vertices_up_till_now.contains(&prev_vertex)
-        {
+        if self.visited[usize::from(next_vertex)] && self.visited[usize::from(prev_vertex)] {
             // Get texture coordinates for next and previous vertices
             let curr_uv: NdVector<N, i32> = attribute.get(curr_pt);
             let curr_uv =

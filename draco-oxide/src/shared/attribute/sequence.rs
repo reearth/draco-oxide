@@ -71,6 +71,10 @@ where
             // Coming here means that we are visiting a new face.
             let face_idx = self.corner_table.face_idx_containing(curr_corner);
             self.visited_faces[usize::from(face_idx)] = true;
+            // Once a face is marked visited it is never unmarked, and the pop
+            // loop above skips any corner whose face is already visited. So stale
+            // corners of this face still left on the stack (the handle case) are
+            // harmlessly skipped when popped; we no longer scan-and-remove them.
 
             // If we have not yet visited the vertex of the current corner and if it is not on a boundary then we can simply return it.
             if !self.is_vertex_visited(v) {
@@ -94,24 +98,8 @@ where
                 // Right face has been visited
                 if left_face.is_some() && self.visited_faces[usize::from(left_face.unwrap())] {
                     // Both neighboring faces are visited, we can continue traversing. No update to the stack.
-                    // check whether the left or right face is a handle.
-                    for i in (0..self.corner_traversal_stack.len()).rev() {
-                        let c = self.corner_traversal_stack[i];
-                        if self.corner_table.face_idx_containing(c) == face_idx {
-                            self.corner_traversal_stack.remove(i);
-                        }
-                    }
                 } else {
                     // Left face is unvisited or does not exist.
-                    // check whether the left face is a handle.
-                    for i in (0..self.corner_traversal_stack.len()).rev() {
-                        let c = self.corner_traversal_stack[i];
-                        if self.corner_table.face_idx_containing(c) == face_idx {
-                            self.corner_traversal_stack.remove(i);
-                            // ToDo: Consider adding break here
-                        }
-                    }
-
                     // We need to traverse the left face if it exists.
                     if let Some(lc) = left_corner {
                         self.corner_traversal_stack.push(lc);
@@ -121,15 +109,6 @@ where
                 // Right face is unvisited or does not exist.
                 if left_face.is_some() && self.visited_faces[usize::from(left_face.unwrap())] {
                     // Left face is visited.
-                    // check whether the left face is a handle.
-                    for i in (0..self.corner_traversal_stack.len()).rev() {
-                        let c = self.corner_traversal_stack[i];
-                        if self.corner_table.face_idx_containing(c) == face_idx {
-                            self.corner_traversal_stack.remove(i);
-                            // ToDo: Consider adding break here
-                        }
-                    }
-
                     // we need to traverse the right face if it exists.
                     if let Some(rc) = right_corner {
                         self.corner_traversal_stack.push(rc);
@@ -220,4 +199,105 @@ mod tests {
             vec![3, 1, 0, 2, 5, 4]
         );
     }
+
+    /// FNV-1a over the little-endian bytes of the point-index sequence.
+    /// Deterministic and toolchain-independent, unlike DefaultHasher.
+    fn digest(seq: &[usize]) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for &v in seq {
+            for b in (v as u64).to_le_bytes() {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    /// Computes (attr_idx, sequence_len, digest) for the universal corner table
+    /// (attr 0) and every attribute corner table of `mesh`. The digest captures
+    /// the exact `Vec<CornerIdx>` traversal order via point indices — this is the
+    /// shared encoder/decoder symmetry that must stay byte-identical.
+    fn sequence_fingerprints(path: &str) -> Vec<(usize, usize, u64)> {
+        let mut mesh = load_obj(path).unwrap();
+        let out = encode_connectivity(
+            &mesh.faces,
+            &mut mesh.attributes,
+            &mut Vec::new(),
+            &crate::encode::Config::default(),
+        )
+        .unwrap();
+
+        let (ct, corners) = if let ConnectivityEncoderOutput::Edgebreaker(eb) = out {
+            (eb.corner_table, eb.corners_of_edgebreaker)
+        } else {
+            panic!("Expected Edgebreaker Output for {path}");
+        };
+
+        let mut fps = Vec::new();
+
+        let ct_pos = ct.universal_corner_table();
+        let seq: Vec<usize> = Traverser::new(ct_pos, corners.clone())
+            .compute_seqeunce()
+            .iter()
+            .map(|c| usize::from(ct_pos.point_idx(*c)))
+            .collect();
+        fps.push((0, seq.len(), digest(&seq)));
+
+        let mut attr_idx = 1;
+        while let Some(ct_attr) = ct.attribute_corner_table(attr_idx) {
+            let seq: Vec<usize> = Traverser::new(&ct_attr, corners.clone())
+                .compute_seqeunce()
+                .iter()
+                .map(|c| usize::from(ct_attr.point_idx(*c)))
+                .collect();
+            fps.push((attr_idx, seq.len(), digest(&seq)));
+            attr_idx += 1;
+        }
+
+        fps
+    }
+
+    /// Byte-identical oracle for `compute_sequence`. The expected fingerprints
+    /// were captured from the pre-optimization implementation; any change that
+    /// alters the traversal order on these meshes (boundaries, handles) trips
+    /// this test. torus.obj carries topological handles, which is exactly the
+    /// case the handle-detection scan-and-remove blocks exist to handle.
+    #[test]
+    fn oracle_compute_sequence() {
+        let cases: &[(&str, &[(usize, usize, u64)])] = &[
+            ("tests/data/tetrahedron.obj", EXPECT_TETRAHEDRON),
+            ("tests/data/sphere.obj", EXPECT_SPHERE),
+            ("tests/data/punctured_sphere.obj", EXPECT_PUNCTURED_SPHERE),
+            ("tests/data/torus.obj", EXPECT_TORUS),
+            ("tests/data/bunny.obj", EXPECT_BUNNY),
+        ];
+
+        let dump = std::env::var("DUMP_FINGERPRINTS").is_ok();
+        for (path, expected) in cases {
+            let got = sequence_fingerprints(path);
+            if dump {
+                eprintln!("{path} => {got:?}");
+                continue;
+            }
+            assert_eq!(
+                &got[..],
+                *expected,
+                "compute_sequence output changed for {path}"
+            );
+        }
+    }
+
+    // Captured from the pre-optimization implementation. Format: (attr_idx, len, fnv1a_digest).
+    const EXPECT_TETRAHEDRON: &[(usize, usize, u64)] = &[
+        (0, 4, 18054049684469353541),
+        (1, 4, 18054049684469353541),
+        (2, 6, 3159456026337658052),
+    ];
+    const EXPECT_SPHERE: &[(usize, usize, u64)] =
+        &[(0, 114, 17737425019064467876), (1, 114, 17737425019064467876)];
+    const EXPECT_PUNCTURED_SPHERE: &[(usize, usize, u64)] =
+        &[(0, 114, 17132826066695074116), (1, 114, 17132826066695074116)];
+    const EXPECT_TORUS: &[(usize, usize, u64)] = &[(0, 2051, 930682351741064974)];
+    const EXPECT_BUNNY: &[(usize, usize, u64)] =
+        &[(0, 34834, 3080192193140594432), (1, 34834, 3080192193140594432)];
 }
