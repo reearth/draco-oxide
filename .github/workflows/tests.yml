@@ -15,8 +15,6 @@ jobs:
 
   tests:
     runs-on: ubuntu-latest
-    # Single source of truth for the pinned Draco version: feeds both the
-    # cache key and build-draco.sh (which reads DRACO_TAG from the env).
     env:
       DRACO_TAG: "1.5.7"
     steps:

@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
 #
-# Fetch and build Google Draco's reference tools (`draco_decoder` and
-# `draco_encoder`) from source, for round-trip / benchmark tests against
-# draco-oxide.
+# Fetch and build Google Draco's reference `draco_decoder`/`draco_encoder` for
+# round-trip tests against draco-oxide. Prints the decoder path on the last line.
 #
-# Idempotent: if the decoder binary already exists this is a no-op, so it is
-# cheap to call on every CI run (pair it with a cache on third_party/draco).
-# Set FORCE=1 to rebuild from scratch.
-#
-# The pinned version can be overridden with DRACO_TAG=<tag>. draco-oxide emits
-# Draco mesh bitstream version 2.2, which 1.5.x decodes.
-#
-# On success the path to the built draco_decoder is printed on the last line.
+# Idempotent (no-op if the decoder exists; set FORCE=1 to rebuild), so it's cheap
+# to call on every CI run paired with a cache on third_party/draco. Override the
+# pinned version with DRACO_TAG=<tag>; draco-oxide emits bitstream 2.2, which 1.5.x decodes.
 
 set -euo pipefail
 
