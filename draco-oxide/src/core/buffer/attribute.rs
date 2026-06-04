@@ -333,7 +333,12 @@ impl AttributeBuffer {
         let elem_size = self.num_components * self.component_type.size();
         let mut write_pos = 0;
         for &idx in keep_indices {
-            debug_assert!(idx < self.len, "retain_indices: index {} out of bounds (len {})", idx, self.len);
+            debug_assert!(
+                idx < self.len,
+                "retain_indices: index {} out of bounds (len {})",
+                idx,
+                self.len
+            );
             if write_pos != idx {
                 unsafe {
                     let src = self.as_ptr().add(idx * elem_size);

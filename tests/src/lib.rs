@@ -47,17 +47,11 @@ pub struct Profile {
 pub enum Operation {
     /// Encode a mesh with draco-oxide. No config field today — the encoder
     /// doesn't expose tunable knobs yet; default `encode::Config` is used.
-    DracoOxideEncode {
-        input: String,
-        output: String,
-    },
+    DracoOxideEncode { input: String, output: String },
     /// Decode a `.drc` with draco-oxide. Currently stubbed in the library
     /// itself, so this op deliberately errors with a clear message rather
     /// than silently producing garbage.
-    DracoOxideDecode {
-        input: String,
-        output: String,
-    },
+    DracoOxideDecode { input: String, output: String },
     /// Encode with Google Draco's `draco_encoder` CLI.
     DracoEncode {
         input: String,
@@ -75,10 +69,7 @@ pub enum Operation {
     /// Confirm an artifact parses as the named format. `.drc` cannot be
     /// validated here — its only validation is "Google's decoder accepts it",
     /// which is covered by [`Operation::DracoDecode`].
-    Validation {
-        input: String,
-        fmt: FormatName,
-    },
+    Validation { input: String, fmt: FormatName },
     /// Compare two artifacts under one or more comparison methods. Each
     /// method asserts its own pass/fail predicate (e.g. a distance threshold).
     Comparison {
@@ -183,8 +174,12 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
     let data_dir = Path::new(data_dir);
     let out_dir = Path::new(outputs_dir).join(name);
 
-    let toml_text = std::fs::read_to_string(profile_path)
-        .unwrap_or_else(|e| panic!("[{name}] failed to read profile {}: {e}", profile_path.display()));
+    let toml_text = std::fs::read_to_string(profile_path).unwrap_or_else(|e| {
+        panic!(
+            "[{name}] failed to read profile {}: {e}",
+            profile_path.display()
+        )
+    });
     let profile: Profile = toml::from_str(&toml_text)
         .unwrap_or_else(|e| panic!("[{name}] failed to parse {}: {e}", profile_path.display()));
 
@@ -199,8 +194,12 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
         .iter()
         .any(|op| matches!(op, Operation::DracoDecode { .. }));
 
-    let google_encoder = needs_google_encoder.then(find_google_draco_encoder).flatten();
-    let google_decoder = needs_google_decoder.then(find_google_draco_decoder).flatten();
+    let google_encoder = needs_google_encoder
+        .then(find_google_draco_encoder)
+        .flatten();
+    let google_decoder = needs_google_decoder
+        .then(find_google_draco_decoder)
+        .flatten();
 
     if needs_google_encoder && google_encoder.is_none() {
         skip(name, "Google Draco `draco_encoder` not found (run scripts/build-draco.sh, or set DRACO_ENCODER=<path>)");
@@ -211,8 +210,12 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
         return;
     }
 
-    std::fs::create_dir_all(&out_dir)
-        .unwrap_or_else(|e| panic!("[{name}] failed to create output dir {}: {e}", out_dir.display()));
+    std::fs::create_dir_all(&out_dir).unwrap_or_else(|e| {
+        panic!(
+            "[{name}] failed to create output dir {}: {e}",
+            out_dir.display()
+        )
+    });
 
     let resolve_input = |bind: &str| -> PathBuf {
         let from_outputs = out_dir.join(bind);
@@ -230,14 +233,16 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
         match op {
             Operation::DracoOxideEncode { input, output } => {
                 let in_path = resolve_input(input);
-                let mesh = load_mesh_for_oxide(&in_path)
-                    .unwrap_or_else(|e| panic!("{label}: failed to load {}: {e}", in_path.display()));
+                let mesh = load_mesh_for_oxide(&in_path).unwrap_or_else(|e| {
+                    panic!("{label}: failed to load {}: {e}", in_path.display())
+                });
                 let mut buf = Vec::new();
                 oxide_encode_fn(mesh, &mut buf, oxide_encode::Config::default())
                     .unwrap_or_else(|e| panic!("{label}: draco-oxide encode failed: {e:?}"));
                 let out_path = resolve_output(output);
-                std::fs::write(&out_path, &buf)
-                    .unwrap_or_else(|e| panic!("{label}: writing {} failed: {e}", out_path.display()));
+                std::fs::write(&out_path, &buf).unwrap_or_else(|e| {
+                    panic!("{label}: writing {} failed: {e}", out_path.display())
+                });
             }
             Operation::DracoOxideDecode { .. } => {
                 panic!(
@@ -254,7 +259,11 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                 cfg.apply(&mut cmd);
                 run_subprocess(&label, "draco_encoder", cmd);
             }
-            Operation::DracoDecode { input, output, cfg: _ } => {
+            Operation::DracoDecode {
+                input,
+                output,
+                cfg: _,
+            } => {
                 let bin = google_decoder.as_ref().expect("pre-scan guarantees this");
                 let in_path = resolve_input(input);
                 let out_path = resolve_output(output);
@@ -266,7 +275,11 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                 let path = resolve_input(input);
                 validate(&label, &path, fmt);
             }
-            Operation::Comparison { input1, input2, methods } => {
+            Operation::Comparison {
+                input1,
+                input2,
+                methods,
+            } => {
                 let p1 = resolve_input(input1);
                 let p2 = resolve_input(input2);
                 for method in methods {
@@ -331,14 +344,22 @@ fn validate(label: &str, path: &Path, fmt: &FormatName) {
             // the returned tuple is intentionally ignored.
             if let Err(e) = tobj::load_obj(
                 path,
-                &tobj::LoadOptions { triangulate: true, single_index: true, ..Default::default() },
+                &tobj::LoadOptions {
+                    triangulate: true,
+                    single_index: true,
+                    ..Default::default()
+                },
             ) {
                 panic!("{label}: OBJ validation failed for {}: {e}", path.display());
             }
         }
         FormatName::Gltf => {
-            gltf::import(path)
-                .unwrap_or_else(|e| panic!("{label}: glTF validation failed for {}: {e}", path.display()));
+            gltf::import(path).unwrap_or_else(|e| {
+                panic!(
+                    "{label}: glTF validation failed for {}: {e}",
+                    path.display()
+                )
+            });
         }
     }
 }
@@ -349,7 +370,9 @@ fn load_mesh_for_oxide(path: &Path) -> Result<Mesh, String> {
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
     match ext {
         "obj" => load_obj(path).map_err(|e| format!("{e}")),
-        other => Err(format!("unsupported input extension for DracoOxideEncode: .{other}")),
+        other => Err(format!(
+            "unsupported input extension for DracoOxideEncode: .{other}"
+        )),
     }
 }
 
@@ -359,7 +382,11 @@ fn load_mesh_for_oxide(path: &Path) -> Result<Mesh, String> {
 fn load_obj_positions(path: &Path) -> Result<Vec<[f32; 3]>, String> {
     let (models, _materials) = tobj::load_obj(
         path,
-        &tobj::LoadOptions { triangulate: true, single_index: true, ..Default::default() },
+        &tobj::LoadOptions {
+            triangulate: true,
+            single_index: true,
+            ..Default::default()
+        },
     )
     .map_err(|e| format!("tobj failed: {e}"))?;
     let mut out = Vec::new();

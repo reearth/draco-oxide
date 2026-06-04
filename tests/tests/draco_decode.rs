@@ -35,8 +35,8 @@ fn find_draco_decoder() -> Option<PathBuf> {
     }
     // 2. Default location produced by scripts/build-draco.sh. The repo root is
     //    the parent of this crate's manifest dir.
-    let default = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../third_party/draco/_build/draco_decoder");
+    let default =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../third_party/draco/_build/draco_decoder");
     default.is_file().then_some(default)
 }
 
@@ -95,9 +95,8 @@ fn google_draco_decodes_draco_oxide_output() {
     for &name in MESHES {
         // Isolate each mesh so a panic in draco-oxide's (WIP) encoder is
         // reported as a failure rather than aborting the whole test run.
-        match std::panic::catch_unwind(AssertUnwindSafe(|| {
-            roundtrip_one(name, &decoder, &out_dir)
-        })) {
+        match std::panic::catch_unwind(AssertUnwindSafe(|| roundtrip_one(name, &decoder, &out_dir)))
+        {
             Ok(Ok(())) => {}
             Ok(Err(msg)) => failures.push(msg),
             Err(_) => failures.push(format!(

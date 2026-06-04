@@ -56,8 +56,7 @@ fn main() {
     }
 
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is set by cargo"));
-    fs::write(out_dir.join("generated_profiles.rs"), out)
-        .expect("writing generated_profiles.rs");
+    fs::write(out_dir.join("generated_profiles.rs"), out).expect("writing generated_profiles.rs");
 }
 
 struct ProfileFile {
@@ -81,7 +80,10 @@ fn collect_profiles(root: &Path, dir: &Path, out: &mut Vec<ProfileFile>) {
             println!("cargo:rerun-if-changed={}", path.display());
             let rel = path.strip_prefix(root).unwrap().to_path_buf();
             let fn_name = profile_fn_name(&rel);
-            out.push(ProfileFile { fn_name, rel_path: rel });
+            out.push(ProfileFile {
+                fn_name,
+                rel_path: rel,
+            });
         }
     }
 }
@@ -93,7 +95,13 @@ fn profile_fn_name(rel: &Path) -> String {
     let raw = stem.to_string_lossy().replace(['/', '\\'], "_");
     let mut s: String = raw
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if s.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         s.insert(0, '_');
