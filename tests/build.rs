@@ -8,8 +8,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=MAX_VECTOR_DIM");
-
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let profiles_root = manifest_dir.join("profiles");
 

@@ -131,8 +131,8 @@ impl GoogleEncodeConfig {
     }
 }
 
-/// `draco_decoder` has no real config knobs today (just I/O), but the type
-/// exists so profiles stay symmetric and we have a place to grow into.
+/// `draco_decoder` has no config knobs today; the type exists for symmetry
+/// and as a place to grow into.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GoogleDecodeConfig {}
@@ -147,12 +147,12 @@ pub enum FormatName {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "method")]
 pub enum ComparisonMethod {
-    /// Per-vertex L2 norm (via `Mesh::diff_l2_norm`). Asserts the value is
-    /// `<= max`. Both inputs must currently be OBJ files.
+    /// Symmetric nearest-neighbor RMS between the two point sets (robust to
+    /// vertex reordering). Asserts the value is `<= max`. Both inputs must
+    /// currently be OBJ files.
     L2Norm { max: f64 },
-    // Reserved: rendered-view image comparison via Three.js + headless
-    // browser. Skips with a warning when the rendering toolchain isn't
-    // installed. Not implemented yet.
+    // Reserved: rendered-view image comparison via a headless browser, not yet
+    // implemented.
     // RenderedView { ... },
 }
 
@@ -340,8 +340,7 @@ fn run_subprocess(label: &str, tool: &str, mut cmd: Command) {
 fn validate(label: &str, path: &Path, fmt: &FormatName) {
     match fmt {
         FormatName::Obj => {
-            // We only care that the file parses; the materials Result inside
-            // the returned tuple is intentionally ignored.
+            // Only checking that the file parses; the materials Result is ignored.
             if let Err(e) = tobj::load_obj(
                 path,
                 &tobj::LoadOptions {

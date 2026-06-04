@@ -1,8 +1,5 @@
 name: tests
 
-# Run the `tests` crate: the TOML-profile and compatibility tests, plus the
-# draco_decode round-trip that encodes test meshes with draco-oxide and confirms
-# Google Draco's reference decoder accepts the output without crashing.
 on:
   push:
     branches: [main, beta]
