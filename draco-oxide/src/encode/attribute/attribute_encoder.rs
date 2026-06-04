@@ -104,6 +104,29 @@ impl GroupConfig {
                     portabilization: portabilization::Config::default_for(AttributeType::Custom),
                 },
             },
+            // Color (e.g. glTF COLOR_0) — a generic per-vertex attribute with no
+            // mesh-geometry predictor. The reference Draco decoder
+            // (`SequentialIntegerAttributeDecoder::CreateIntPredictionScheme`)
+            // builds a prediction scheme ONLY when the transform type is
+            // `PREDICTION_TRANSFORM_WRAP` (id 1); any other transform — including
+            // the `Difference`/`PREDICTION_TRANSFORM_DELTA` (id 0) default the
+            // `_` catch-all selects — makes the decoder skip the prediction
+            // revert and return the raw quantized residuals (garbage colors,
+            // alpha read as delta-of-constant). Pin Color to the same
+            // reference-compatible delta + wrapped-difference path the Custom arm
+            // uses (PREDICTION_DIFFERENCE + WRAP — also the reference encoder's
+            // generic high-speed path), so draco3d reconstructs absolute colors.
+            AttributeType::Color => Self {
+                range: vec![0..size],
+                prediction_scheme: prediction_scheme::Config {
+                    ty: prediction_scheme::PredictionSchemeType::DeltaPrediction,
+                    ..prediction_scheme::Config::default()
+                },
+                prediction_transform: prediction_transform::Config {
+                    ty: prediction_transform::PredictionTransformType::WrappedDifference,
+                    portabilization: portabilization::Config::default_for(AttributeType::Color),
+                },
+            },
             _ => Self::default_with_size(size),
         }
     }
