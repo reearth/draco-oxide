@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn test_traverser() {
-        let mut mesh = load_obj("tests/data/tetrahedron.obj").unwrap();
+        let mut mesh = load_obj("../tests/data/tetrahedron.obj").unwrap();
         let out: crate::encode::connectivity::ConnectivityEncoderOutput<'_> = encode_connectivity(
             &mesh.faces,
             &mut mesh.attributes,

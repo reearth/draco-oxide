@@ -970,7 +970,7 @@ mod tests {
 
     #[test]
     fn test_transcode_duck_glb() {
-        let test_path = "tests/data/Duck/Duck.glb";
+        let test_path = "../tests/data/Duck/Duck.glb";
         let input = match std::fs::read(test_path) {
             Ok(data) => data,
             Err(_) => {
@@ -1013,7 +1013,7 @@ mod tests {
 
     #[test]
     fn test_transcode_deterministic() {
-        let test_path = "tests/data/Duck/Duck.glb";
+        let test_path = "../tests/data/Duck/Duck.glb";
         let input = match std::fs::read(test_path) {
             Ok(data) => data,
             Err(_) => {
