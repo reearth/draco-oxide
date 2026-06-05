@@ -1279,7 +1279,7 @@ mod tests {
     #[allow(unused)]
     fn test_with_large_mesh() {
         let (bunny,_) = tobj::load_obj(
-            format!("tests/data/bunny.obj"), 
+            format!("../tests/data/bunny.obj"),
             &tobj::GPU_LOAD_OPTIONS
         ).unwrap();
         let bunny = &bunny[0];

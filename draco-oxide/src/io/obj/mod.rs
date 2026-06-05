@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn tetrahedron() {
-        let mesh = load_obj("tests/data/tetrahedron.obj").unwrap();
+        let mesh = load_obj("../tests/data/tetrahedron.obj").unwrap();
         assert_eq!(
             mesh.get_faces(),
             vec![

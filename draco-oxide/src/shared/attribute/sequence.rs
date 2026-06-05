@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_traverser() {
-        let mut mesh = load_obj("tests/data/tetrahedron.obj").unwrap();
+        let mut mesh = load_obj("../tests/data/tetrahedron.obj").unwrap();
         let out: crate::encode::connectivity::ConnectivityEncoderOutput<'_> = encode_connectivity(
             &mesh.faces,
             &mut mesh.attributes,
@@ -265,11 +265,14 @@ mod tests {
     #[test]
     fn oracle_compute_sequence() {
         let cases: &[(&str, &[(usize, usize, u64)])] = &[
-            ("tests/data/tetrahedron.obj", EXPECT_TETRAHEDRON),
-            ("tests/data/sphere.obj", EXPECT_SPHERE),
-            ("tests/data/punctured_sphere.obj", EXPECT_PUNCTURED_SPHERE),
-            ("tests/data/torus.obj", EXPECT_TORUS),
-            ("tests/data/bunny.obj", EXPECT_BUNNY),
+            ("../tests/data/tetrahedron.obj", EXPECT_TETRAHEDRON),
+            ("../tests/data/sphere.obj", EXPECT_SPHERE),
+            (
+                "../tests/data/punctured_sphere.obj",
+                EXPECT_PUNCTURED_SPHERE,
+            ),
+            ("../tests/data/torus.obj", EXPECT_TORUS),
+            ("../tests/data/bunny.obj", EXPECT_BUNNY),
         ];
 
         let dump = std::env::var("DUMP_FINGERPRINTS").is_ok();
@@ -293,11 +296,17 @@ mod tests {
         (1, 4, 18054049684469353541),
         (2, 6, 3159456026337658052),
     ];
-    const EXPECT_SPHERE: &[(usize, usize, u64)] =
-        &[(0, 114, 17737425019064467876), (1, 114, 17737425019064467876)];
-    const EXPECT_PUNCTURED_SPHERE: &[(usize, usize, u64)] =
-        &[(0, 114, 17132826066695074116), (1, 114, 17132826066695074116)];
+    const EXPECT_SPHERE: &[(usize, usize, u64)] = &[
+        (0, 114, 17737425019064467876),
+        (1, 114, 17737425019064467876),
+    ];
+    const EXPECT_PUNCTURED_SPHERE: &[(usize, usize, u64)] = &[
+        (0, 114, 17132826066695074116),
+        (1, 114, 17132826066695074116),
+    ];
     const EXPECT_TORUS: &[(usize, usize, u64)] = &[(0, 2051, 930682351741064974)];
-    const EXPECT_BUNNY: &[(usize, usize, u64)] =
-        &[(0, 34834, 3080192193140594432), (1, 34834, 3080192193140594432)];
+    const EXPECT_BUNNY: &[(usize, usize, u64)] = &[
+        (0, 34834, 3080192193140594432),
+        (1, 34834, 3080192193140594432),
+    ];
 }

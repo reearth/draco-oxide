@@ -1317,7 +1317,7 @@ impl Traversal for ValenceTraversal {
 //     #[allow(unused)] // uncomment the test to run it. it is commented out as it takes a long time to run.
 //     fn connectivity_check_after_vertex_permutation() {
 //         let (bunny,_) = tobj::load_obj(
-//             format!("tests/data/punctured_sphere.obj"),
+//             format!("../tests/data/punctured_sphere.obj"),
 //             &tobj::GPU_LOAD_OPTIONS
 //         ).unwrap();
 //         let bunny = &bunny[0];

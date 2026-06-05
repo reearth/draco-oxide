@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [main, beta]
+  pull_request:
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+  tests:
+    runs-on: ubuntu-latest
+    env:
+      DRACO_TAG: "1.5.7"
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cache the built Google Draco tree.
+      - name: Cache Google Draco
+        uses: actions/cache@v4
+        with:
+          path: third_party/draco
+          key: draco-${{ runner.os }}-${{ env.DRACO_TAG }}-${{ hashFiles('scripts/build-draco.sh') }}
+
+      - name: Build Google Draco reference decoder
+        run: ./scripts/build-draco.sh
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: workspace tests
+        run: cargo test --workspace -- --nocapture

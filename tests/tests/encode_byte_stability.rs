@@ -40,10 +40,10 @@ fn encode_output_is_byte_stable() {
     // schemes; sphere/torus/bunny exercise position (parallelogram) at scale
     // and over handle topology (torus).
     let cases: &[(&str, usize, u64)] = &[
-        ("tests/data/tetrahedron.obj", EXPECT_TETRA_LEN, EXPECT_TETRA_HASH),
-        ("tests/data/sphere.obj", EXPECT_SPHERE_LEN, EXPECT_SPHERE_HASH),
-        ("tests/data/torus.obj", EXPECT_TORUS_LEN, EXPECT_TORUS_HASH),
-        ("tests/data/bunny.obj", EXPECT_BUNNY_LEN, EXPECT_BUNNY_HASH),
+        ("data/tetrahedron.obj", EXPECT_TETRA_LEN, EXPECT_TETRA_HASH),
+        ("data/sphere.obj", EXPECT_SPHERE_LEN, EXPECT_SPHERE_HASH),
+        ("data/torus.obj", EXPECT_TORUS_LEN, EXPECT_TORUS_HASH),
+        ("data/bunny.obj", EXPECT_BUNNY_LEN, EXPECT_BUNNY_HASH),
     ];
     let dump = std::env::var("DUMP_ENCODE_FINGERPRINTS").is_ok();
     for (obj, exp_len, exp_hash) in cases {

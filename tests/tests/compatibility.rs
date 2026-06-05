@@ -9,12 +9,14 @@ const FILE_NAME: &str = "cube_quads";
 
 #[test]
 fn en() {
-    let mesh = load_obj(format!("tests/data/{}.obj", FILE_NAME)).unwrap();
+    let mesh = load_obj(format!("data/{}.obj", FILE_NAME)).unwrap();
 
     let mut writer = Vec::new();
     encode(mesh.clone(), &mut writer, encode::Config::default()).unwrap();
 
-    let mut file = std::fs::File::create(&format!("tests/outputs/{}.drc", FILE_NAME)).unwrap();
+    // `tests/outputs/` is gitignored, so it may not exist on a fresh checkout.
+    std::fs::create_dir_all("outputs").unwrap();
+    let mut file = std::fs::File::create(&format!("outputs/{}.drc", FILE_NAME)).unwrap();
 
     file.write_all(&writer).unwrap();
 }

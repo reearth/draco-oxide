@@ -212,7 +212,7 @@ mod tests {
     fn test_no_att_seam() {
         // read the test data from a corner table
 
-        let mut mesh = load_obj("tests/data/sphere.obj").unwrap();
+        let mut mesh = load_obj("../tests/data/sphere.obj").unwrap();
         let faces = mesh.faces;
 
         let att = mesh
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_att_seam() {
-        let mut tetrahedron = load_obj("tests/data/tetrahedron.obj").unwrap();
+        let mut tetrahedron = load_obj("../tests/data/tetrahedron.obj").unwrap();
         let faces = tetrahedron.faces;
         let corner_table = CornerTable::new(&faces, &tetrahedron.attributes[0]);
 

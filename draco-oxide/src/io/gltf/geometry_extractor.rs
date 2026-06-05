@@ -186,9 +186,8 @@ pub fn read_accessor_as_f32(
         }
         let mut result = vec![0.0f32; total_floats];
         // Safety: copying raw LE bytes into f32 slice; both are 4-byte aligned in the Vec
-        let dst = unsafe {
-            std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, total_bytes)
-        };
+        let dst =
+            unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, total_bytes) };
         dst.copy_from_slice(&buffer[base_offset..base_offset + total_bytes]);
         return Ok(result);
     }
@@ -349,9 +348,8 @@ fn read_accessor_as_array<const N: usize>(
             });
         }
         let mut result = vec![[0.0f32; N]; accessor.count];
-        let dst = unsafe {
-            std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, total_bytes)
-        };
+        let dst =
+            unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, total_bytes) };
         dst.copy_from_slice(&buffer[base_offset..base_offset + total_bytes]);
         return Ok(result);
     }
