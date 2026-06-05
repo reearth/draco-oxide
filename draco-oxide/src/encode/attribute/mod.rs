@@ -69,13 +69,23 @@ where
 
         let ty = att.get_attribute_type();
         let len = att.len();
+        let mut enc_cfg = attribute_encoder::Config::default_for(ty, len);
+        // If the caller supplied an explicit-quantization entry for this
+        // attribute type via encode::Config::set_attribute_explicit_quantization,
+        // thread it down into the nested portabilization::Config.
+        if let Some(eq) = cfg.explicit_quantization.get(&ty) {
+            if let Some(group) = enc_cfg.group_cfgs.first_mut() {
+                group.prediction_transform.portabilization.explicit_quantization =
+                    Some(eq.clone());
+            }
+        }
         let encoder = attribute_encoder::AttributeEncoder::new(
             att,
             i,
             &parents,
             &conn_out,
             writer,
-            attribute_encoder::Config::default_for(ty, len),
+            enc_cfg,
         );
 
         let port_att = encoder.encode::<true, false>()?;

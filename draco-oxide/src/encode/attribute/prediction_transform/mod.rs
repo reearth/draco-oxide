@@ -130,7 +130,7 @@ impl PredictionTransformType {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Config {
     pub ty: PredictionTransformType,
     #[allow(unused)]

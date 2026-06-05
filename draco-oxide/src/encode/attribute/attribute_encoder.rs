@@ -134,7 +134,7 @@ impl GroupConfig {
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    group_cfgs: Vec<GroupConfig>,
+    pub(crate) group_cfgs: Vec<GroupConfig>,
     rans_encoding: bool,
 }
 
@@ -308,7 +308,16 @@ where
         NdVector<N, i32>: Vector<N, Component = i32>,
         NdVector<N, f32>: Vector<N, Component = f32> + Portable,
     {
-        let por_cfg = portabilization::Config::default_for(self.att.get_attribute_type());
+        let mut por_cfg = portabilization::Config::default_for(self.att.get_attribute_type());
+        // Inherit caller-supplied explicit quantization from the
+        // attribute_encoder::Config if set. This is the channel that lets
+        // encode::Config's per-attribute explicit_quantization map reach
+        // the QuantizationCoordinateWise constructor.
+        if let Some(group) = self.cfg.group_cfgs.first() {
+            if let Some(ref eq) = group.prediction_transform.portabilization.explicit_quantization {
+                por_cfg.explicit_quantization = Some(eq.clone());
+            }
+        }
 
         let mut att = Attribute::new(
             Vec::<Data>::new(),
@@ -370,7 +379,8 @@ where
         );
 
         // Transform the predicted values
-        let mut transform = PredictionTransform::new(self.cfg.group_cfgs[0].prediction_transform);
+        let mut transform =
+            PredictionTransform::new(self.cfg.group_cfgs[0].prediction_transform.clone());
 
         // Predict and transform the values
         let mut sequence_record = Vec::new();

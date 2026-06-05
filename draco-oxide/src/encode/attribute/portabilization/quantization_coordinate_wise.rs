@@ -26,44 +26,67 @@ where
     where
         W: ByteWriter,
     {
-        let mut min_values = NdVector::<N, f32>::zero();
-        for val in att.unique_vals_as_slice::<Data>() {
-            for i in 0..N {
-                let component = val.get(i).to_f64() as f32;
-                if component < *min_values.get(i) {
-                    *min_values.get_mut(i) = component;
+        let (min_values, range_size, quantization_bits) = match cfg.explicit_quantization {
+            Some(eq) => {
+                // Caller-supplied lattice — skip the per-mesh scan and use the
+                // values directly. The bitstream metadata slot is unchanged;
+                // only the source of the values differs.
+                assert_eq!(
+                    eq.origin.len(),
+                    N,
+                    "ExplicitQuantization.origin.len() ({}) must equal attribute num_components ({})",
+                    eq.origin.len(),
+                    N,
+                );
+                let mut min_values = NdVector::<N, f32>::zero();
+                for i in 0..N {
+                    *min_values.get_mut(i) = eq.origin[i];
                 }
+                (min_values, eq.range, eq.quantization_bits)
             }
-        }
-
-        let mut max_values = NdVector::<N, f32>::zero();
-        for val in att.unique_vals_as_slice::<Data>() {
-            for i in 0..N {
-                let component = val.get(i).to_f64() as f32;
-                if component > *max_values.get(i) {
-                    *max_values.get_mut(i) = component;
+            None => {
+                // Per-mesh scan — original behavior.
+                let mut min_values = NdVector::<N, f32>::zero();
+                for val in att.unique_vals_as_slice::<Data>() {
+                    for i in 0..N {
+                        let component = val.get(i).to_f64() as f32;
+                        if component < *min_values.get(i) {
+                            *min_values.get_mut(i) = component;
+                        }
+                    }
                 }
-            }
-        }
 
-        let mut delta_max = 0.0;
-        for i in 0..N {
-            let delta = *max_values.get(i) - *min_values.get(i);
-            if delta > delta_max {
-                delta_max = delta;
+                let mut max_values = NdVector::<N, f32>::zero();
+                for val in att.unique_vals_as_slice::<Data>() {
+                    for i in 0..N {
+                        let component = val.get(i).to_f64() as f32;
+                        if component > *max_values.get(i) {
+                            *max_values.get_mut(i) = component;
+                        }
+                    }
+                }
+
+                let mut delta_max = 0.0;
+                for i in 0..N {
+                    let delta = *max_values.get(i) - *min_values.get(i);
+                    if delta > delta_max {
+                        delta_max = delta;
+                    }
+                }
+                (min_values, delta_max, cfg.quantization_bits)
             }
-        }
+        };
 
         // write metadata
         min_values.write_to(writer);
-        delta_max.write_to(writer);
-        writer.write_u8(cfg.quantization_bits);
+        range_size.write_to(writer);
+        writer.write_u8(quantization_bits);
 
         Self {
             att,
-            range_size: delta_max,
+            range_size,
             min_values,
-            quantization_bits: cfg.quantization_bits,
+            quantization_bits,
             _phantom: std::marker::PhantomData,
         }
     }

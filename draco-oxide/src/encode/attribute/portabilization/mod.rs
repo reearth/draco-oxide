@@ -108,10 +108,31 @@ impl PortabilizationType {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+/// Caller-supplied explicit quantization parameters. When set on a
+/// [`Config`], the encoder skips its per-mesh min/max scan and uses these
+/// values directly. Two encodes with the same `(origin, range,
+/// quantization_bits)` and the same input vertex produce bit-identical
+/// bitstream bytes for that vertex — the property tiled-output emitters
+/// need for cross-tile vertex determinism.
+///
+/// Mirrors the `quantization_origin` + `quantization_range` +
+/// `quantization_bits` option triple in upstream Draco C++'s `Encoder` /
+/// `ExpertEncoder` (see `src/draco/compression/encode.cc:71-79`).
+/// `range` is a single scalar applied to all components (cube anchored at
+/// `origin` with edge length `range`, not an axis-aligned box); input
+/// values must lie in `[origin[i], origin[i] + range]` for every i.
+#[derive(Clone, Debug)]
+pub struct ExplicitQuantization {
+    pub origin: Vec<f32>,
+    pub range: f32,
+    pub quantization_bits: u8,
+}
+
+#[derive(Clone, Debug)]
 pub struct Config {
     pub type_: PortabilizationType,
     pub quantization_bits: u8,
+    pub explicit_quantization: Option<ExplicitQuantization>,
 }
 
 impl ConfigType for Config {
@@ -119,6 +140,7 @@ impl ConfigType for Config {
         Config {
             type_: PortabilizationType::QuantizationCoordinateWise,
             quantization_bits: 11,
+            explicit_quantization: None,
         }
     }
 }
@@ -129,14 +151,17 @@ impl Config {
             AttributeType::Normal => Config {
                 type_: PortabilizationType::OctahedralQuantization,
                 quantization_bits: 8,
+                explicit_quantization: None,
             },
             AttributeType::TextureCoordinate => Config {
                 type_: PortabilizationType::QuantizationCoordinateWise,
                 quantization_bits: 10,
+                explicit_quantization: None,
             },
             AttributeType::Custom => Config {
                 type_: PortabilizationType::ToBits,
                 quantization_bits: 11, // default quantization bits (not used for ToBits)
+                explicit_quantization: None,
             },
             _ => Self::default(),
         }
