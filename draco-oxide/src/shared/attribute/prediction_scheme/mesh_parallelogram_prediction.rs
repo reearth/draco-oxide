@@ -6,6 +6,12 @@ use crate::prelude::NdVector;
 
 pub struct MeshParallelogramPrediction<'parents, C, const N: usize> {
     corner_table: &'parents C,
+    // O(1) "has this vertex been processed yet" membership, replacing a linear
+    // scan of `vertices_up_till_now` on every predict (which made the encode
+    // loop O(corners^2)). Indexed by VertexIdx; `synced` tracks how much of the
+    // growing slice has already been folded in.
+    visited: Vec<bool>,
+    synced: usize,
 }
 
 impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N>
@@ -19,7 +25,11 @@ where
     type AdditionalDataForMetadata = ();
 
     fn new(_parents: &[&'parents Attribute], corner_table: &'parents C) -> Self {
-        Self { corner_table }
+        Self {
+            visited: vec![false; corner_table.num_vertices()],
+            synced: 0,
+            corner_table,
+        }
     }
 
     fn get_values_impossible_to_predict(
@@ -188,6 +198,14 @@ where
         vertices_up_till_now: &[VertexIdx],
         attribute: &Attribute,
     ) -> NdVector<N, i32> {
+        // Fold any vertices appended since the last call into the membership set.
+        // `vertices_up_till_now` only ever grows (it is the encoder's running
+        // sequence_record), so its tail beyond `synced` is exactly the new entries.
+        for &v in &vertices_up_till_now[self.synced..] {
+            self.visited[usize::from(v)] = true;
+        }
+        self.synced = vertices_up_till_now.len();
+
         // Find the the most recent opposite corner.
         // 'diagonal' is the vertex opposite to 'i', and 'a' and 'b' are the other points
         // so that 'a', 'i', 'b', and 'diagonal' form a parallelogram.
@@ -196,9 +214,9 @@ where
                 let opp_v = self.corner_table.vertex_idx(opp);
                 let next_v = self.corner_table.vertex_idx(self.corner_table.next(c));
                 let prev_v = self.corner_table.vertex_idx(self.corner_table.previous(c));
-                if vertices_up_till_now.contains(&opp_v)
-                    && vertices_up_till_now.contains(&next_v)
-                    && vertices_up_till_now.contains(&prev_v)
+                if self.visited[usize::from(opp_v)]
+                    && self.visited[usize::from(next_v)]
+                    && self.visited[usize::from(prev_v)]
                 {
                     // we found the opposite corner
                     [
