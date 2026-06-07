@@ -37,3 +37,9 @@ jobs:
       # and the integration `tests` crate. The cli/analyzer apps are excluded.
       - name: tests
         run: cargo test --workspace --exclude cli --exclude analyzer -- --nocapture
+
+      # The above run never enables `evaluation`, so the encoder's
+      # `#[cfg(feature = "evaluation")]` tests are compiled out. Cover them
+      # explicitly rather than relying on analyzer's feature unification.
+      - name: evaluation tests
+        run: cargo test -p draco-oxide --features evaluation -- --nocapture
