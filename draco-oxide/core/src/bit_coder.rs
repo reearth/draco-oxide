@@ -510,8 +510,8 @@ impl<I: DoubleEndedIterator<Item = u8>> ReverseByteReader for Rev<I> {
 #[cfg(test)]
 mod tests {
     use super::BitWriter;
-    use crate::{bit_coder::BitReader, buffer::*};
     use crate::bit_coder::ByteWriter;
+    use crate::{bit_coder::BitReader, buffer::*};
 
     #[test]
     fn test_writer_reader_msb_first() {

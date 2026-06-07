@@ -1,16 +1,14 @@
-use crate::types::{CornerIdx, Cross, Dot, VertexIdx};
-use crate::codec::attribute::geom::{
-    into_faithful_oct_quantization, octahedral_transform,
-};
+use crate::codec::attribute::geom::{into_faithful_oct_quantization, octahedral_transform};
 use crate::codec::entropy::rans::RabsCoder;
+use crate::types::{CornerIdx, Cross, Dot, VertexIdx};
 use crate::utils::bit_coder::leb128_write;
 
 use super::PredictionSchemeImpl;
-use crate::corner_table::GenericCornerTable;
 use crate::attribute::Attribute;
-use crate::types::Vector;
 use crate::attribute::AttributeType;
+use crate::corner_table::GenericCornerTable;
 use crate::types::NdVector;
+use crate::types::Vector;
 
 pub struct MeshNormalPrediction<'parents, C, const N: usize> {
     corner_table: &'parents C,

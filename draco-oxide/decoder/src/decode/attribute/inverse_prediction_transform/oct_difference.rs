@@ -1,13 +1,13 @@
 use super::InversePredictionTransformImpl;
 use crate::decode::attribute::portabilization::{Deportabilization, DeportabilizationImpl};
-use crate::shared::attribute::geom::{
+use draco_oxide_core::codec::attribute::geom::{
     octahedral_inverse_transform, 
     octahedral_transform
 };
-use crate::core::shared::{
+use draco_oxide_core::types::{
     NdVector, Vector
 };
-use crate::prelude::ByteReader;
+use draco_oxide_core::bit_coder::ByteReader;
 
 pub struct OctahedronDifferenceInverseTransform<Data> 
     where Data: Vector,
@@ -66,11 +66,11 @@ where
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-//     use crate::core::shared::NdVector;
+//     use draco_oxide_core::types::NdVector;
 //     use crate::encode::attribute::portabilization;
 //     use crate::encode::attribute::prediction_transform::oct_difference::OctahedronDifferenceTransform;
 //     use crate::encode::attribute::prediction_transform::PredictionTransformImpl;
-//     use crate::core::shared::ConfigType;
+//     use draco_oxide_core::types::ConfigType;
 
 //     #[test]
 //     fn test_transform() {

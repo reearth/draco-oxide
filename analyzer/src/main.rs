@@ -2,16 +2,16 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
-use draco_oxide::eval;
-use draco_oxide::io::gltf::GltfTranscoder;
 #[allow(unused_imports)]
 use draco_oxide::core::{
     attribute::{Attribute, AttributeType},
     bit_coder::{ByteReader, ByteWriter, FunctionalByteReader, FunctionalByteWriter},
-    mesh::{builder::MeshBuilder, Mesh},
+    mesh::{Mesh, builder::MeshBuilder},
     types::{ConfigType, DataValue, NdVector, Vector},
 };
 use draco_oxide::encode::{self, encode};
+use draco_oxide::eval;
+use draco_oxide::io::gltf::GltfTranscoder;
 
 use chrono::Local;
 use clap::Parser;

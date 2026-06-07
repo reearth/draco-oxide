@@ -1,7 +1,7 @@
-use crate::corner_table::GenericCornerTable;
-use crate::corner_table::CornerTable;
-use crate::types::{AttributeValueIdx, CornerIdx, VecVertexIdx, VertexIdx};
 use crate::attribute::Attribute;
+use crate::corner_table::CornerTable;
+use crate::corner_table::GenericCornerTable;
+use crate::types::{AttributeValueIdx, CornerIdx, VecVertexIdx, VertexIdx};
 
 #[derive(Debug, Clone)]
 pub struct AttributeCornerTable {
@@ -167,11 +167,7 @@ impl AttributeCornerTable {
     }
 
     #[allow(unused)]
-    pub fn swing_right(
-        &self,
-        corner: CornerIdx,
-        corner_table: &CornerTable,
-    ) -> Option<CornerIdx> {
+    pub fn swing_right(&self, corner: CornerIdx, corner_table: &CornerTable) -> Option<CornerIdx> {
         if let Some(corner) = self.opposite(self.previous(corner, corner_table), corner_table) {
             Some(self.previous(corner, corner_table))
         } else {
@@ -179,11 +175,7 @@ impl AttributeCornerTable {
         }
     }
 
-    pub fn swing_left(
-        &self,
-        corner: CornerIdx,
-        corner_table: &CornerTable,
-    ) -> Option<CornerIdx> {
+    pub fn swing_left(&self, corner: CornerIdx, corner_table: &CornerTable) -> Option<CornerIdx> {
         if let Some(corner) = self.opposite(self.next(corner, corner_table), corner_table) {
             Some(self.next(corner, corner_table))
         } else {

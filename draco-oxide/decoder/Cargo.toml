@@ -1,0 +1,16 @@
+[package]
+name = "draco-oxide-decoder"
+description = "Decoder for draco-oxide (work in progress): decompresses draco-encoded geometry into the draco-oxide-core mesh model."
+authors = ["Re:Earth Contributors"]
+edition = "2021"
+rust-version = "1.84"
+version = "0.1.0-alpha.5"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/reearth/draco-oxide"
+repository = "https://github.com/reearth/draco-oxide"
+
+[dependencies]
+draco-oxide-core = { path = "../core", version = "0.1.0-alpha.5" }
+thiserror = "2.0.12"
+remain = "0.2.15"
+enum_dispatch = "0.3.13"

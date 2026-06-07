@@ -22,10 +22,7 @@ where
     /// * `corner_table` - A reference to the corner table to traverse.
     /// * `corners_of_edgebreaker_traversal` - A vector of corner indices
     ///   representing the last-encoded corners for connected components in encoded order.
-    pub fn new(
-        corner_table: &'ct T,
-        corners_of_edgebreaker_traversal: Vec<CornerIdx>,
-    ) -> Self {
+    pub fn new(corner_table: &'ct T, corners_of_edgebreaker_traversal: Vec<CornerIdx>) -> Self {
         Self {
             visited_vertices: vec![false; corner_table.num_vertices()],
             visited_faces: vec![false; corner_table.num_faces()],

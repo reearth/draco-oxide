@@ -1,10 +1,10 @@
-use draco_oxide_core::types::ConfigType;
-use draco_oxide_core::types::PointIdx;
-use draco_oxide_core::debug_write;
 use crate::encode::connectivity::ConnectivityEncoder;
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::connectivity::sequential::index_size_from_vertex_count;
 use draco_oxide_core::codec::connectivity::sequential::Method;
+use draco_oxide_core::debug_write;
+use draco_oxide_core::types::ConfigType;
+use draco_oxide_core::types::PointIdx;
 use draco_oxide_core::utils::bit_coder::leb128_write;
 
 pub(crate) struct Sequential {

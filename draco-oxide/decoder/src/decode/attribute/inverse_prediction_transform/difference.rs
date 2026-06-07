@@ -1,10 +1,10 @@
-use crate::core::shared::Vector; 
+use draco_oxide_core::types::Vector; 
 use crate::decode::attribute::portabilization::{
     Deportabilization, 
     DeportabilizationImpl
 };
-use crate::prelude::ByteReader;
-use crate::shared::attribute::Portable;
+use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::codec::attribute::Portable;
 
 use super::InversePredictionTransformImpl;
 
@@ -54,7 +54,7 @@ impl<Data> InversePredictionTransformImpl for DifferenceInverseTransform<Data>
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-//     use crate::core::shared::NdVector;
+//     use draco_oxide_core::types::NdVector;
 //     use crate::encode::attribute::portabilization;
 //     use crate::encode::attribute::prediction_transform::FinalMetadata;
 //     use crate::encode::attribute::prediction_transform::{
@@ -62,7 +62,7 @@ impl<Data> InversePredictionTransformImpl for DifferenceInverseTransform<Data>
 //         PredictionTransformImpl
 //     };
 //     use crate::decode::attribute::prediction_inverse_transform::InversePredictionTransformImpl;
-//     use crate::core::shared::ConfigType;
+//     use draco_oxide_core::types::ConfigType;
 
 //     #[test]
 //     fn test_transform() {

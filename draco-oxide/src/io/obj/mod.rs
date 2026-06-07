@@ -1,8 +1,8 @@
 use draco_oxide_core::attribute::AttributeDomain;
 // use tobj to load the obj file and convert it to our internal mesh representation
-use draco_oxide_core::mesh::Mesh;
 use draco_oxide_core::attribute::AttributeType;
 use draco_oxide_core::mesh::builder::MeshBuilder;
+use draco_oxide_core::mesh::Mesh;
 use draco_oxide_core::types::NdVector;
 use std::fmt::Debug;
 use std::path::Path;

@@ -5,9 +5,7 @@ use std::usize;
 use thiserror::Error;
 
 use super::Mesh;
-use crate::attribute::{
-    Attribute, AttributeDomain, AttributeId, AttributeType, ComponentDataType,
-};
+use crate::attribute::{Attribute, AttributeDomain, AttributeId, AttributeType, ComponentDataType};
 use crate::types::{PointIdx, VecPointIdx, Vector};
 
 pub struct MeshBuilder {

@@ -1,16 +1,18 @@
 use std::{cmp, fmt};
 
+use crate::encode::entropy::symbol_coding::encode_symbols;
+use draco_oxide_core::attribute::{Attribute, AttributeType};
 use draco_oxide_core::bit_coder::{BitWriter, ByteWriter};
 use draco_oxide_core::buffer::LsbFirst;
+use draco_oxide_core::codec::connectivity::edgebreaker::symbol_encoder::{
+    CrLight, Symbol, SymbolEncoder,
+};
+use draco_oxide_core::codec::entropy::rans::{self, RabsCoder};
 use draco_oxide_core::corner_table::all_inclusive_corner_table::AllInclusiveCornerTable;
 use draco_oxide_core::corner_table::attribute_corner_table::AttributeCornerTable;
 use draco_oxide_core::corner_table::CornerTable;
 use draco_oxide_core::corner_table::GenericCornerTable;
 use draco_oxide_core::debug_write;
-use draco_oxide_core::codec::entropy::rans::{self, RabsCoder};
-use crate::encode::entropy::symbol_coding::encode_symbols;
-use draco_oxide_core::attribute::{Attribute, AttributeType};
-use draco_oxide_core::codec::connectivity::edgebreaker::symbol_encoder::{CrLight, Symbol, SymbolEncoder};
 
 use draco_oxide_core::types::{
     ConfigType, CornerIdx, FaceIdx, PointIdx, VecFaceIdx, VecVertexIdx, VertexIdx,

@@ -1,11 +1,11 @@
 use super::PredictionSchemeImpl;
-use crate::corner_table::GenericCornerTable;
-use crate::types::{CornerIdx, PointIdx, VertexIdx};
 use crate::attribute::Attribute;
-use crate::types::{Dot, Vector};
-use crate::codec::entropy::rans::RabsCoder;
 use crate::bit_coder::ByteWriter;
+use crate::codec::entropy::rans::RabsCoder;
+use crate::corner_table::GenericCornerTable;
 use crate::types::NdVector;
+use crate::types::{CornerIdx, PointIdx, VertexIdx};
+use crate::types::{Dot, Vector};
 use crate::utils::bit_coder::leb128_write;
 
 pub struct MeshPredictionForTextureCoordinates<'parents, C, const N: usize> {

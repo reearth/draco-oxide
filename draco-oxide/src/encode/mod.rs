@@ -5,9 +5,9 @@ pub(crate) mod header;
 pub(crate) mod metadata;
 
 use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::debug_write;
 use draco_oxide_core::mesh::Mesh;
 use draco_oxide_core::types::ConfigType;
-use draco_oxide_core::debug_write;
 use thiserror::Error;
 
 #[cfg(feature = "evaluation")]

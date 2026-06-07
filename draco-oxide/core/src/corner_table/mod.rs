@@ -3,10 +3,10 @@ pub mod attribute_corner_table;
 
 use std::collections::BTreeMap;
 
+use crate::attribute::Attribute;
 use crate::types::{
     AttributeValueIdx, CornerIdx, FaceIdx, PointIdx, VecCornerIdx, VecVertexIdx, VertexIdx,
 };
-use crate::attribute::Attribute;
 
 pub trait GenericCornerTable {
     fn face_idx_containing(&self, corner: CornerIdx) -> FaceIdx;

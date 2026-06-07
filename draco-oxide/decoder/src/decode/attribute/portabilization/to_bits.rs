@@ -36,7 +36,7 @@ impl<Data> DeportabilizationImpl<Data> for ToBits<Data>
 /* crate-split: round-trip test depends on encode; disabled while decode is WIP
 #[cfg(all(test, not(feature = "evaluation")))]
 mod tests {
-    use crate::core::shared::NdVector;
+    use draco_oxide_core::types::NdVector;
     use crate::decode::attribute::portabilization::Deportabilization;
     use crate::encode::attribute::portabilization::{Portabilization, PortabilizationImpl, PortabilizationType, Resolution}; 
     use crate::encode::attribute::portabilization::Config;

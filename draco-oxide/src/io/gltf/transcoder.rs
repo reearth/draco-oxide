@@ -3,11 +3,11 @@
 //! This transcoder compresses geometry while preserving all other glTF data
 //! (materials, textures, animations, extensions) unchanged.
 
+use crate::encode::Config as DracoConfig;
 use draco_oxide_core::attribute::{AttributeDomain, AttributeType};
 use draco_oxide_core::mesh::builder::MeshBuilder;
-use draco_oxide_core::types::NdVector;
-use crate::encode::Config as DracoConfig;
 use draco_oxide_core::types::ConfigType;
+use draco_oxide_core::types::NdVector;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;

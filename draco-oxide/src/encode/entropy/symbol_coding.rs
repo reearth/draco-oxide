@@ -1,7 +1,7 @@
-use draco_oxide_core::codec::entropy::rans;
 use draco_oxide_core::bit_coder::BitWriter;
-use draco_oxide_core::codec::entropy::rans::RansSymbolEncoder;
 use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::codec::entropy::rans;
+use draco_oxide_core::codec::entropy::rans::RansSymbolEncoder;
 use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]

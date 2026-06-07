@@ -1,9 +1,9 @@
-use crate::core::bit_coder::ReaderErr;
-use crate::debug_expect;
-use crate::prelude::ByteReader;
-use crate::shared::connectivity::sequential::{index_size_from_vertex_count, Method};
-use crate::core::shared::VertexIdx;
-use crate::utils::bit_coder::leb128_read;
+use draco_oxide_core::bit_coder::ReaderErr;
+use draco_oxide_core::debug_expect;
+use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::codec::connectivity::sequential::{index_size_from_vertex_count, Method};
+use draco_oxide_core::types::VertexIdx;
+use draco_oxide_core::utils::bit_coder::leb128_read;
 use super::ConnectivityDecoder;
 
 #[derive(thiserror::Error, Debug)]
@@ -77,12 +77,12 @@ impl ConnectivityDecoder for Sequential {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::attribute::AttributeId;
+    use draco_oxide_core::attribute::AttributeId;
     use crate::encode::connectivity::ConnectivityEncoder;
     use crate::encode;
-    use crate::core::shared::{NdVector, Vector};
+    use draco_oxide_core::types::{NdVector, Vector};
     use crate::prelude::{Attribute, AttributeType};
-    use crate::shared::connectivity::sequential;
+    use draco_oxide_core::codec::connectivity::sequential;
 
 
     #[test]

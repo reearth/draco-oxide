@@ -1,8 +1,8 @@
 use crate::attribute::Attribute;
-use crate::corner_table::GenericCornerTable;
-use crate::types::{CornerIdx, Vector, VertexIdx};
-use crate::types::NdVector;
 use crate::codec::attribute::prediction_scheme::PredictionSchemeImpl;
+use crate::corner_table::GenericCornerTable;
+use crate::types::NdVector;
+use crate::types::{CornerIdx, Vector, VertexIdx};
 
 pub struct MeshMultiParallelogramPrediction<'parents, C, const N: usize> {
     #[allow(unused)] // TODO: Remove this field when the implementation is complete

@@ -1,7 +1,7 @@
 use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
 use crate::corner_table::GenericCornerTable;
-use crate::types::{CornerIdx, VertexIdx, NdVector, Vector};
+use crate::types::{CornerIdx, NdVector, Vector, VertexIdx};
 use std::mem;
 
 pub struct DeltaPrediction<'parents, C, const N: usize> {

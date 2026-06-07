@@ -1,22 +1,22 @@
 use std::collections::HashMap;
 use std::{cmp, vec, mem};
 use std::io::Read;
-use crate::core::bit_coder::ReaderErr;
-use crate::core::corner_table::CornerTable;
+use draco_oxide_core::bit_coder::ReaderErr;
+use draco_oxide_core::corner_table::CornerTable;
 use crate::decode::entropy::rans::{self, RabsDecoder, RansDecoder};
 use crate::eval::ConnectivityEncoder;
 use crate::{debug_expect, shared};
 use crate::decode::connectivity::ConnectivityDecoder;
-use crate::core::shared::VertexIdx;
-use crate::shared::attribute::Portable;
+use draco_oxide_core::types::VertexIdx;
+use draco_oxide_core::codec::attribute::Portable;
 
 use crate::prelude::{BitReader, ByteReader};
-use crate::shared::connectivity::edgebreaker::symbol_encoder::{
+use draco_oxide_core::codec::connectivity::edgebreaker::symbol_encoder::{
     CrLight, Rans, Symbol, SymbolEncoder, SymbolEncodingConfig
 };
-use crate::utils::bit_coder::leb128_read;
+use draco_oxide_core::utils::bit_coder::leb128_read;
 
-use crate::shared::connectivity::edgebreaker::{
+use draco_oxide_core::codec::connectivity::edgebreaker::{
     edge_shared_by, orientation_of_next_face, Orientation, TopologySplit, Traversal
 };
 
@@ -1101,10 +1101,10 @@ impl ConnectivityDecoder for SpiraleReversi {
 #[cfg(not(feature = "evaluation"))]
 #[cfg(test)]
 mod tests {
-    use crate::core::attribute::AttributeId;
+    use draco_oxide_core::attribute::AttributeId;
     use crate::encode::connectivity::edgebreaker::Config;
     use crate::encode::connectivity::{edgebreaker, ConnectivityEncoder};
-    use crate::core::shared::{
+    use draco_oxide_core::types::{
         ConfigType, NdVector, Vector
     };
     use crate::prelude::{Attribute, AttributeType};

@@ -1,7 +1,6 @@
-use crate::core::bit_coder::ReaderErr; 
-use crate::prelude::ByteReader;
-use crate::utils::bit_coder::leb128_read;
-
+use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::bit_coder::ReaderErr;
+use draco_oxide_core::utils::bit_coder::leb128_read;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Err {
@@ -22,7 +21,8 @@ pub struct SubMetadata {
 
 impl SubMetadata {
     pub fn read_from<W>(reader: &mut W) -> Result<Self, Err>
-    where W: ByteReader,
+    where
+        W: ByteReader,
     {
         let key_length = reader.read_u8()?;
         let mut key = vec![0; key_length as usize];
@@ -47,7 +47,8 @@ pub struct AttributeMetadata {
 
 impl AttributeMetadata {
     pub fn read_from<W>(reader: &mut W) -> Result<Self, Err>
-    where W: ByteReader,
+    where
+        W: ByteReader,
     {
         let key_length = reader.read_u8()?;
         let mut key = vec![0; key_length as usize];
@@ -83,12 +84,13 @@ impl AttributeMetadata {
 }
 
 pub fn decode_metadata<W>(reader: &mut W) -> Result<Metadata, Err>
-    where W: ByteReader,
+where
+    W: ByteReader,
 {
     let num_metadata = reader.read_u32()?;
     let mut metadta_id = Vec::with_capacity(num_metadata as usize);
     let mut metadata = Vec::new();
-    metadata.resize(num_metadata as usize, AttributeMetadata::empty_metadta()); 
+    metadata.resize(num_metadata as usize, AttributeMetadata::empty_metadta());
     for _ in 0..num_metadata {
         metadta_id.push(leb128_read(reader)?);
         metadata[*metadta_id.last().unwrap() as usize] = AttributeMetadata::read_from(reader)?;

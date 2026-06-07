@@ -1,4 +1,7 @@
-use crate::{debug_expect, prelude::{ByteReader, ConfigType}, Mesh};
+use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::debug_expect;
+use draco_oxide_core::mesh::Mesh;
+use draco_oxide_core::types::ConfigType;
 
 mod header;
 mod metadata;
@@ -6,19 +9,18 @@ mod metadata;
 // mod attribute;
 mod entropy;
 
-pub fn decode<W>(reader: &mut W, cfg: Config) -> Result<Mesh, Err> 
-    where W: ByteReader
+pub fn decode<W>(reader: &mut W, cfg: Config) -> Result<Mesh, Err>
+where
+    W: ByteReader,
 {
     // Decode header
-    let header = header::decode_header(reader)
-        .map_err(|r| Err::HeaderError(r))?;
+    let header = header::decode_header(reader).map_err(|r| Err::HeaderError(r))?;
 
     debug_expect!("Header done, now starting metadata.", reader);
 
     // Decode metadata
     if header.contains_metadata {
-        let metadata  = metadata::decode_metadata(reader)
-            .map_err(|r| Err::MetadataError(r))?;
+        let metadata = metadata::decode_metadata(reader).map_err(|r| Err::MetadataError(r))?;
     }
 
     debug_expect!("Metadata done, now starting connectivity.", reader);
@@ -44,7 +46,6 @@ pub fn decode<W>(reader: &mut W, cfg: Config) -> Result<Mesh, Err>
     Ok(mesh)
 }
 
-
 #[derive(Debug, Clone)]
 pub struct Config {
     // attribute_decoder_cfg: attribute::Config,
@@ -58,7 +59,6 @@ impl ConfigType for Config {
     }
 }
 
-
 #[remain::sorted]
 #[derive(thiserror::Error, Debug)]
 pub enum Err {
@@ -71,4 +71,3 @@ pub enum Err {
     #[error("Metadata encoding error")]
     MetadataError(#[from] metadata::Err),
 }
-

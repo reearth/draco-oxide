@@ -13,6 +13,7 @@ readme = "../README.md"
 
 [dependencies]
 draco-oxide-core = { path = "core", version = "0.1.0-alpha.5" }
+draco-oxide-decoder = { path = "decoder", version = "0.1.0-alpha.5", optional = true }
 enum_dispatch = "0.3.13"
 remain = "0.2.15"
 serde_json = "1.0"
@@ -22,6 +23,7 @@ gltf = { version = "1.4", features = ["extensions", "guess_mime_type", "image", 
 image = { version = "0.25", features = ["webp"] }
 
 [features]
-default = []
+default = ["decoder"]
+decoder = ["dep:draco-oxide-decoder"]
 evaluation = []
 debug_format = []

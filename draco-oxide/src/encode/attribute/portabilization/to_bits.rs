@@ -1,10 +1,10 @@
-use draco_oxide_core::attribute::ComponentDataType;
-use draco_oxide_core::types::DataValue;
-use draco_oxide_core::types::{AttributeValueIdx, Vector};
 use draco_oxide_core::attribute::Attribute;
+use draco_oxide_core::attribute::ComponentDataType;
 use draco_oxide_core::bit_coder::ByteWriter;
-use draco_oxide_core::types::NdVector;
 use draco_oxide_core::codec::attribute::Portable;
+use draco_oxide_core::types::DataValue;
+use draco_oxide_core::types::NdVector;
+use draco_oxide_core::types::{AttributeValueIdx, Vector};
 
 #[cfg(feature = "evaluation")]
 use crate::eval;

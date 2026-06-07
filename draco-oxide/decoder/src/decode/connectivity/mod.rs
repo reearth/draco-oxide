@@ -1,12 +1,12 @@
 mod sequential;
 mod spirale_reversi;
-use crate::core::bit_coder::ReaderErr;
-use crate::core::shared::{FaceIdx, VertexIdx}; 
-use crate::debug_expect;
+use draco_oxide_core::bit_coder::ReaderErr;
+use draco_oxide_core::types::{FaceIdx, VertexIdx}; 
+use draco_oxide_core::debug_expect;
 use crate::decode::header::Header;
-use crate::prelude::ByteReader;
-use crate::shared::connectivity::EdgebreakerDecoder;
-use crate::shared::header::EncoderMethod;
+use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::codec::connectivity::EdgebreakerDecoder;
+use draco_oxide_core::codec::header::EncoderMethod;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Err {

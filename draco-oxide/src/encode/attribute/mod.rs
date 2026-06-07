@@ -9,8 +9,8 @@ use crate::eval;
 
 use draco_oxide_core::attribute::Attribute;
 use draco_oxide_core::bit_coder::ByteWriter;
-use draco_oxide_core::types::ConfigType;
 use draco_oxide_core::codec::connectivity::edgebreaker::TraversalType;
+use draco_oxide_core::types::ConfigType;
 
 pub fn encode_attributes<W>(
     atts: Vec<Attribute>,

@@ -1,7 +1,7 @@
-use crate::core::bit_coder::ReaderErr;
+use draco_oxide_core::bit_coder::ReaderErr;
 use crate::{core::shared::Vector, prelude::ByteReader}; 
-use crate::debug_expect;
-use crate::shared::attribute::Portable;
+use draco_oxide_core::debug_expect;
+use draco_oxide_core::codec::attribute::Portable;
 
 use super::portabilization::{Deportabilization, DeportabilizationImpl};
 

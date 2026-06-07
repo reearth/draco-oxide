@@ -1,7 +1,7 @@
 use super::PredictionTransformImpl;
-use draco_oxide_core::types::Vector;
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::types::NdVector;
+use draco_oxide_core::types::Vector;
 use draco_oxide_core::utils::to_positive_i32_vec;
 
 #[cfg(feature = "evaluation")]

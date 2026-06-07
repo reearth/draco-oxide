@@ -4,9 +4,9 @@ use kiddo::immutable::float::kdtree::ImmutableKdTree;
 use kiddo::SquaredEuclidean;
 
 use super::buffer;
+use crate::bit_coder::{ByteReader, ByteWriter};
 use crate::types::DataValue;
 use crate::types::{AttributeValueIdx, PointIdx, VecPointIdx, Vector};
-use crate::bit_coder::{ByteReader, ByteWriter};
 
 fn vector_to_f64_array<Data: Vector<N>, const N: usize>(v: &Data) -> [f64; N] {
     let mut out = [0.0f64; N];

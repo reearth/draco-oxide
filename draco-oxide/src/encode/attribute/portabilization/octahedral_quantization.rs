@@ -1,12 +1,12 @@
-use draco_oxide_core::types::AttributeValueIdx;
-use draco_oxide_core::types::Vector;
-use draco_oxide_core::codec::attribute::geom::into_faithful_oct_quantization;
-use draco_oxide_core::codec::attribute::geom::octahedral_transform;
 use draco_oxide_core::attribute::Attribute;
 use draco_oxide_core::attribute::AttributeType;
 use draco_oxide_core::bit_coder::ByteWriter;
-use draco_oxide_core::types::NdVector;
+use draco_oxide_core::codec::attribute::geom::into_faithful_oct_quantization;
+use draco_oxide_core::codec::attribute::geom::octahedral_transform;
 use draco_oxide_core::codec::attribute::Portable;
+use draco_oxide_core::types::AttributeValueIdx;
+use draco_oxide_core::types::NdVector;
+use draco_oxide_core::types::Vector;
 
 use super::Config;
 use super::PortabilizationImpl;

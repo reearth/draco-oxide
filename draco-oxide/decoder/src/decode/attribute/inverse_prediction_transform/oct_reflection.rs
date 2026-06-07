@@ -1,11 +1,11 @@
 use std::result::Result;
 
 use super::InversePredictionTransformImpl;
-use crate::core::shared::{DataValue, NdVector, Vector}; 
+use draco_oxide_core::types::{DataValue, NdVector, Vector}; 
 use crate::decode::attribute::portabilization::{Deportabilization, DeportabilizationImpl};
-use crate::shared::attribute::geom::*;
-use crate::prelude::ByteReader;
-use crate::shared::attribute::Portable;
+use draco_oxide_core::codec::attribute::geom::*;
+use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::codec::attribute::Portable;
 
 pub(crate) struct OctahedronReflectionInverseTransform<Data> 
     where Data: Vector + Portable,

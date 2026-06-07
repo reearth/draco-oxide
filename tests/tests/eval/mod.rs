@@ -1,5 +1,3 @@
-use draco_oxide::eval::EvalWriter;
-use draco_oxide::io::obj::load_obj;
 #[allow(unused_imports)]
 use draco_oxide::core::{
     attribute::{Attribute, AttributeType},
@@ -8,6 +6,8 @@ use draco_oxide::core::{
     types::{ConfigType, DataValue, NdVector, Vector},
 };
 use draco_oxide::encode::{self, encode};
+use draco_oxide::eval::EvalWriter;
+use draco_oxide::io::obj::load_obj;
 use std::io::Write;
 
 const MESH_NAME: &str = "tetrahedron";

@@ -1,4 +1,6 @@
-use crate::corner_table::{attribute_corner_table::AttributeCornerTable, CornerTable, GenericCornerTable};
+use crate::corner_table::{
+    attribute_corner_table::AttributeCornerTable, CornerTable, GenericCornerTable,
+};
 use crate::types::{AttributeValueIdx, CornerIdx, FaceIdx, VecVertexIdx};
 
 /// All-inclusive corner table that contains the universal corner table and the attribute corner tables (if any).

@@ -1,14 +1,14 @@
 use std::ops;
 
-use crate::core::attribute::{
+use draco_oxide_core::attribute::{
     Attribute, AttributeId, AttributeType, ComponentDataType, MaybeInitAttribute 
 };
 
-use crate::core::bit_coder::ReaderErr;
-use crate::core::shared::{DataValue, NdVector, Vector};
-use crate::debug_expect;
+use draco_oxide_core::bit_coder::ReaderErr;
+use draco_oxide_core::types::{DataValue, NdVector, Vector};
+use draco_oxide_core::debug_expect;
 use crate::prelude::{ByteReader, ConfigType};
-use crate::shared::attribute::{prediction_scheme::PredictionScheme, Portable};
+use draco_oxide_core::codec::attribute::{prediction_scheme::PredictionScheme, Portable};
 
 use super::inverse_prediction_transform::InversePredictionTransform;
 

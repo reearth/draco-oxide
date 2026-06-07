@@ -1,9 +1,9 @@
 use super::PredictionSchemeImpl;
-use crate::corner_table::GenericCornerTable;
-use crate::types::{CornerIdx, VertexIdx};
 use crate::attribute::Attribute;
-use crate::types::Vector;
+use crate::corner_table::GenericCornerTable;
 use crate::types::NdVector;
+use crate::types::Vector;
+use crate::types::{CornerIdx, VertexIdx};
 
 pub struct MeshParallelogramPrediction<'parents, C, const N: usize> {
     corner_table: &'parents C,

@@ -1,17 +1,17 @@
 use std::{ops, vec};
 
-use draco_oxide_core::attribute::Attribute;
-use draco_oxide_core::attribute::{AttributeDomain, ComponentDataType};
-use draco_oxide_core::corner_table::GenericCornerTable;
-use draco_oxide_core::types::{CornerIdx, DataValue, NdVector};
 use crate::encode::connectivity::ConnectivityEncoderOutput;
 use crate::encode::entropy::symbol_coding::encode_symbols;
+use draco_oxide_core::attribute::Attribute;
 use draco_oxide_core::attribute::AttributeType;
+use draco_oxide_core::attribute::{AttributeDomain, ComponentDataType};
 use draco_oxide_core::bit_coder::ByteWriter;
-use draco_oxide_core::types::ConfigType;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::attribute::Portable;
 use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
+use draco_oxide_core::corner_table::GenericCornerTable;
+use draco_oxide_core::types::ConfigType;
+use draco_oxide_core::types::{CornerIdx, DataValue, NdVector};
 use thiserror::Error;
 
 #[cfg(feature = "evaluation")]
@@ -442,10 +442,10 @@ where
 }
 
 use super::prediction_transform::{self, PredictionTransform};
-use draco_oxide_core::types::Vector;
 use crate::encode::attribute::portabilization;
 use crate::encode::attribute::prediction_transform::PredictionTransformImpl;
 use draco_oxide_core::codec::attribute::prediction_scheme;
+use draco_oxide_core::types::Vector;
 
 // struct Group<'encoder, C, const N: usize>
 // {
