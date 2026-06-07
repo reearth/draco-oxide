@@ -19,6 +19,11 @@ pub mod encode;
 #[cfg(feature = "decoder")]
 pub use draco_oxide_decoder::decode;
 
+/// Cross-crate round-trip / integration tests relocated from `draco-oxide-core`
+/// and `draco-oxide-decoder` (they need the encoder + io + decoder together).
+#[cfg(test)]
+mod roundtrip_tests;
+
 /// Evaluation module contains the evaluation functions for the encoder and the decoder.
 /// When enabled, draco-oxide encoder will spit out the evaluation data mixed with encoded data,
 /// and then the `EvalWriter` is used to filter out the evaluation data. This functionality is

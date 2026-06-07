@@ -7,7 +7,7 @@ mod header;
 mod metadata;
 // mod connectivity;
 // mod attribute;
-mod entropy;
+pub mod entropy;
 
 pub fn decode<W>(reader: &mut W, cfg: Config) -> Result<Mesh, Err>
 where
