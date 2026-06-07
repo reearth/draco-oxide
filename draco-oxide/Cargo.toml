@@ -26,4 +26,6 @@ image = { version = "0.25", features = ["webp"] }
 default = ["decoder"]
 decoder = ["dep:draco-oxide-decoder"]
 evaluation = []
-debug_format = []
+# Forwards into core (always) and the decoder (only when the `decoder` feature
+# pulls it in) so debug output is enabled across every crate, not just here.
+debug_format = ["draco-oxide-core/debug_format", "draco-oxide-decoder?/debug_format"]

@@ -21,3 +21,9 @@ kiddo = "5.2.4"
 
 [dev-dependencies]
 faer = "0.22.6"
+
+[features]
+# Gates the `debug_write!` / `debug_expect!` macros (defined in `utils/debug`).
+# Resolved at each macro call site, so every crate that invokes them must
+# declare this feature; the `draco-oxide` encoder forwards into it.
+debug_format = []
