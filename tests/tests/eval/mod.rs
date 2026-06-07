@@ -1,6 +1,13 @@
 use draco_oxide::eval::EvalWriter;
 use draco_oxide::io::obj::load_obj;
-use draco_oxide::prelude::*;
+#[allow(unused_imports)]
+use draco_oxide::core::{
+    attribute::{Attribute, AttributeType},
+    bit_coder::{ByteReader, ByteWriter, FunctionalByteReader, FunctionalByteWriter},
+    mesh::{builder::MeshBuilder, Mesh},
+    types::{ConfigType, DataValue, NdVector, Vector},
+};
+use draco_oxide::encode::{self, encode};
 use std::io::Write;
 
 const MESH_NAME: &str = "tetrahedron";

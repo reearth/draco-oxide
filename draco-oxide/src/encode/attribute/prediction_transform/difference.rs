@@ -1,7 +1,8 @@
 use super::PredictionTransformImpl;
-use crate::core::shared::Vector;
-use crate::prelude::{ByteWriter, NdVector};
-use crate::utils::to_positive_i32_vec;
+use draco_oxide_core::types::Vector;
+use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::types::NdVector;
+use draco_oxide_core::utils::to_positive_i32_vec;
 
 #[cfg(feature = "evaluation")]
 use crate::eval;

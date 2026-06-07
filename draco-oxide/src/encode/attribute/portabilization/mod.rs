@@ -2,11 +2,12 @@ pub mod octahedral_quantization;
 pub mod quantization_coordinate_wise;
 pub mod to_bits;
 
-use crate::core::bit_coder::ByteWriter;
-use crate::core::shared::{ConfigType, Vector};
-use crate::debug_write;
-use crate::prelude::{Attribute, AttributeType, NdVector};
-use crate::shared::attribute::Portable;
+use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::types::{ConfigType, Vector};
+use draco_oxide_core::debug_write;
+use draco_oxide_core::attribute::{Attribute, AttributeType};
+use draco_oxide_core::types::NdVector;
+use draco_oxide_core::codec::attribute::Portable;
 
 pub enum Portabilization<Data, const N: usize>
 where

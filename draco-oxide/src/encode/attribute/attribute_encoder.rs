@@ -1,15 +1,17 @@
 use std::{ops, vec};
 
-use crate::core::attribute::Attribute;
-use crate::core::attribute::{AttributeDomain, ComponentDataType};
-use crate::core::corner_table::GenericCornerTable;
-use crate::core::shared::{CornerIdx, DataValue, NdVector};
+use draco_oxide_core::attribute::Attribute;
+use draco_oxide_core::attribute::{AttributeDomain, ComponentDataType};
+use draco_oxide_core::corner_table::GenericCornerTable;
+use draco_oxide_core::types::{CornerIdx, DataValue, NdVector};
 use crate::encode::connectivity::ConnectivityEncoderOutput;
 use crate::encode::entropy::symbol_coding::encode_symbols;
-use crate::prelude::{AttributeType, ByteWriter, ConfigType};
-use crate::shared::attribute::sequence::Traverser;
-use crate::shared::attribute::Portable;
-use crate::shared::entropy::SymbolEncodingMethod;
+use draco_oxide_core::attribute::AttributeType;
+use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::types::ConfigType;
+use draco_oxide_core::codec::attribute::sequence::Traverser;
+use draco_oxide_core::codec::attribute::Portable;
+use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
 use thiserror::Error;
 
 #[cfg(feature = "evaluation")]
@@ -34,7 +36,7 @@ pub enum Err {
     // ToDo: Change 5 to the build config
     UnsupportedNumComponents(usize),
     #[error("Prediction Error: {0}")]
-    PredictionError(#[from] crate::shared::attribute::prediction_scheme::Err),
+    PredictionError(#[from] draco_oxide_core::codec::attribute::prediction_scheme::Err),
 }
 
 #[derive(Clone, Debug)]
@@ -440,10 +442,10 @@ where
 }
 
 use super::prediction_transform::{self, PredictionTransform};
-use crate::core::shared::Vector;
+use draco_oxide_core::types::Vector;
 use crate::encode::attribute::portabilization;
 use crate::encode::attribute::prediction_transform::PredictionTransformImpl;
-use crate::shared::attribute::prediction_scheme;
+use draco_oxide_core::codec::attribute::prediction_scheme;
 
 // struct Group<'encoder, C, const N: usize>
 // {

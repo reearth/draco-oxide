@@ -1,4 +1,5 @@
-use crate::{core::bit_coder::ByteWriter, shared::header::EncoderMethod};
+use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::codec::header::EncoderMethod;
 
 #[remain::sorted]
 #[derive(thiserror::Error, Debug)]

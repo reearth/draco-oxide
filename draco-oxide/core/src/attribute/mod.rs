@@ -1,0 +1,942 @@
+use serde::Serialize;
+
+use kiddo::immutable::float::kdtree::ImmutableKdTree;
+use kiddo::SquaredEuclidean;
+
+use super::buffer;
+use crate::types::DataValue;
+use crate::types::{AttributeValueIdx, PointIdx, VecPointIdx, Vector};
+use crate::bit_coder::{ByteReader, ByteWriter};
+
+fn vector_to_f64_array<Data: Vector<N>, const N: usize>(v: &Data) -> [f64; N] {
+    let mut out = [0.0f64; N];
+    for (i, slot) in out.iter_mut().enumerate() {
+        *slot = (*v.get(i)).to_f64();
+    }
+    out
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Err {
+    /// Invalid attribute domain id
+    #[error("Invalid attribute domain id: {0}")]
+    InvalidAttributeDomainId(u8),
+    /// Reader error
+    #[error("Reader error: {0}")]
+    ReaderError(#[from] crate::bit_coder::ReaderErr),
+    #[error("Invalid DataTypeId: {0}")]
+    InvalidDataTypeId(u8),
+}
+
+/// Represents an attribute in a mesh. An attribute can be an array of values representing potisions
+/// of vertices, or it can be an array of values representing normals of vertices or corners, or faces.
+/// Note that the struct does not have the static type information, so the attribute value can be a
+/// vector of any type of any dimension, as long as it implements the `Vector` trait. The information about
+/// the type of the attribute, component type, and the number of components is stored in dynamically.
+#[derive(Debug, Clone)]
+pub struct Attribute {
+    /// attribute id
+    id: AttributeId,
+
+    /// attribute buffer
+    buffer: buffer::attribute::AttributeBuffer,
+
+    /// attribute type
+    att_type: AttributeType,
+
+    /// attribute domain
+    domain: AttributeDomain,
+
+    /// the reference of the parent, if any
+    parents: Vec<AttributeId>,
+
+    /// The optional mapping from point index to attribute value index.
+    /// If `None`, then the attribute is defined on the point level, i.e.
+    /// the i'th element in the attribute corresponds to the i'th point in the mesh.
+    point_to_att_val_map: Option<VecPointIdx<AttributeValueIdx>>,
+
+    /// name of the attribute, if any
+    name: Option<String>,
+}
+
+impl Attribute {
+    pub fn new<Data, const N: usize>(
+        data: Vec<Data>,
+        att_type: AttributeType,
+        domain: AttributeDomain,
+        parents: Vec<AttributeId>,
+    ) -> Self
+    where
+        Data: Vector<N>,
+    {
+        let id = AttributeId::new(0); // TODO: generate unique id
+        let buffer = buffer::attribute::AttributeBuffer::from_vec(data);
+        let mut out = Self {
+            id,
+            buffer,
+            parents,
+            att_type,
+            domain,
+            point_to_att_val_map: None,
+            name: None,
+        };
+        out.remove_duplicate_values::<Data, N>();
+        out
+    }
+
+    pub fn new_empty(
+        id: AttributeId,
+        att_type: AttributeType,
+        domain: AttributeDomain,
+        component_type: ComponentDataType,
+        num_components: usize,
+    ) -> Self {
+        let buffer = buffer::attribute::AttributeBuffer::new(component_type, num_components);
+        Self {
+            id,
+            buffer,
+            parents: Vec::new(),
+            att_type,
+            domain,
+            point_to_att_val_map: None,
+            name: None,
+        }
+    }
+
+    pub fn from<Data, const N: usize>(
+        id: AttributeId,
+        data: Vec<Data>,
+        att_type: AttributeType,
+        domain: AttributeDomain,
+        parents: Vec<AttributeId>,
+    ) -> Self
+    where
+        Data: Vector<N>,
+    {
+        let buffer = buffer::attribute::AttributeBuffer::from_vec(data);
+        let mut out = Self {
+            id,
+            buffer,
+            parents,
+            att_type,
+            domain,
+            point_to_att_val_map: None,
+            name: None,
+        };
+        out.remove_duplicate_values::<Data, N>();
+        out
+    }
+
+    pub fn from_without_removing_duplicates<Data, const N: usize>(
+        id: AttributeId,
+        data: Vec<Data>,
+        att_type: AttributeType,
+        domain: AttributeDomain,
+        parents: Vec<AttributeId>,
+    ) -> Self
+    where
+        Data: Vector<N>,
+    {
+        let buffer = buffer::attribute::AttributeBuffer::from_vec(data);
+        Self {
+            id,
+            buffer,
+            parents,
+            att_type,
+            domain,
+            point_to_att_val_map: None,
+            name: None,
+        }
+    }
+
+    pub fn get<Data, const N: usize>(&self, p_idx: PointIdx) -> Data
+    where
+        Data: Vector<N>,
+        Data::Component: DataValue,
+    {
+        self.buffer.get(self.get_unique_val_idx(p_idx))
+    }
+
+    pub fn get_unique_val<Data, const N: usize>(&self, val_idx: AttributeValueIdx) -> Data
+    where
+        Data: Vector<N>,
+        Data::Component: DataValue,
+    {
+        self.buffer.get(val_idx)
+    }
+
+    pub fn get_component_type(&self) -> ComponentDataType {
+        self.buffer.get_component_type()
+    }
+
+    #[inline]
+    #[allow(unused)]
+    pub fn set_component_type(&mut self, component_type: ComponentDataType) {
+        self.buffer.set_component_type(component_type);
+    }
+
+    #[inline]
+    #[allow(unused)]
+    pub fn set_num_components(&mut self, num_components: usize) {
+        self.buffer.set_num_components(num_components);
+    }
+
+    pub fn get_data_as_bytes(&self) -> &[u8] {
+        self.buffer.as_slice_u8()
+    }
+
+    #[inline]
+    #[allow(unused)]
+    pub fn get_as_bytes(&self, i: usize) -> &[u8] {
+        &self.buffer.as_slice_u8()[i
+            * self.buffer.get_num_components()
+            * self.buffer.get_component_type().size()
+            ..(i + 1) * self.buffer.get_num_components() * self.buffer.get_component_type().size()]
+    }
+
+    pub fn set_point_to_att_val_map(
+        &mut self,
+        point_to_att_val_map: Option<VecPointIdx<AttributeValueIdx>>,
+    ) {
+        self.point_to_att_val_map = point_to_att_val_map;
+    }
+
+    pub fn take_point_to_att_val_map(self) -> Option<VecPointIdx<AttributeValueIdx>> {
+        self.point_to_att_val_map
+    }
+
+    #[inline]
+    pub fn get_id(&self) -> AttributeId {
+        self.id
+    }
+
+    #[inline]
+    pub fn get_num_components(&self) -> usize {
+        self.buffer.get_num_components()
+    }
+
+    #[inline]
+    pub fn get_attribute_type(&self) -> AttributeType {
+        self.att_type
+    }
+
+    #[inline]
+    pub fn get_domain(&self) -> AttributeDomain {
+        self.domain
+    }
+
+    #[inline]
+    pub fn get_parents(&self) -> &Vec<AttributeId> {
+        self.parents.as_ref()
+    }
+
+    /// The number of values of the attribute.
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        if let Some(f) = &self.point_to_att_val_map {
+            f.len()
+        } else {
+            self.buffer.len()
+        }
+    }
+
+    #[inline(always)]
+    pub fn num_unique_values(&self) -> usize {
+        self.buffer.len()
+    }
+
+    #[inline]
+    pub fn get_unique_val_idx(&self, idx: PointIdx) -> AttributeValueIdx {
+        let idx_usize = usize::from(idx);
+        assert!(
+            idx_usize < self.len(),
+            "Index out of bounds: idx = {}, len = {}",
+            idx_usize,
+            self.len()
+        );
+        if let Some(ref point_to_att_val_map) = self.point_to_att_val_map {
+            point_to_att_val_map[idx]
+        } else {
+            // otherwise, we use identity mapping
+            idx_usize.into()
+        }
+    }
+
+    #[inline]
+    pub fn set_name(&mut self, name: String) {
+        self.name = Some(name);
+    }
+
+    #[inline]
+    pub fn get_name(&self) -> Option<&String> {
+        self.name.as_ref()
+    }
+
+    /// returns the data values as a slice of values casted to the given type.
+    #[inline]
+    pub fn unique_vals_as_slice<Data>(&self) -> &[Data] {
+        assert_eq!(
+            self.buffer.get_num_components() * self.buffer.get_component_type().size(),
+            std::mem::size_of::<Data>(),
+        );
+        unsafe { self.buffer.as_slice::<Data>() }
+    }
+
+    /// returns the data values as a mutable slice of values casted to the given type.
+    #[inline]
+    pub fn unique_vals_as_slice_mut<Data>(&mut self) -> &mut [Data] {
+        assert_eq!(
+            self.buffer.get_num_components() * self.buffer.get_component_type().size(),
+            std::mem::size_of::<Data>(),
+        );
+        unsafe { self.buffer.as_slice_mut::<Data>() }
+    }
+
+    /// returns the data values as a slice of values casted to the given type.
+    /// # Safety:
+    /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
+    #[inline]
+    pub unsafe fn unique_vals_as_slice_unchecked<Data>(&self) -> &[Data] {
+        // Safety: upheld
+        self.buffer.as_slice::<Data>()
+    }
+
+    /// returns the data values as a mutable slice of values casted to the given type.
+    /// # Safety:
+    /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
+    #[inline]
+    pub unsafe fn unique_vals_as_slice_unchecked_mut<Data>(&mut self) -> &mut [Data] {
+        // Safety: upheld
+        self.buffer.as_slice_mut::<Data>()
+    }
+
+    /// permutes the data in the buffer according to the given indices, i.e.
+    /// `i`-th element in the buffer will be moved to `indices[i]`-th position.
+    pub fn permute(&mut self, indices: &[usize]) {
+        assert!(
+            indices.len() == self.len(),
+            "Indices length must match the buffer length: indices.len() = {}, self.len() = {}",
+            indices.len(),
+            self.len()
+        );
+        assert!(
+            indices.iter().all(|&i| i < self.len()),
+            "All indices must be within the buffer length: indices = {:?}, self.len() = {}",
+            indices,
+            self.len()
+        );
+        unsafe {
+            self.buffer.permute_unchecked(indices);
+        }
+    }
+
+    /// permutes the data in the buffer according to the given indices, i.e.
+    /// `i`-th element in the buffer will be moved to `indices[i]`-th position.
+    /// # Safety:
+    /// This function assumes that the indices are valid, i.e. they are within the bounds of the buffer.
+    pub fn permute_unchecked(&mut self, indices: &[usize]) {
+        debug_assert!(
+            indices.len() == self.len(),
+            "Indices length must match the buffer length: indices.len() = {}, self.len() = {}",
+            indices.len(),
+            self.len()
+        );
+        debug_assert!(
+            indices.iter().all(|&i| i < self.len()),
+            "All indices must be within the buffer length: indices = {:?}, self.len() = {}",
+            indices,
+            self.len()
+        );
+        unsafe {
+            self.buffer.permute_unchecked(indices);
+        }
+    }
+
+    /// swaps the elements at indices `i` and `j` in the buffer.
+    pub fn swap(&mut self, i: usize, j: usize) {
+        assert!(
+            i < self.len() && j < self.len(),
+            "Indices out of bounds: i = {}, j = {}, len = {}",
+            i,
+            j,
+            self.len()
+        );
+        unsafe {
+            self.buffer.swap_unchecked(i, j);
+        }
+    }
+
+    pub fn take_values<Data, const N: usize>(self) -> Vec<Data>
+    where
+        Data: Vector<N>,
+    {
+        assert_eq!(self.get_num_components(), N,);
+        assert_eq!(self.get_component_type(), Data::Component::get_dyn(),);
+
+        unsafe { self.buffer.into_vec_unchecked::<Data, N>() }
+    }
+
+    pub fn into_parts<Data, const N: usize>(
+        mut self,
+    ) -> (Vec<Data>, Option<VecPointIdx<AttributeValueIdx>>, Self)
+    where
+        Data: Vector<N>,
+    {
+        let num_components = self.get_num_components();
+        let component_type = self.get_component_type();
+        assert_eq!(num_components, N,);
+        assert_eq!(component_type, Data::Component::get_dyn(),);
+        let mut new_buffer = buffer::attribute::AttributeBuffer::from_vec(Vec::<Data>::new());
+        std::mem::swap(&mut self.buffer, &mut new_buffer);
+        let data = unsafe { new_buffer.into_vec_unchecked::<Data, N>() };
+
+        let mut point_to_att_val_map = None;
+        std::mem::swap(&mut point_to_att_val_map, &mut self.point_to_att_val_map);
+
+        (data, point_to_att_val_map, self)
+    }
+
+    pub fn set_values<Data, const N: usize>(&mut self, data: Vec<Data>)
+    where
+        Data: Vector<N>,
+    {
+        assert_eq!(self.get_num_components(), N,);
+        assert_eq!(self.get_component_type(), Data::Component::get_dyn(),);
+        assert_eq!(self.len(), 0);
+        self.buffer = buffer::attribute::AttributeBuffer::from_vec(data);
+    }
+
+    pub fn remove_duplicate_values<Data, const N: usize>(&mut self)
+    where
+        Data: Vector<N>,
+    {
+        let n = self.len();
+        if n <= 1 {
+            return;
+        }
+
+        let values = self.unique_vals_as_slice::<Data>();
+
+        // Convert all values to f64 arrays for the KD-tree
+        let f64_points: Vec<[f64; N]> = values.iter().map(|v| vector_to_f64_array(v)).collect();
+
+        // Build an immutable KD-tree over the f64 points
+        let tree = ImmutableKdTree::<f64, u32, N, 32>::new_from_slice(&f64_points);
+
+        // canonical_index[i] = the index of the first occurrence that i is a duplicate of,
+        // or i itself if it's not a duplicate.
+        let mut canonical_index = vec![usize::MAX; n];
+        let mut has_duplicates = false;
+
+        for i in 0..n {
+            if canonical_index[i] != usize::MAX {
+                // already marked as a duplicate of something
+                continue;
+            }
+            canonical_index[i] = i; // it's its own canonical
+
+            // Query the KD-tree for nearby points
+            let neighbors = tree.within_unsorted::<SquaredEuclidean>(&f64_points[i], f64::EPSILON);
+
+            for neighbor in &neighbors {
+                let j = neighbor.item as usize;
+                if j <= i || canonical_index[j] != usize::MAX {
+                    continue;
+                }
+                // Post-filter with exact typed equality
+                if values[i] == values[j] {
+                    canonical_index[j] = i;
+                    has_duplicates = true;
+                }
+            }
+        }
+
+        if !has_duplicates {
+            return;
+        }
+
+        // Build old_to_new mapping: assign compacted indices to non-duplicate entries
+        let mut old_to_new = vec![0usize; n];
+        let mut keep_indices = Vec::new();
+        let mut new_idx = 0;
+        for i in 0..n {
+            if canonical_index[i] == i {
+                // This is a canonical (non-duplicate) entry
+                old_to_new[i] = new_idx;
+                keep_indices.push(i);
+                new_idx += 1;
+            }
+        }
+
+        // Build the point-to-attribute-value map
+        let map_data: Vec<AttributeValueIdx> = (0..n)
+            .map(|i| old_to_new[canonical_index[i]].into())
+            .collect();
+        self.point_to_att_val_map = Some(VecPointIdx::<_>::from(map_data));
+
+        // Compact the buffer to keep only canonical entries
+        self.buffer.retain_indices(&keep_indices);
+    }
+
+    #[allow(unused)]
+    pub fn remove<Data, const N: usize>(&mut self, p_idx: PointIdx) {
+        let p_idx_usize = usize::from(p_idx);
+        assert!(
+            p_idx_usize < self.len(),
+            "Point index out of bounds: {}",
+            p_idx_usize
+        );
+        if let Some(ref mut point_to_att_val_map) = self.point_to_att_val_map {
+            // update the mapping
+            if (0..point_to_att_val_map.len())
+                .map(PointIdx::from)
+                .filter(|&p| p != p_idx)
+                .any(|p| point_to_att_val_map[p] == point_to_att_val_map[p_idx])
+            {
+                // if there are other vertices with the same value, we just remove the mapping
+                point_to_att_val_map.remove(p_idx);
+            } else {
+                let removed_unique_val_idx = point_to_att_val_map.remove(p_idx);
+                self.buffer.remove::<Data, N>(removed_unique_val_idx.into());
+                // update the mapping for the remaining vertices
+                for p in 0..point_to_att_val_map.len() {
+                    let p = PointIdx::from(p);
+                    if point_to_att_val_map[p] > removed_unique_val_idx {
+                        point_to_att_val_map[p] = (usize::from(point_to_att_val_map[p]) - 1).into();
+                    }
+                }
+            }
+        } else {
+            // no mapping, just remove the value
+            let a_idx = AttributeValueIdx::from(usize::from(p_idx));
+            self.remove_unique_val::<Data, N>(a_idx);
+        }
+    }
+
+    #[allow(unused)]
+    pub fn remove_dyn(&mut self, p_idx: PointIdx) {
+        assert!(
+            usize::from(p_idx) < self.len(),
+            "Point index out of bounds: {}",
+            usize::from(p_idx)
+        );
+        match self.get_component_type().size() * self.get_num_components() {
+            1 => self.remove::<u8, 1>(p_idx),
+            2 => self.remove::<u16, 1>(p_idx),
+            4 => self.remove::<u32, 1>(p_idx),
+            6 => self.remove::<u16, 3>(p_idx),
+            8 => self.remove::<u64, 1>(p_idx),
+            12 => self.remove::<u32, 3>(p_idx),
+            16 => self.remove::<u64, 2>(p_idx),
+            18 => self.remove::<u64, 3>(p_idx),
+            _ => panic!(
+                "Unsupported component size: {}",
+                self.get_component_type().size()
+            ),
+        }
+    }
+
+    #[allow(unused)]
+    pub fn remove_unique_val<Data, const N: usize>(&mut self, val_idx: AttributeValueIdx) {
+        let val_idx = usize::from(val_idx);
+        assert!(
+            val_idx < self.num_unique_values(),
+            "Attribute value index out of bounds: {}",
+            val_idx
+        );
+        self.buffer.remove::<Data, N>(val_idx);
+        if let Some(ref mut _point_to_att_val_map) = self.point_to_att_val_map {
+            unimplemented!();
+        }
+    }
+
+    pub fn remove_unique_val_dyn(&mut self, val_idx: usize) {
+        assert!(
+            val_idx < self.num_unique_values(),
+            "Attribute value index out of bounds: {}",
+            val_idx
+        );
+        match self.get_component_type().size() * self.get_num_components() {
+            1 => self.buffer.remove::<u8, 1>(val_idx),
+            2 => self.buffer.remove::<u16, 1>(val_idx),
+            4 => self.buffer.remove::<u32, 1>(val_idx),
+            6 => self.buffer.remove::<u16, 3>(val_idx),
+            8 => self.buffer.remove::<u64, 1>(val_idx),
+            12 => self.buffer.remove::<u32, 3>(val_idx),
+            16 => self.buffer.remove::<u64, 2>(val_idx),
+            18 => self.buffer.remove::<u64, 3>(val_idx),
+            _ => panic!(
+                "Unsupported component size: {}",
+                self.get_component_type().size()
+            ),
+        }
+    }
+
+    /// Retains only points at the given sorted indices. O(n) instead of O(n^2).
+    /// `keep_point_indices` must be sorted in ascending order.
+    pub fn retain_points_dyn(&mut self, keep_point_indices: &[usize]) {
+        if let Some(ref map) = self.point_to_att_val_map {
+            // Build new map for kept points and find which unique values survive
+            let num_unique = self.buffer.len();
+            let mut unique_val_referenced = vec![false; num_unique];
+            let mut new_map = Vec::with_capacity(keep_point_indices.len());
+
+            for &p in keep_point_indices {
+                let val_idx = map[PointIdx::from(p)];
+                unique_val_referenced[usize::from(val_idx)] = true;
+                new_map.push(val_idx);
+            }
+
+            // Build compacted index mapping for unique values
+            let mut old_unique_to_new = vec![0usize; num_unique];
+            let mut keep_unique_indices = Vec::new();
+            let mut new_unique_idx = 0;
+            for i in 0..num_unique {
+                if unique_val_referenced[i] {
+                    old_unique_to_new[i] = new_unique_idx;
+                    keep_unique_indices.push(i);
+                    new_unique_idx += 1;
+                }
+            }
+
+            // Update map indices to point to compacted positions
+            let new_map: Vec<AttributeValueIdx> = new_map
+                .iter()
+                .map(|&val_idx| old_unique_to_new[usize::from(val_idx)].into())
+                .collect();
+            self.point_to_att_val_map = Some(VecPointIdx::from(new_map));
+
+            // Compact the buffer
+            self.buffer.retain_indices(&keep_unique_indices);
+        } else {
+            // No map — buffer indices correspond directly to point indices
+            self.buffer.retain_indices(keep_point_indices);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+pub enum ComponentDataType {
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    I64,
+    U64,
+    F32,
+    F64,
+    Invalid,
+}
+
+impl ComponentDataType {
+    /// returns the size of the data type in bytes e.g. 4 for F32
+    #[inline]
+    pub fn size(self) -> usize {
+        match self {
+            ComponentDataType::F32 => 4,
+            ComponentDataType::F64 => 8,
+            ComponentDataType::U8 => 1,
+            ComponentDataType::U16 => 2,
+            ComponentDataType::U32 => 4,
+            ComponentDataType::U64 => 8,
+            ComponentDataType::I8 => 1,
+            ComponentDataType::I16 => 2,
+            ComponentDataType::I32 => 4,
+            ComponentDataType::I64 => 8,
+            ComponentDataType::Invalid => 0,
+        }
+    }
+
+    #[inline]
+    pub fn is_float(self) -> bool {
+        matches!(self, ComponentDataType::F32 | ComponentDataType::F64)
+    }
+
+    /// returns unique id for the data type.
+    #[inline]
+    pub fn get_id(self) -> u8 {
+        match self {
+            ComponentDataType::U8 => 1,
+            ComponentDataType::I8 => 2,
+            ComponentDataType::U16 => 3,
+            ComponentDataType::I16 => 4,
+            ComponentDataType::U32 => 5,
+            ComponentDataType::I32 => 6,
+            ComponentDataType::U64 => 7,
+            ComponentDataType::I64 => 8,
+            ComponentDataType::F32 => 9,
+            ComponentDataType::F64 => 10,
+            ComponentDataType::Invalid => u8::MAX, // Invalid type
+        }
+    }
+
+    /// returns the data type as a string.
+    #[inline]
+    pub fn write_to<W: ByteWriter>(self, writer: &mut W) {
+        writer.write_u8(self.get_id());
+    }
+
+    /// returns the data type from the given id.
+    #[inline]
+    pub fn from_id(id: usize) -> Result<Self, ()> {
+        match id {
+            1 => Ok(ComponentDataType::I8),
+            2 => Ok(ComponentDataType::U8),
+            3 => Ok(ComponentDataType::I16),
+            4 => Ok(ComponentDataType::U16),
+            5 => Ok(ComponentDataType::I32),
+            6 => Ok(ComponentDataType::U32),
+            7 => Ok(ComponentDataType::I64),
+            8 => Ok(ComponentDataType::U64),
+            9 => Ok(ComponentDataType::F32),
+            10 => Ok(ComponentDataType::F64),
+            _ => Err(()),
+        }
+    }
+
+    /// Reads the data type from the reader.
+    #[inline]
+    pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+        let id = reader.read_u8()?;
+        Self::from_id(id as usize).map_err(|_| Err::InvalidDataTypeId(id))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub enum AttributeType {
+    Position,
+    Normal,
+    Color,
+    TextureCoordinate,
+    Custom,
+    Tangent,
+    Material,
+    Joint,
+    Weight,
+    Invalid,
+}
+
+impl AttributeType {
+    pub fn get_minimum_dependency(&self) -> Vec<Self> {
+        match self {
+            Self::Position => Vec::new(),
+            Self::Normal => Vec::new(),
+            Self::Color => Vec::new(),
+            Self::TextureCoordinate => vec![Self::Position],
+            Self::Tangent => Vec::new(),
+            Self::Material => Vec::new(),
+            Self::Joint => Vec::new(),
+            Self::Weight => Vec::new(),
+            Self::Custom => Vec::new(),
+            Self::Invalid => Vec::new(),
+        }
+    }
+
+    /// Returns the id of the attribute type.
+    #[inline]
+    pub fn get_id(&self) -> u8 {
+        match self {
+            Self::Position => 0,
+            Self::Normal => 1,
+            Self::Color => 2,
+            Self::TextureCoordinate => 3,
+            Self::Custom => 4,
+            Self::Tangent => 5,
+            Self::Material => 6,
+            Self::Joint => 7,
+            Self::Weight => 8,
+            Self::Invalid => u8::MAX, // Invalid type
+        }
+    }
+
+    /// Returns the id of the attribute type.
+    #[inline]
+    pub fn write_to<W: ByteWriter>(&self, writer: &mut W) {
+        writer.write_u8(self.get_id());
+    }
+
+    /// Reads the attribute type from the reader.
+    #[inline]
+    pub fn from_id(id: u8) -> Result<Self, Err> {
+        match id {
+            0 => Ok(Self::Position),
+            1 => Ok(Self::Normal),
+            2 => Ok(Self::Color),
+            3 => Ok(Self::TextureCoordinate),
+            4 => Ok(Self::Custom),
+            5 => Ok(Self::Tangent),
+            6 => Ok(Self::Material),
+            7 => Ok(Self::Joint),
+            8 => Ok(Self::Weight),
+            _ => Err(Err::InvalidDataTypeId(id)),
+        }
+    }
+
+    /// Reads the attribute type from the reader.
+    #[inline]
+    pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+        let id = reader.read_u8()?;
+        Self::from_id(id)
+    }
+}
+
+/// The domain of the attribute, i.e. whether it is defined on the position or corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum AttributeDomain {
+    /// The attribute is defined on the position attribute, i.e. i'th element in the attribute is attached to the i'th position in the mesh.
+    Position,
+    /// The attribute is defined on the corner attribute, i.e. i'th element in the attribute is attached to the i'th corner in the mesh.
+    Corner,
+}
+
+impl AttributeDomain {
+    /// Writes the id of the attribute domain to the writer.
+    pub fn write_to<W: ByteWriter>(&self, writer: &mut W) {
+        match self {
+            Self::Position => writer.write_u8(0),
+            Self::Corner => writer.write_u8(1),
+        }
+    }
+
+    /// Reads the attribute domain from the reader.
+    pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+        let id = reader.read_u8()?;
+        match id {
+            0 => Ok(Self::Position),
+            1 => Ok(Self::Corner),
+            _ => Err(Err::InvalidAttributeDomainId(id)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+pub struct AttributeId(usize);
+
+impl AttributeId {
+    pub fn new(id: usize) -> Self {
+        Self(id)
+    }
+
+    /// Returns the id of the attribute.
+    pub fn as_usize(&self) -> usize {
+        self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::NdVector;
+
+    #[test]
+    fn test_attribute() {
+        let data = vec![
+            NdVector::from([1.0f32, 2.0, 3.0]),
+            NdVector::from([4.0f32, 5.0, 6.0]),
+            NdVector::from([7.0f32, 8.0, 9.0]),
+        ];
+        let att = super::Attribute::from(
+            AttributeId::new(0),
+            data.clone(),
+            super::AttributeType::Position,
+            super::AttributeDomain::Position,
+            Vec::new(),
+        );
+        assert_eq!(att.len(), data.len());
+        assert_eq!(
+            att.get::<NdVector<3, f32>, 3>(0.into()),
+            data[0],
+            "{:b}!={:b}",
+            att.get::<NdVector<3, f32>, 3>(0.into()).get(0).to_bits(),
+            data[0].get(0).to_bits()
+        );
+        assert_eq!(att.get_component_type(), super::ComponentDataType::F32);
+        assert_eq!(att.get_num_components(), 3);
+        assert_eq!(att.get_attribute_type(), super::AttributeType::Position);
+    }
+
+    #[test]
+    fn test_attribute_remap() {
+        let positions = vec![
+            NdVector::from([0.0f32, 0.0, 0.0]), // vertex 0 (unique)
+            NdVector::from([1.0f32, 0.0, 0.0]), // vertex 1 (unique)
+            NdVector::from([0.5f32, 1.0, 0.0]), // vertex 2 (unique)
+            NdVector::from([0.0f32, 0.0, 0.0]), // vertex 3 (duplicate of vertex 0)
+            NdVector::from([1.0f32, 0.0, 0.0]), // vertex 4 (duplicate of vertex 1)
+            NdVector::from([2.0f32, 0.0, 0.0]), // vertex 5 (unique)
+        ];
+
+        let att = Attribute::new(
+            positions,
+            AttributeType::Position,
+            AttributeDomain::Position,
+            vec![],
+        );
+
+        assert_eq!(
+            att.point_to_att_val_map
+                .unwrap()
+                .into_iter()
+                .map(|v| usize::from(v))
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 0, 1, 3],
+        )
+    }
+
+    #[test]
+    fn test_remove() {
+        let positions = vec![
+            NdVector::from([0.0f32, 0.0, 0.0]), // vertex 0 (unique)
+            NdVector::from([1.0f32, 0.0, 0.0]), // vertex 1 (unique)
+            NdVector::from([2.0f32, 0.0, 0.0]), // vertex 2 (unique)
+            NdVector::from([3.0f32, 0.0, 0.0]), // vertex 3 (unique)
+            NdVector::from([2.0f32, 0.0, 0.0]), // vertex 4 (duplicate of vertex 2)
+            NdVector::from([5.0f32, 0.0, 0.0]), // vertex 5 (unique)
+        ];
+
+        let mut att = Attribute::new(
+            positions,
+            AttributeType::Position,
+            AttributeDomain::Position,
+            vec![],
+        );
+
+        assert_eq!(att.len(), 6);
+        assert_eq!(att.num_unique_values(), 5);
+        assert_eq!(
+            &att.point_to_att_val_map
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|&i| usize::from(i))
+                .collect::<Vec<_>>(),
+            &vec![0, 1, 2, 3, 2, 4]
+        );
+        att.remove::<NdVector<3, f32>, 3>(PointIdx::from(2)); // remove vertex 2
+        assert_eq!(att.len(), 5);
+        assert_eq!(att.num_unique_values(), 5);
+        assert_eq!(
+            &att.point_to_att_val_map
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|&i| usize::from(i))
+                .collect::<Vec<_>>(),
+            &vec![0, 1, 3, 2, 4]
+        );
+        att.remove::<NdVector<3, f32>, 3>(PointIdx::from(1)); // remove vertex 1
+        assert_eq!(att.len(), 4);
+        assert_eq!(att.num_unique_values(), 4);
+        assert_eq!(
+            &att.point_to_att_val_map
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|&i| usize::from(i))
+                .collect::<Vec<_>>(),
+            &vec![0, 2, 1, 3]
+        );
+    }
+}

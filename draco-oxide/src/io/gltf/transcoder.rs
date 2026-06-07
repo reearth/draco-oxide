@@ -3,11 +3,11 @@
 //! This transcoder compresses geometry while preserving all other glTF data
 //! (materials, textures, animations, extensions) unchanged.
 
-use crate::core::attribute::{AttributeDomain, AttributeType};
-use crate::core::mesh::builder::MeshBuilder;
-use crate::core::shared::NdVector;
+use draco_oxide_core::attribute::{AttributeDomain, AttributeType};
+use draco_oxide_core::mesh::builder::MeshBuilder;
+use draco_oxide_core::types::NdVector;
 use crate::encode::Config as DracoConfig;
-use crate::prelude::ConfigType;
+use draco_oxide_core::types::ConfigType;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -29,7 +29,7 @@ pub enum Error {
     #[error("Geometry extraction error: {0}")]
     GeometryExtraction(#[from] geometry_extractor::Error),
     #[error("Mesh build error: {0}")]
-    MeshBuild(#[from] crate::core::mesh::builder::Err),
+    MeshBuild(#[from] draco_oxide_core::mesh::builder::Err),
     #[error("Draco encode error: {0}")]
     DracoEncode(#[from] crate::encode::Err),
     #[error("IO error: {0}")]
@@ -611,7 +611,7 @@ impl GltfTranscoder {
     fn build_mesh(
         &self,
         geometry: &mut ExtractedGeometry,
-    ) -> Result<crate::core::mesh::Mesh, SkipReason> {
+    ) -> Result<draco_oxide_core::mesh::Mesh, SkipReason> {
         let mut builder = MeshBuilder::new();
 
         // Set faces from indices

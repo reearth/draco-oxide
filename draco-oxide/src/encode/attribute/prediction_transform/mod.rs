@@ -6,9 +6,10 @@ pub mod wrapped_difference;
 
 #[cfg(feature = "evaluation")]
 use crate::eval;
-use crate::prelude::{ByteWriter, NdVector};
+use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::types::NdVector;
 
-use crate::core::shared::{ConfigType, Vector};
+use draco_oxide_core::types::{ConfigType, Vector};
 
 #[enum_dispatch::enum_dispatch(PredictionTransformImpl<N>)]
 pub enum PredictionTransform<const N: usize> {

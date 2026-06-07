@@ -1,11 +1,11 @@
-use crate::core::shared::ConfigType;
-use crate::core::shared::PointIdx;
-use crate::debug_write;
+use draco_oxide_core::types::ConfigType;
+use draco_oxide_core::types::PointIdx;
+use draco_oxide_core::debug_write;
 use crate::encode::connectivity::ConnectivityEncoder;
-use crate::prelude::ByteWriter;
-use crate::shared::connectivity::sequential::index_size_from_vertex_count;
-use crate::shared::connectivity::sequential::Method;
-use crate::utils::bit_coder::leb128_write;
+use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::codec::connectivity::sequential::index_size_from_vertex_count;
+use draco_oxide_core::codec::connectivity::sequential::Method;
+use draco_oxide_core::utils::bit_coder::leb128_write;
 
 pub(crate) struct Sequential {
     cfg: Config,
@@ -103,5 +103,5 @@ impl ConfigType for Config {
 #[derive(thiserror::Error, Debug)]
 pub enum Err {
     #[error("Invalid vertex count")]
-    SharedError(crate::shared::connectivity::sequential::Err),
+    SharedError(draco_oxide_core::codec::connectivity::sequential::Err),
 }

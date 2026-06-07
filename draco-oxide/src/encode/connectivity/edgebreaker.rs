@@ -1,26 +1,26 @@
 use std::{cmp, fmt};
 
-use crate::core::bit_coder::{BitWriter, ByteWriter};
-use crate::core::buffer::LsbFirst;
-use crate::core::corner_table::all_inclusive_corner_table::AllInclusiveCornerTable;
-use crate::core::corner_table::attribute_corner_table::AttributeCornerTable;
-use crate::core::corner_table::CornerTable;
-use crate::core::corner_table::GenericCornerTable;
-use crate::debug_write;
-use crate::shared::entropy::rans::{self, RabsCoder};
+use draco_oxide_core::bit_coder::{BitWriter, ByteWriter};
+use draco_oxide_core::buffer::LsbFirst;
+use draco_oxide_core::corner_table::all_inclusive_corner_table::AllInclusiveCornerTable;
+use draco_oxide_core::corner_table::attribute_corner_table::AttributeCornerTable;
+use draco_oxide_core::corner_table::CornerTable;
+use draco_oxide_core::corner_table::GenericCornerTable;
+use draco_oxide_core::debug_write;
+use draco_oxide_core::codec::entropy::rans::{self, RabsCoder};
 use crate::encode::entropy::symbol_coding::encode_symbols;
-use crate::prelude::{Attribute, AttributeType};
-use crate::shared::connectivity::edgebreaker::symbol_encoder::{CrLight, Symbol, SymbolEncoder};
+use draco_oxide_core::attribute::{Attribute, AttributeType};
+use draco_oxide_core::codec::connectivity::edgebreaker::symbol_encoder::{CrLight, Symbol, SymbolEncoder};
 
-use crate::core::shared::{
+use draco_oxide_core::types::{
     ConfigType, CornerIdx, FaceIdx, PointIdx, VecFaceIdx, VecVertexIdx, VertexIdx,
 };
 
-use crate::shared::connectivity::edgebreaker::{
+use draco_oxide_core::codec::connectivity::edgebreaker::{
     self, EdgebreakerKind, Orientation, TopologySplit, MAX_VALENCE, MIN_VALENCE,
 };
-use crate::shared::entropy::SymbolEncodingMethod;
-use crate::utils::bit_coder::leb128_write;
+use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
+use draco_oxide_core::utils::bit_coder::leb128_write;
 use std::collections::BTreeMap;
 use std::vec;
 
@@ -910,13 +910,13 @@ impl Traversal for ValenceTraversal {
 // mod tests {
 //     use std::vec;
 
-//     use crate::core::attribute::AttributeId;
-//     use crate::core::shared::Vector;
-//     use crate::core::shared::NdVector;
+//     use draco_oxide_core::attribute::AttributeId;
+//     use draco_oxide_core::types::Vector;
+//     use draco_oxide_core::types::NdVector;
 //     use crate::debug_expect;
 //     use crate::prelude::{BitReader, ByteReader};
-//     use crate::shared::connectivity::eq;
-//     use crate::utils::bit_coder::leb128_read;
+//     use draco_oxide_core::codec::connectivity::eq;
+//     use draco_oxide_core::utils::bit_coder::leb128_read;
 
 //     use super::*;
 

@@ -1,4 +1,4 @@
-use draco_oxide::prelude::ConfigType;
+use draco_oxide::core::types::ConfigType;
 use draco_oxide::{
     encode::{self, encode},
     io::obj::load_obj,

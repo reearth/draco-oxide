@@ -14,7 +14,7 @@ use std::process::Command;
 
 use draco_oxide::encode::{self, encode};
 use draco_oxide::io::obj::load_obj;
-use draco_oxide::prelude::ConfigType;
+use draco_oxide::core::types::ConfigType;
 
 /// Meshes from `tests/data/` to round-trip through the reference decoder.
 const MESHES: &[&str] = &[
