@@ -1,3 +1,21 @@
 [workspace]
 resolver = "2"
 members = ["draco-oxide", "draco-oxide/core", "draco-oxide/decoder", "cli", "analyzer", "tests"]
+
+# Shared metadata for the version-locked draco-oxide library crates
+# (draco-oxide, draco-oxide-core, draco-oxide-decoder). Bump `version` in one
+# place; the macro/cli/analyzer/tests crates keep their own versions.
+[workspace.package]
+version = "0.1.0-alpha.5"
+edition = "2021"
+rust-version = "1.84"
+license = "MIT OR Apache-2.0"
+authors = ["Re:Earth Contributors"]
+homepage = "https://github.com/reearth/draco-oxide"
+repository = "https://github.com/reearth/draco-oxide"
+
+# Internal path dependencies declared once so member versions stay in lockstep.
+[workspace.dependencies]
+draco-oxide-core = { path = "draco-oxide/core", version = "0.1.0-alpha.5" }
+draco-oxide-decoder = { path = "draco-oxide/decoder", version = "0.1.0-alpha.5" }
+draco-nd-vector = { path = "draco-oxide/macros/draco-nd-vector", version = "0.0.0" }

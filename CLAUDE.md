@@ -8,8 +8,11 @@ draco-rs is a Rust implementation of Google's Draco mesh compression library for
 
 ## Workspace Structure
 
-This is a Cargo workspace with four crates:
-- **draco-oxide/** - Main compression library (published as the "draco-oxide" crate). Ships with no build script.
+The library is split into four published crates (`macro → core → {decoder, encoder}`) plus internal tooling. Path-deps are nested under `draco-oxide/`:
+- **draco-oxide/** - The main/encoder crate (published as "draco-oxide"). Contains the encoder (`src/encode/`), file-format I/O (`src/io/`), and evaluation (`src/eval.rs`). Depends on core; re-exports it as `draco_oxide::core`, and behind the default `decoder` feature re-exports the decoder as `draco_oxide::decode`. Ships with no build script.
+- **draco-oxide/core/** - `draco-oxide-core`: the crate both encoder and decoder depend on. Holds the geometry/attribute data model (`mesh`, `attribute`, `corner_table`, `buffer`, `point_cloud`), numeric primitives (`types`: `NdVector`, index types, numeric traits), the codec algorithms shared between encode and decode (`codec`: entropy/prediction/connectivity/header), and `utils`. No prelude — items are `pub` and reached by canonical path.
+- **draco-oxide/decoder/** - `draco-oxide-decoder`: the decoder (WIP, mostly commented out), depends on core only. The lean WASM/embedded unit — a decode-only consumer depends on this directly and never links the encoder.
+- **draco-oxide/macros/draco-nd-vector/** - proc-macro crate generating low-dimensional vector ops; used only by core. Reads `DRACO_OXIDE_MAX_VECTOR_DIM` via its build script.
 - **cli/** - Command-line interface (minimal implementation)
 - **analyzer/** - Mesh analysis tool with HTML visualization reports
 - **tests/** - Internal (unpublished) integration-test crate. Holds the declarative TOML-profile test harness (`src/lib.rs`), the codegen `build.rs`, test data, and the round-trip tests against Google Draco. Its integration tests live at `tests/tests/` (Cargo requires integration tests in a `tests/` subdir of the package).
@@ -25,7 +28,10 @@ cargo build
 cargo build --features evaluation
 
 # Build specific crate
-cargo build -p draco-oxide
+cargo build -p draco-oxide          # encoder (+ core, + decoder via default feature)
+cargo build -p draco-oxide-core     # shared core, standalone
+cargo build -p draco-oxide-decoder  # decoder (lean: core + decode, no encoder)
+cargo build -p draco-oxide --no-default-features  # encoder-only (drops the decoder)
 cargo build -p analyzer
 ```
 
@@ -54,26 +60,28 @@ cargo deny check # Check licenses and dependencies
 
 ## Architecture Overview
 
-### Core Data Structures
-- **Mesh**: Central data structure in `core/mesh/` containing faces and attributes
-- **Attributes**: Vertex data (position, normal, texture coords) managed in `core/attribute/`
-- **Corner Table**: Topological representation for mesh connectivity in `core/corner_table/`
+Module paths below are in `draco-oxide-core` (`draco-oxide/core/src/`) unless prefixed `encode/`/`io/`/`eval.rs` (the `draco-oxide` encoder crate) or `decode/` (the `draco-oxide-decoder` crate).
+
+### Core Data Structures (in `draco-oxide-core`)
+- **Mesh**: Central data structure in `mesh/` containing faces and attributes
+- **Attributes**: Vertex data (position, normal, texture coords) managed in `attribute/`
+- **Corner Table**: Topological representation for mesh connectivity in `corner_table/`
+- **Numeric primitives**: `NdVector`, index types (`PointIdx`, `CornerIdx`, …), and numeric traits in `types` (`types.rs`)
 
 ### Compression Pipeline
-1. **Connectivity Compression**: Uses Edgebreaker algorithm (`encode/connectivity/edgebreaker.rs`)
-2. **Attribute Compression**: Prediction transforms and quantization (`encode/attribute/`)
-3. **Entropy Coding**: rANS (range Asymmetric Numeral Systems) in `encode/entropy/`
+1. **Connectivity Compression**: Edgebreaker algorithm (encoder `encode/connectivity/edgebreaker.rs`)
+2. **Attribute Compression**: Prediction transforms and quantization (encoder `encode/attribute/`)
+3. **Entropy Coding**: rANS (range Asymmetric Numeral Systems) — shared primitives in core `codec/entropy/`; encoder-side writers in `encode/entropy/`
 
-### Key Modules
-- **encode/**: Complete encoding pipeline (functional)
-- **decode/**: Decoding pipeline (mostly incomplete/commented out)
-- **shared/**: Common algorithms and data structures
-- **io/**: File format support (OBJ, STL, partial glTF)
-- **utils/**: Bit manipulation and geometric utilities
+### Crate layout
+- **draco-oxide-core**: shared types + algorithms — the data model plus `codec/` (the prediction/entropy/connectivity/header algorithms shared by encode and decode) and `utils/`
+- **draco-oxide (encoder)**: `encode/` (complete, functional), `io/` (OBJ + partial glTF), `eval.rs`; depends on core, re-exports `draco_oxide::core` and (default `decoder` feature) `draco_oxide::decode`
+- **draco-oxide-decoder**: `decode/` (mostly incomplete/commented out); depends on core only
 
 ## Features and Configuration
 
-### Cargo Features
+### Cargo Features (on the `draco-oxide` crate)
+- `decoder` (default): re-exports `draco-oxide-decoder` as `draco_oxide::decode`. Disable with `--no-default-features` for an encoder-only build; size-sensitive consumers should instead depend on `draco-oxide-decoder` directly.
 - `evaluation`: Enables compression analysis and metrics generation
 - `debug_format`: Additional debug output formatting
 
