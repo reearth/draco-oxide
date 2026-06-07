@@ -210,7 +210,7 @@ impl<'reader, R, const NUM_SYMBOLS_BIT_LENGTH: usize, const RANS_PRECISION: usiz
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encode::entropy::rans::{
+    use crate::shared::entropy::rans::{
         RansCoder,
         RabsCoder
     };

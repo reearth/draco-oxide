@@ -1,8 +1,8 @@
 use crate::core::shared::{CornerIdx, Cross, Dot, VertexIdx};
-use crate::encode::attribute::prediction_transform::geom::{
+use crate::shared::attribute::geom::{
     into_faithful_oct_quantization, octahedral_transform,
 };
-use crate::encode::entropy::rans::RabsCoder;
+use crate::shared::entropy::rans::RabsCoder;
 use crate::utils::bit_coder::leb128_write;
 
 use super::PredictionSchemeImpl;

@@ -1,5 +1,4 @@
 pub mod difference;
-pub(crate) mod geom;
 pub mod oct_orthogonal;
 pub mod oct_reflection;
 pub mod orthogonal;

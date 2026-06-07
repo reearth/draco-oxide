@@ -1,6 +1,7 @@
 use crate::core::bit_coder::ReaderErr;
 use crate::prelude::{ByteReader, ByteWriter};
 
+pub(crate) mod geom;
 pub(crate) mod portabilization;
 pub(crate) mod prediction_scheme;
 pub mod sequence;

@@ -5,7 +5,7 @@ use crate::core::{
     attribute::Attribute,
     shared::{Dot, Vector},
 };
-use crate::encode::entropy::rans::RabsCoder;
+use crate::shared::entropy::rans::RabsCoder;
 use crate::prelude::{ByteWriter, NdVector};
 use crate::utils::bit_coder::leb128_write;
 

@@ -142,7 +142,7 @@ impl PredictionSchemeType {
 #[derive(thiserror::Error, Clone, Debug)]
 pub enum Err {
     #[error("ranscoder error: {0}")]
-    RanscoderError(#[from] crate::encode::entropy::rans::Err),
+    RanscoderError(#[from] crate::shared::entropy::rans::Err),
 }
 
 pub(crate) enum PredictionScheme<'parents, C, const N: usize> {

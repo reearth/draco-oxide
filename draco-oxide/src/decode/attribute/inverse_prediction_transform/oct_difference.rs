@@ -1,6 +1,6 @@
 use super::InversePredictionTransformImpl;
 use crate::decode::attribute::portabilization::{Deportabilization, DeportabilizationImpl};
-use crate::encode::attribute::prediction_transform::geom::{
+use crate::shared::attribute::geom::{
     octahedral_inverse_transform, 
     octahedral_transform
 };

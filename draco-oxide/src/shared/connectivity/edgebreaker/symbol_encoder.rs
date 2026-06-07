@@ -1,5 +1,4 @@
 use crate::core::bit_coder::BitReader;
-use crate::encode::connectivity::edgebreaker::Err;
 use crate::prelude::ByteReader;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -39,7 +38,7 @@ impl Symbol {
 }
 
 pub(crate) trait SymbolEncoder {
-    fn encode_symbol(symbol: Symbol) -> Result<(u8, u64), Err>;
+    fn encode_symbol(symbol: Symbol) -> (u8, u64);
 
     #[allow(dead_code)] // TODO: remove this after completing the decoder.
     fn decode_symbol<R>(reader: &mut BitReader<R>) -> Symbol
@@ -49,13 +48,13 @@ pub(crate) trait SymbolEncoder {
 
 pub(crate) struct CrLight;
 impl SymbolEncoder for CrLight {
-    fn encode_symbol(symbol: Symbol) -> Result<(u8, u64), Err> {
+    fn encode_symbol(symbol: Symbol) -> (u8, u64) {
         match symbol {
-            Symbol::C => Ok((1, 0)),
-            Symbol::S => Ok((3, 0b1)),
-            Symbol::L => Ok((3, 0b11)),
-            Symbol::R => Ok((3, 0b101)),
-            Symbol::E => Ok((3, 0b111)),
+            Symbol::C => (1, 0),
+            Symbol::S => (3, 0b1),
+            Symbol::L => (3, 0b11),
+            Symbol::R => (3, 0b101),
+            Symbol::E => (3, 0b111),
         }
     }
 

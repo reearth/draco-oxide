@@ -3,6 +3,8 @@ use crate::{
     prelude::{ByteReader, ByteWriter},
 };
 
+pub mod rans;
+
 pub(crate) const L_RANS_BASE: usize = 4096;
 pub(crate) const DEFAULT_RANS_PRECISION: usize = 12;
 pub(crate) const DEFAULT_RABS_PRECISION: usize = 8;

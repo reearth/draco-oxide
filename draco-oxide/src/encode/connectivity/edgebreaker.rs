@@ -7,7 +7,7 @@ use crate::core::corner_table::attribute_corner_table::AttributeCornerTable;
 use crate::core::corner_table::CornerTable;
 use crate::core::corner_table::GenericCornerTable;
 use crate::debug_write;
-use crate::encode::entropy::rans::{self, RabsCoder};
+use crate::shared::entropy::rans::{self, RabsCoder};
 use crate::encode::entropy::symbol_coding::encode_symbols;
 use crate::prelude::{Attribute, AttributeType};
 use crate::shared::connectivity::edgebreaker::symbol_encoder::{CrLight, Symbol, SymbolEncoder};
@@ -656,7 +656,7 @@ impl Traversal for DefaultTraversal {
         {
             let mut writer: BitWriter<'_, Vec<u8>, LsbFirst> = BitWriter::spown_from(&mut writer);
             for s in self.symbols.into_iter().rev() {
-                writer.write_bits(CrLight::encode_symbol(s)?);
+                writer.write_bits(CrLight::encode_symbol(s));
             }
         }
 

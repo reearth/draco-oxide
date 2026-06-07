@@ -5,7 +5,7 @@ use crate::core::shared::{
     Vector,
 };
 use crate::decode::attribute::portabilization::{Deportabilization, DeportabilizationImpl};
-use crate::encode::attribute::prediction_transform::geom::*;
+use crate::shared::attribute::geom::*;
 use crate::prelude::ByteReader;
 use crate::shared::attribute::Portable;
 

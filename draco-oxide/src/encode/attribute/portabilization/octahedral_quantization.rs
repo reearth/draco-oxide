@@ -1,7 +1,7 @@
 use crate::core::shared::AttributeValueIdx;
 use crate::core::shared::Vector;
-use crate::encode::attribute::prediction_transform::geom::into_faithful_oct_quantization;
-use crate::encode::attribute::prediction_transform::geom::octahedral_transform;
+use crate::shared::attribute::geom::into_faithful_oct_quantization;
+use crate::shared::attribute::geom::octahedral_transform;
 use crate::prelude::Attribute;
 use crate::prelude::AttributeType;
 use crate::prelude::ByteWriter;
