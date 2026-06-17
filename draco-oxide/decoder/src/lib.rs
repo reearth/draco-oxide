@@ -2,4 +2,4 @@
 //! into the [`draco_oxide_core`] mesh model. Large parts of the decoder are still
 //! under construction and commented out.
 
-pub mod decode;
+// pub mod decode;
