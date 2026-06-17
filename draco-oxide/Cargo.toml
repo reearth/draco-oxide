@@ -13,7 +13,10 @@ readme = "../README.md"
 
 [dependencies]
 draco-oxide-core.workspace = true
-draco-oxide-decoder = { workspace = true, optional = true }
+# draco-oxide-decoder is not published to crates.io yet, so it cannot be a
+# dependency of the published `draco-oxide` crate. Re-enable the optional dep
+# (and the `decoder` feature below) once the decoder crate is published.
+# draco-oxide-decoder = { workspace = true, optional = true }
 enum_dispatch = "0.3.13"
 remain = "0.2.15"
 serde_json = "1.0"
@@ -23,9 +26,9 @@ gltf = { version = "1.4", features = ["extensions", "guess_mime_type", "image", 
 image = { version = "0.25", features = ["webp"] }
 
 [features]
-default = ["decoder"]
-decoder = ["dep:draco-oxide-decoder"]
+default = []
+# decoder = ["dep:draco-oxide-decoder"]  # re-enable once the decoder is published
 evaluation = []
-# Forwards into core (always) and the decoder (only when the `decoder` feature
-# pulls it in) so debug output is enabled across every crate, not just here.
-debug_format = ["draco-oxide-core/debug_format", "draco-oxide-decoder?/debug_format"]
+# Forwards into core so debug output is enabled across every crate, not just here.
+# (Re-add "draco-oxide-decoder?/debug_format" once the decoder dep returns.)
+debug_format = ["draco-oxide-core/debug_format"]

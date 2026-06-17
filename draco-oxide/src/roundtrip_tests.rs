@@ -335,6 +335,10 @@ mod sequence {
     ];
 }
 
+// These round-trip tests need `draco-oxide-decoder`, which is not published to
+// crates.io yet and so is not a dependency of `draco-oxide`. Restore this module
+// (and the `decoder` feature gate) once the decoder crate is published.
+/*
 #[cfg(feature = "decoder")]
 mod symbol_coding {
     use crate::encode::entropy::symbol_coding;
@@ -433,3 +437,4 @@ mod symbol_coding {
         Ok(())
     }
 }
+*/

@@ -12,12 +12,12 @@ pub mod io;
 /// Defines the mesh encoder.
 pub mod encode;
 
-/// Re-export of the decoder crate (`draco-oxide-decoder`), enabled by the default
-/// `decoder` feature. Size-sensitive consumers (e.g. WASM) should depend on
-/// `draco-oxide-decoder` directly to avoid linking the encoder. Reachable as
-/// `draco_oxide::decode`.
-#[cfg(feature = "decoder")]
-pub use draco_oxide_decoder::decode;
+// The decoder crate (`draco-oxide-decoder`) is not published to crates.io yet, so
+// `draco-oxide` cannot depend on it while it is published. Once the decoder is
+// published, re-add the optional dep + `decoder` feature and restore:
+//
+//     #[cfg(feature = "decoder")]
+//     pub use draco_oxide_decoder::decode;
 
 /// Cross-crate round-trip / integration tests relocated from `draco-oxide-core`
 /// and `draco-oxide-decoder` (they need the encoder + io + decoder together).
