@@ -541,7 +541,9 @@ pub struct MaybeInitAttributeBuffer {
 
     num_components: usize,
 
-    /// Debugging purpose only; this will not be used in the release mode.
+    /// Debugging purpose only; only read by the `safety_assert!` checks, which run
+    /// in debug builds with the (default-on) `safety_assertions` feature enabled.
+    #[allow(dead_code)]
     initialized_elements: Vec<bool>,
 }
 
@@ -556,7 +558,7 @@ impl MaybeInitAttributeBuffer {
                 .add(len * component_type.size() * num_components)
         };
         let mut initialized_elements = Vec::with_capacity(len);
-        #[cfg(any(debug_assertions, feature = "safety_assertions"))]
+        #[cfg(all(debug_assertions, feature = "safety_assertions"))]
         {
             initialized_elements.resize(len, false);
         }
@@ -636,7 +638,7 @@ impl MaybeInitAttributeBuffer {
 
         safety_assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
 
-        #[cfg(any(debug_assertions, feature = "safety_assertions"))]
+        #[cfg(all(debug_assertions, feature = "safety_assertions"))]
         {
             self.initialized_elements[idx] = true;
         }

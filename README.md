@@ -2,7 +2,7 @@
 
 &#x20;&#x20;
 
-[![Crates.io](https://img.shields.io/crates/v/draco-oxide)](https://crates.io/crates/draco-oxide)
+[![Crates.io](https://img.shields.io/crates/v/draco-oxide?include_prereleases)](https://crates.io/crates/draco-oxide)
 [![Documentation](https://docs.rs/draco-oxide/badge.svg)](https://docs.rs/draco-oxide) 
 
 `draco-oxide` is a high-performance Rust re-write of Google’s [Draco](https://github.com/google/draco) 3D-mesh compression library, featuring efficient streaming I/O and seamless WebAssembly integration.

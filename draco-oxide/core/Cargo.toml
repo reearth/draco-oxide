@@ -23,12 +23,15 @@ kiddo = "5.2.4"
 faer = "0.22.6"
 
 [features]
+default = ["safety_assertions"]
 # Gates the `debug_write!` / `debug_expect!` macros (defined in `utils/debug`).
 # Resolved at each macro call site, so every crate that invokes them must
 # declare this feature; the `draco-oxide` encoder forwards into it.
 debug_format = []
-# Forces the `safety_assert!` / `safety_assert_eq!` safety checks on even in
-# release builds. Default-off: in debug builds the checks run via
-# `debug_assertions` regardless. Resolved at each macro call site, so every crate
-# that invokes the macros declares it and forwards into core.
+# Gates the `safety_assert!` / `safety_assert_eq!` checks. On by default and
+# combined with `debug_assertions` (the macros use `all(...)`), so the checks run
+# in debug builds only and never in release. Disable with `--no-default-features`
+# to drop them from debug builds too. A failing safety assertion is always a bug,
+# never a runtime check. Resolved at each macro call site, so every crate that
+# invokes the macros declares it and forwards into core.
 safety_assertions = []
