@@ -13,6 +13,27 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all --check
 
+  warnings:
+    runs-on: ubuntu-latest
+    # Deny compiler warnings (rustc only — clippy is intentionally not run yet).
+    env:
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      # Mirror the `tests` job scope: the draco-oxide crates + integration
+      # `tests` crate, excluding the cli/analyzer apps. `--all-targets` also
+      # covers test/example/bench code; the second pass adds the `evaluation`
+      # feature so its `#[cfg(...)]` code is checked too.
+      - name: check (default features)
+        run: cargo check --workspace --exclude cli --exclude analyzer --all-targets
+
+      - name: check (evaluation feature)
+        run: cargo check -p draco-oxide --features evaluation --all-targets
+
   tests:
     runs-on: ubuntu-latest
     env:
