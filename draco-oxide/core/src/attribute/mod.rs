@@ -1,3 +1,4 @@
+use crate::safety_assert;
 use serde::Serialize;
 
 use kiddo::immutable::float::kdtree::ImmutableKdTree;
@@ -335,13 +336,13 @@ impl Attribute {
     /// # Safety:
     /// This function assumes that the indices are valid, i.e. they are within the bounds of the buffer.
     pub fn permute_unchecked(&mut self, indices: &[usize]) {
-        debug_assert!(
+        safety_assert!(
             indices.len() == self.len(),
             "Indices length must match the buffer length: indices.len() = {}, self.len() = {}",
             indices.len(),
             self.len()
         );
-        debug_assert!(
+        safety_assert!(
             indices.iter().all(|&i| i < self.len()),
             "All indices must be within the buffer length: indices = {:?}, self.len() = {}",
             indices,

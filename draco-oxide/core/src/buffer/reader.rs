@@ -1,3 +1,4 @@
+use crate::safety_assert;
 use crate::types::{BitReader, ByteReader};
 
 use super::{OrderConfig, RawBuffer, MsbFirst};
@@ -51,7 +52,7 @@ impl<Order: OrderConfig> ByteReader for Reader<Order, false> {
 	/// the output data is stored in the first 8 bits.
 	fn read_byte(&mut self) -> u8 {
 		assert!(self.num_remaining_bits > 8, "Attempt to read beyond buffer bounds.");
-		debug_assert!(self.pos_in_curr_byte == 0, "Cannot read byte when not at the start of a byte.");
+		safety_assert!(self.pos_in_curr_byte == 0, "Cannot read byte when not at the start of a byte.");
 		let value = unsafe { ptr::read(self.ptr) };
 		self.ptr = unsafe { self.ptr.add(1) };
 		self.num_remaining_bits -= 8;

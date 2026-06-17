@@ -1,3 +1,4 @@
+use crate::safety_assert;
 use crate::types::{Cross, Dot, Float, NdVector};
 
 /// Calculates the distance from a point to a triangle in 3D space.
@@ -41,6 +42,6 @@ pub fn point_to_line_distance_3d<F: Float>(p: NdVector<3, F>, line: [NdVector<3,
     let dir = (line[1] - line[0]).normalize();
     let p_line0 = p - line[0];
     let n = (p_line0 - dir * p_line0.dot(dir)).normalize();
-    debug_assert!(n.dot(dir).abs() < F::from_f64(1e-6));
+    safety_assert!(n.dot(dir).abs() < F::from_f64(1e-6));
     n.dot(p_line0).abs()
 }

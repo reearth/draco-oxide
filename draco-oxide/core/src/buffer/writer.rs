@@ -1,3 +1,4 @@
+use crate::safety_assert;
 use crate::types::{BitWriter, ByteWriter};
 
 use super::{
@@ -55,7 +56,7 @@ impl<Order: OrderConfig> BitWriter for Writer<Order, true> {
 		}
 
 		// First 'size' bits of 'value' need to contain the data.
-		debug_assert!(
+		safety_assert!(
 			size==64 || value >> size==0,
 			"Invalid Data: 'value' has more than 'size' bits of data: {:?}",
 			(size, value)

@@ -2,6 +2,7 @@ use crate::bit_coder::ByteWriter;
 use crate::codec::entropy::{
     rans_build_tables, RansSymbol, DEFAULT_RABS_PRECISION, DEFAULT_RANS_PRECISION, L_RANS_BASE,
 };
+use crate::safety_assert;
 use crate::utils::bit_coder::leb128_write;
 
 const SECOND_POW_6: usize = 1 << 6;
@@ -169,7 +170,7 @@ where
             .unwrap()
             .0
             + 1;
-        debug_assert!((num_symbols..freq_counts.len()).all(|i| freq_counts[i] == 0));
+        safety_assert!((num_symbols..freq_counts.len()).all(|i| freq_counts[i] == 0));
 
         let mut distribution = Vec::with_capacity(num_symbols);
         let rans_precision = 1 << RANS_PRECISION;
@@ -213,7 +214,7 @@ where
             }
         }
 
-        debug_assert!(distribution.iter().sum::<usize>() == rans_precision);
+        safety_assert!(distribution.iter().sum::<usize>() == rans_precision);
 
         // encode distribution
         leb128_write(num_symbols as u64, writer);

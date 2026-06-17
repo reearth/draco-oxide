@@ -81,7 +81,7 @@ where
         // 	let normal = u_pos.cross(v_pos);
         // 	let s = -normal.dot(delta_pos) / normal.dot(normal);
         // 	let out = normal*s + delta_pos;
-        // 	debug_assert!(
+        // 	safety_assert!(
         // 		out.dot(normal).abs() < F::from_f64(1e-6),
         // 		"delta_pos_projected_on_tp must be on the plane defined by u_pos and v_pos, but it is not. \
         // 		delta_pos_projected_on_tp = {:.5?}, normal = {:.5?}, delta_pos = {:.5?}",
@@ -95,7 +95,7 @@ where
         // let s = delta_pos_projected_on_tp.cross(v_pos).dot(u_cross_v) / u_cross_v_norm_squared;
         // let t = u_pos.cross(delta_pos_projected_on_tp).dot(u_cross_v) / u_cross_v_norm_squared;
 
-        // debug_assert!(
+        // safety_assert!(
         // 	(u_pos*s+v_pos*t - delta_pos_projected_on_tp).norm() < F::from_f64(1e-6),
         // 	"u_pos*s+v_pos*t must equal delta_pos_projected_on_tp, but it is not. \
         // 	u_pos*s+v_pos*t = {:?}, delta_pos_projected_on_tp = {:?}",
@@ -149,7 +149,7 @@ where
         // let mut vertices_without_parallelogram: Vec<ops::Range<usize>> = Vec::new();
 
         // for face in self.corner_table {
-        //     debug_assert!(face.is_sorted());
+        //     safety_assert!(face.is_sorted());
         //     let num_unvisited_vertices = face.iter()
         //         .filter(|&&v| v>=is_already_encoded.len() || !is_already_encoded[v])
         //         .count();
@@ -234,15 +234,15 @@ where
 
         //     // [    m    )
         //     //    [    r    )
-        //     debug_assert!(!(r.start > m.start && r.start < m.end && r.end > m.end));
+        //     safety_assert!(!(r.start > m.start && r.start < m.end && r.end > m.end));
 
         //     //     [    m    )
         //     // [    r    )
-        //     debug_assert!(!(r.start > m.start && r.end > m.start && r.end < m.end));
+        //     safety_assert!(!(r.start > m.start && r.end > m.start && r.end < m.end));
 
         //     // [    m    )
         //     //   [  r  )
-        //     debug_assert!(!(r.start < m.start && r.end > m.start && r.end < m.end));
+        //     safety_assert!(!(r.start < m.start && r.end > m.start && r.end < m.end));
 
         //     // The following cases are the only possibilities:
 

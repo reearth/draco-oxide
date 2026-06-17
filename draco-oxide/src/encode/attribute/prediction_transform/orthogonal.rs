@@ -59,8 +59,8 @@ impl<const N: usize> PredictionTransformImpl<N> for OrthogonalTransform<N> {
 
         // let pred_cross_orig = pred.cross(orig);
         // // 'ref_on_pred_perp' and pred_'cross_orig' are on the same plane defined by 'pred'
-        // debug_assert!(pred_cross_orig.dot(pred).abs() < one/Data::Component::from_u64(1_000_000));
-        // debug_assert!(ref_on_pred_perp.dot(pred).abs() < one/Data::Component::from_u64(1_000_000));
+        // safety_assert!(pred_cross_orig.dot(pred).abs() < one/Data::Component::from_u64(1_000_000));
+        // safety_assert!(ref_on_pred_perp.dot(pred).abs() < one/Data::Component::from_u64(1_000_000));
 
         // // get the angle between 'ref_on_pred_perp' and 'pred_cross_orig'
         // let ref_on_pred_perp_norm_squared = ref_on_pred_perp.dot(ref_on_pred_perp).to_f64();

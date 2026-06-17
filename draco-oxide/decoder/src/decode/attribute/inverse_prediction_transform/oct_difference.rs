@@ -1,3 +1,4 @@
+use draco_oxide_core::safety_assert;
 use super::InversePredictionTransformImpl;
 use crate::decode::attribute::portabilization::{Deportabilization, DeportabilizationImpl};
 use draco_oxide_core::codec::attribute::geom::{
@@ -44,7 +45,7 @@ where
         let crr = self.deportabilization.deportabilize_next(reader);
         // Safety:
         // We made sure that the data is three dimensional.
-        debug_assert!(
+        safety_assert!(
             Data::NUM_COMPONENTS == 3,
         );
 

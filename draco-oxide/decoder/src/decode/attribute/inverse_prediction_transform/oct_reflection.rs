@@ -1,3 +1,4 @@
+use draco_oxide_core::safety_assert;
 use std::result::Result;
 
 use super::InversePredictionTransformImpl;
@@ -44,7 +45,7 @@ impl<Data> InversePredictionTransformImpl for OctahedronReflectionInverseTransfo
         let crr = self.deportabilization.deportabilize_next(reader);
         // Safety:
         // We made sure that the data is three dimensional.
-        debug_assert!(
+        safety_assert!(
             Data::NUM_COMPONENTS == 3,
         );
 

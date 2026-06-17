@@ -41,7 +41,7 @@ where
 
         // // Safety:
         // // We made sure that the data is three dimensional.
-        // debug_assert!(
+        // safety_assert!(
         //     Data::NUM_COMPONENTS == 3,
         // );
         
