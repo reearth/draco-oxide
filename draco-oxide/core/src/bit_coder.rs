@@ -1,3 +1,4 @@
+use crate::safety_assert;
 use std::{iter::Rev, vec};
 
 use super::buffer::{MsbFirst, OrderConfig};
@@ -375,7 +376,7 @@ impl<'buffer, Buffer: ByteReader, Order: OrderConfig> BitReader<'buffer, Buffer,
     /// Reads 'size' bits from the buffer and returns them as a 'u64'.
     /// 'size' must be greater than 0 and less than or equal to 64.
     pub fn read_bits(&mut self, size: u8) -> Result<u64, ReaderErr> {
-        debug_assert!(
+        safety_assert!(
             size > 0 && size <= 64,
             "Size must be between 1 and 64 bits."
         );

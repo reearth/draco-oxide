@@ -27,3 +27,8 @@ faer = "0.22.6"
 # Resolved at each macro call site, so every crate that invokes them must
 # declare this feature; the `draco-oxide` encoder forwards into it.
 debug_format = []
+# Forces the `safety_assert!` / `safety_assert_eq!` safety checks on even in
+# release builds. Default-off: in debug builds the checks run via
+# `debug_assertions` regardless. Resolved at each macro call site, so every crate
+# that invokes the macros declares it and forwards into core.
+safety_assertions = []

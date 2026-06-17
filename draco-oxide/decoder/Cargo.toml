@@ -20,3 +20,7 @@ enum_dispatch = "0.3.13"
 # core because the `#[cfg(feature = "debug_format")]` in those macros resolves
 # in this crate, not in core.
 debug_format = ["draco-oxide-core/debug_format"]
+# Forces the safety-assertion checks on in release builds (default-off; always on
+# in debug via `debug_assertions`). Forwarded to core for the same call-site
+# resolution reason as `debug_format`.
+safety_assertions = ["draco-oxide-core/safety_assertions"]

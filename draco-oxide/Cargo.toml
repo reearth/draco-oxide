@@ -32,3 +32,7 @@ evaluation = []
 # Forwards into core so debug output is enabled across every crate, not just here.
 # (Re-add "draco-oxide-decoder?/debug_format" once the decoder dep returns.)
 debug_format = ["draco-oxide-core/debug_format"]
+# Forces the safety-assertion checks on in release builds (default-off; always on
+# in debug via `debug_assertions`). Forwarded into core so the checks in core fire
+# too. (Re-add "draco-oxide-decoder?/safety_assertions" once the decoder dep returns.)
+safety_assertions = ["draco-oxide-core/safety_assertions"]

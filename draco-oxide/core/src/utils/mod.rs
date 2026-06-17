@@ -1,3 +1,4 @@
+use crate::safety_assert;
 use crate::types::{NdVector, Vector};
 
 pub mod bit_coder;
@@ -71,7 +72,7 @@ pub fn merge_indices(
         }
 
         // Now that 'r.start' is a valid start for the merged range.
-        debug_assert!(
+        safety_assert!(
             iters.iter_mut().all(|(s, _)| s.start <= r.start),
             "r={:?}, current ranges: {:?}",
             r,

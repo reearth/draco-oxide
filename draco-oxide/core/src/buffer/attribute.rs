@@ -1,3 +1,4 @@
+use crate::{safety_assert, safety_assert_eq};
 use serde::ser::SerializeSeq;
 use serde::Serialize;
 use std::{mem, ptr};
@@ -73,12 +74,12 @@ impl AttributeBuffer {
         Data::Component: DataValue,
     {
         let idx = usize::from(idx);
-        debug_assert!(
+        safety_assert!(
             size_of::<Data>() == self.component_type.size() * self.num_components,
             "Cannot read from buffer: Trying to read {}, but the buffer stores the elements of type {} with {} components", 
             size_of::<Data>(), self.component_type.size(), self.num_components
         );
-        debug_assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
+        safety_assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
         let size = mem::size_of::<Data>();
         let ptr = unsafe { self.as_ptr().add(size * idx) };
         // Safety: upheld
@@ -132,12 +133,12 @@ impl AttributeBuffer {
         Data: Vector<N>,
         Data::Component: DataValue,
     {
-        debug_assert_eq!(
+        safety_assert_eq!(
             Data::Component::get_dyn(), self.component_type,
             "Unsafe Condition Failed: Data type mismatch: Cannot push data of type {:?} into attribute buffer of type {:?}", 
             Data::Component::get_dyn(), self.component_type
         );
-        debug_assert!(
+        safety_assert!(
             N == self.num_components,
             "Unsafe Condition Failed: Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
             N, self.num_components
@@ -162,7 +163,7 @@ impl AttributeBuffer {
     /// # Safety
     /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
     pub unsafe fn as_slice<Data>(&self) -> &[Data] {
-        debug_assert!(
+        safety_assert!(
             mem::size_of::<Data>() == self.component_type.size() * self.num_components,
             "Cannot create slice: Trying to cast to data of size {}, but the buffer stores elements of type {}D vector of {:?}, which has size {}",
             mem::size_of::<Data>(),
@@ -179,7 +180,7 @@ impl AttributeBuffer {
     /// # Safety
     /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
     pub unsafe fn as_slice_mut<Data>(&mut self) -> &mut [Data] {
-        debug_assert!(
+        safety_assert!(
             mem::size_of::<Data>() == self.component_type.size() * self.num_components,
             "Cannot create slice: Trying to cast to data of size {}, but the buffer stores elements of type {}D vector of {:?}, which has size {}",
             mem::size_of::<Data>(),
@@ -216,14 +217,14 @@ impl AttributeBuffer {
     where
         Data: Vector<N>,
     {
-        debug_assert_eq!(
+        safety_assert_eq!(
             Data::Component::get_dyn(),
             self.component_type,
             "Data type mismatch: Cannot push data of type {:?} into attribute buffer of type {:?}",
             Data::Component::get_dyn(),
             self.component_type
         );
-        debug_assert!(
+        safety_assert!(
             N == self.num_components,
             "Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
             N, self.num_components
@@ -251,12 +252,12 @@ impl AttributeBuffer {
     /// (1) it has the same length as the buffer,
     /// (2) its elements are distinct.
     pub unsafe fn permute_unchecked(&mut self, permutation: &[usize]) {
-        debug_assert_eq!(
+        safety_assert_eq!(
             self.len,
             permutation.len(),
             "Permutation length does not match the buffer length"
         );
-        debug_assert!(
+        safety_assert!(
             {
                 let mut p = permutation.to_vec();
                 p.sort();
@@ -284,8 +285,8 @@ impl AttributeBuffer {
     /// # Safety
     /// This function assumes that `i` and `j` are within the bounds of the buffer.
     pub unsafe fn swap_unchecked(&mut self, i: usize, j: usize) {
-        debug_assert!(i < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", i, self.len);
-        debug_assert!(j < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", j, self.len);
+        safety_assert!(i < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", i, self.len);
+        safety_assert!(j < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", j, self.len);
 
         let elem_size = self.num_components * self.component_type.size();
         let ptr_i = unsafe { self.as_ptr().add(i * elem_size) };
@@ -333,7 +334,7 @@ impl AttributeBuffer {
         let elem_size = self.num_components * self.component_type.size();
         let mut write_pos = 0;
         for &idx in keep_indices {
-            debug_assert!(
+            safety_assert!(
                 idx < self.len,
                 "retain_indices: index {} out of bounds (len {})",
                 idx,
@@ -555,7 +556,7 @@ impl MaybeInitAttributeBuffer {
                 .add(len * component_type.size() * num_components)
         };
         let mut initialized_elements = Vec::with_capacity(len);
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "safety_assertions"))]
         {
             initialized_elements.resize(len, false);
         }
@@ -579,7 +580,7 @@ impl MaybeInitAttributeBuffer {
         Data: Vector<N>,
         Data::Component: DataValue,
     {
-        debug_assert_eq!(
+        safety_assert_eq!(
             mem::size_of::<Data>(), self.component_type.size() * self.num_components,
             "Cannot create slice: Trying to cast to {}, but the buffer stores elements of type {}D vector of {:?}, which has size {}",
             mem::size_of::<Data>(), self.num_components, self.component_type, self.component_type.size(),
@@ -620,22 +621,22 @@ impl MaybeInitAttributeBuffer {
         Data: Vector<N>,
         Data::Component: DataValue,
     {
-        debug_assert_eq!(
+        safety_assert_eq!(
             Data::Component::get_dyn(),
             self.component_type,
             "Data type mismatch: Cannot push data of type {:?} into attribute buffer of type {:?}",
             Data::Component::get_dyn(),
             self.component_type
         );
-        debug_assert!(
+        safety_assert!(
             N == self.num_components,
             "Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
             N, self.num_components
         );
 
-        debug_assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
+        safety_assert!(idx < self.len, "Index out of bounds: The index {} is out of bounds for the attribute buffer with length {}", idx, self.len);
 
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "safety_assertions"))]
         {
             self.initialized_elements[idx] = true;
         }
@@ -669,7 +670,7 @@ impl MaybeInitAttributeBuffer {
 
 impl From<MaybeInitAttributeBuffer> for AttributeBuffer {
     fn from(maybe_init: MaybeInitAttributeBuffer) -> Self {
-        debug_assert!(
+        safety_assert!(
             maybe_init.initialized_elements.iter().all(|&x| x),
             "Not all elements are initialized: Out of {} elements, uninitialized are {:?}",
             maybe_init.len,

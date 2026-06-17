@@ -1,3 +1,4 @@
+use crate::safety_assert;
 pub mod attribute;
 // pub mod reader;
 // pub mod writer;
@@ -104,7 +105,7 @@ impl RawBuffer {
     /// expands the buffer to 'new_cap'.
     /// Safety: 'new_cap' must be less than 'usize::Max'.
     unsafe fn expand(&mut self, new_cap: usize) {
-        debug_assert!(new_cap < usize::MAX, "'new_cap' is too large");
+        safety_assert!(new_cap < usize::MAX, "'new_cap' is too large");
         let new_data = alloc::realloc(
             self.data.as_ptr() as *mut u8,
             alloc::Layout::array::<u8>(self.cap).unwrap(),

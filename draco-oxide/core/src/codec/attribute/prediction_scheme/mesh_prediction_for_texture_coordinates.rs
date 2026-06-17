@@ -3,6 +3,7 @@ use crate::attribute::Attribute;
 use crate::bit_coder::ByteWriter;
 use crate::codec::entropy::rans::RabsCoder;
 use crate::corner_table::GenericCornerTable;
+use crate::safety_assert_eq;
 use crate::types::NdVector;
 use crate::types::{CornerIdx, PointIdx, VertexIdx};
 use crate::types::{Dot, Vector};
@@ -127,7 +128,7 @@ where
         attribute: &Attribute,
     ) -> NdVector<N, i32> {
         // This prediction scheme is specifically for texture coordinates (2D)
-        debug_assert_eq!(N, 2, "Texture coordinate prediction is only for 2D vectors");
+        safety_assert_eq!(N, 2, "Texture coordinate prediction is only for 2D vectors");
 
         // Fold any vertices appended since the last call into the membership set.
         // `vertices_up_till_now` only ever grows (it is the encoder's running

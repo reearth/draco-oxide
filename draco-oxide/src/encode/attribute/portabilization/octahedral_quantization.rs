@@ -4,6 +4,7 @@ use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::attribute::geom::into_faithful_oct_quantization;
 use draco_oxide_core::codec::attribute::geom::octahedral_transform;
 use draco_oxide_core::codec::attribute::Portable;
+use draco_oxide_core::safety_assert;
 use draco_oxide_core::types::AttributeValueIdx;
 use draco_oxide_core::types::NdVector;
 use draco_oxide_core::types::Vector;
@@ -48,7 +49,7 @@ where
 
     fn portabilize_value(&mut self, val: Data) -> NdVector<2, i32> {
         let val_oct = octahedral_transform(val) + NdVector::<2, f32>::from([1.0, 1.0]);
-        debug_assert!(
+        safety_assert!(
             *val_oct.get(0) >= 0.0
                 && *val_oct.get(0) <= 2.0
                 && *val_oct.get(1) >= 0.0

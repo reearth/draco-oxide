@@ -1,4 +1,5 @@
 use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::safety_assert;
 use draco_oxide_core::types::{NdVector, Vector};
 
 use super::PredictionTransformImpl;
@@ -23,7 +24,7 @@ impl<const N: usize> PredictionTransformImpl<N> for OctahedronReflectionTransfor
     {
         // Safety:
         // We made sure that the data is three dimensional.
-        debug_assert!(N == 2,);
+        safety_assert!(N == 2,);
 
         unsafe {
             if *pred.get_unchecked(2) < 0 {

@@ -127,15 +127,15 @@ where
 
         //     // [    m    )
         //     //    [    r    )
-        //     debug_assert!(!(r.start > m.start && r.start < m.end && r.end > m.end));
+        //     safety_assert!(!(r.start > m.start && r.start < m.end && r.end > m.end));
 
         //     //     [    m    )
         //     // [    r    )
-        //     debug_assert!(!(r.start > m.start && r.end > m.start && r.end < m.end));
+        //     safety_assert!(!(r.start > m.start && r.end > m.start && r.end < m.end));
 
         //     // [    m    )
         //     //   [  r  )
-        //     debug_assert!(!(r.start < m.start && r.end > m.start && r.end < m.end));
+        //     safety_assert!(!(r.start < m.start && r.end > m.start && r.end < m.end));
 
         //     // The following cases are the only possibilities:
 

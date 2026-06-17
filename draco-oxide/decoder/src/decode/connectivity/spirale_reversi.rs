@@ -1,3 +1,4 @@
+use draco_oxide_core::safety_assert;
 use std::collections::HashMap;
 use std::{cmp, vec, mem};
 use std::io::Read;
@@ -766,7 +767,7 @@ impl SpiraleReversi {
                 if let Some(idx) = self.boundary_edges.binary_search(&new_edge).err() {
                     self.boundary_edges.insert(idx, new_edge);
                 };
-                debug_assert!(self.boundary_edges.is_sorted());
+                safety_assert!(self.boundary_edges.is_sorted());
 
                 // update the right vertex.
                 self.active_edge[0] = next_vertex;
@@ -803,7 +804,7 @@ impl SpiraleReversi {
                 ];
                 let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
                 self.boundary_edges.insert(idx, new_edge);
-                debug_assert!(self.boundary_edges.is_sorted());
+                safety_assert!(self.boundary_edges.is_sorted());
 
                 self.active_edge[1] = self.num_decoded_vertices;
                 self.num_decoded_vertices += 1;
@@ -838,7 +839,7 @@ impl SpiraleReversi {
                 ];
                 let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
                 self.boundary_edges.insert(idx, new_edge);
-                debug_assert!(self.boundary_edges.is_sorted());
+                safety_assert!(self.boundary_edges.is_sorted());
 
                 self.active_edge[0] = self.num_decoded_vertices;
                 self.num_decoded_vertices += 1;
@@ -855,7 +856,7 @@ impl SpiraleReversi {
                     self.faces.push(new_face);
 
                     // modify the boundary edges
-                    debug_assert!(self.boundary_edges.is_empty());
+                    safety_assert!(self.boundary_edges.is_empty());
                     self.boundary_edges.push([new_face[0], new_face[1]]);
                     self.boundary_edges.push([new_face[0], new_face[2]]);
                     self.boundary_edges.push([new_face[1], new_face[2]]);
@@ -879,7 +880,7 @@ impl SpiraleReversi {
                     self.boundary_edges.push([new_face[0], new_face[1]]);
                     self.boundary_edges.push([new_face[0], new_face[2]]);
                     self.boundary_edges.push([new_face[1], new_face[2]]);
-                    debug_assert!(self.boundary_edges.is_sorted());
+                    safety_assert!(self.boundary_edges.is_sorted());
 
                     self.active_edge_stack.push(self.active_edge);
                     // choose any edge of the triangle
@@ -923,7 +924,7 @@ impl SpiraleReversi {
                 ];
                 let idx = self.boundary_edges.binary_search(&new_edge).unwrap_err();
                 self.boundary_edges.insert(idx, new_edge);
-                debug_assert!(self.boundary_edges.is_sorted());
+                safety_assert!(self.boundary_edges.is_sorted());
 
                 // now that the right vertex of the active edge is removed, we need to renumber
                 // the vertices numbered after the vertex.
