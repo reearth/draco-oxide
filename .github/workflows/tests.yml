@@ -33,5 +33,13 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
-      - name: workspace tests
-        run: cargo test --workspace -- --nocapture
+      # Test the draco-oxide crates (draco-oxide, -core, -decoder, draco-nd-vector)
+      # and the integration `tests` crate. The cli/analyzer apps are excluded.
+      - name: tests
+        run: cargo test --workspace --exclude cli --exclude analyzer -- --nocapture
+
+      # The above run never enables `evaluation`, so the encoder's
+      # `#[cfg(feature = "evaluation")]` tests are compiled out. Cover them
+      # explicitly rather than relying on analyzer's feature unification.
+      - name: evaluation tests
+        run: cargo test -p draco-oxide --features evaluation -- --nocapture

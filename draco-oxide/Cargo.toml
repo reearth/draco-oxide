@@ -1,36 +1,34 @@
 [package]
 description = "draco-oxide is a rust rewrite of Google's draco mesh compression library."
 name = "draco-oxide"
-authors = ["Re:Earth Contributors"]
-edition = "2021"
+authors.workspace = true
+edition.workspace = true
 exclude = ["benches/", "test-data/", "testdata/"]
-rust-version = "1.84"
-version = "0.1.0-alpha.5"
-license = "MIT OR Apache-2.0"
-homepage = "https://github.com/reearth/draco-oxide"
-repository = "https://github.com/reearth/draco-oxide"
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 readme = "../README.md"
 
 [dependencies]
+draco-oxide-core.workspace = true
+# draco-oxide-decoder is not published to crates.io yet, so it cannot be a
+# dependency of the published `draco-oxide` crate. Re-enable the optional dep
+# (and the `decoder` feature below) once the decoder crate is published.
+# draco-oxide-decoder = { workspace = true, optional = true }
 enum_dispatch = "0.3.13"
-draco-nd-vector = { path = "macros/draco-nd-vector", version = "0.0.0" }
-lazy_static = "1.5.0"
 remain = "0.2.15"
-seq-macro = "0.3.6"
-serde = { version = "1.0", features = ["derive"] }
-schemars = "0.8"
 serde_json = "1.0"
 thiserror = "2.0.12"
 tobj = "4.0.3"
-faer = "0.22.6"
 gltf = { version = "1.4", features = ["extensions", "guess_mime_type", "image", "import"] }
 image = { version = "0.25", features = ["webp"] }
-base64 = "0.21"
-indexmap = "2.0"
-paste = "1.0"
-kiddo = "5.2.4"
 
 [features]
 default = []
+# decoder = ["dep:draco-oxide-decoder"]  # re-enable once the decoder is published
 evaluation = []
-debug_format = []
+# Forwards into core so debug output is enabled across every crate, not just here.
+# (Re-add "draco-oxide-decoder?/debug_format" once the decoder dep returns.)
+debug_format = ["draco-oxide-core/debug_format"]

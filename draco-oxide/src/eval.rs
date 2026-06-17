@@ -227,7 +227,7 @@ fn process_events(events: Vec<EvalEvent>) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use crate::prelude::FunctionalByteWriter;
+    use draco_oxide_core::bit_coder::FunctionalByteWriter;
 
     use super::*;
 

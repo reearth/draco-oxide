@@ -4,10 +4,10 @@ pub(crate) mod entropy;
 pub(crate) mod header;
 pub(crate) mod metadata;
 
-use crate::core::bit_coder::ByteWriter;
-use crate::core::mesh::Mesh;
-use crate::core::shared::ConfigType;
-use crate::{debug_write, shared};
+use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::debug_write;
+use draco_oxide_core::mesh::Mesh;
+use draco_oxide_core::types::ConfigType;
 use thiserror::Error;
 
 #[cfg(feature = "evaluation")]
@@ -27,7 +27,7 @@ pub struct Config {
     // This field is unused in the current implementation, as we only suport the default attribute encoder configuration.
     attribute_encoder_cfg: attribute::Config,
     geometry_type: header::EncodedGeometryType,
-    encoder_method: shared::header::EncoderMethod,
+    encoder_method: draco_oxide_core::codec::header::EncoderMethod,
     metdata: bool,
 }
 
@@ -37,7 +37,7 @@ impl ConfigType for Config {
             connectivity_encoder_cfg: connectivity::Config::default(),
             attribute_encoder_cfg: attribute::Config::default(),
             geometry_type: header::EncodedGeometryType::TrianglarMesh,
-            encoder_method: shared::header::EncoderMethod::Edgebreaker,
+            encoder_method: draco_oxide_core::codec::header::EncoderMethod::Edgebreaker,
             metdata: false,
         }
     }

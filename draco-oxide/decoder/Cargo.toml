@@ -1,0 +1,22 @@
+[package]
+name = "draco-oxide-decoder"
+description = "Decoder for draco-oxide (work in progress): decompresses draco-encoded geometry into the draco-oxide-core mesh model."
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+draco-oxide-core.workspace = true
+thiserror = "2.0.12"
+remain = "0.2.15"
+enum_dispatch = "0.3.13"
+
+[features]
+# Enables debug output from the core macros used in `decode/`. Forwarded to
+# core because the `#[cfg(feature = "debug_format")]` in those macros resolves
+# in this crate, not in core.
+debug_format = ["draco-oxide-core/debug_format"]

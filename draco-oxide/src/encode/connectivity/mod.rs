@@ -4,11 +4,11 @@ pub(crate) mod sequential;
 
 use std::fmt::Debug;
 
-use crate::core::bit_coder::ByteWriter;
-use crate::core::shared::{ConfigType, PointIdx};
 use crate::encode::connectivity::edgebreaker::{DefaultTraversal, ValenceTraversal};
-use crate::prelude::{Attribute, AttributeType};
-use crate::shared::connectivity::edgebreaker::EdgebreakerKind;
+use draco_oxide_core::attribute::{Attribute, AttributeType};
+use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::codec::connectivity::edgebreaker::EdgebreakerKind;
+use draco_oxide_core::types::{ConfigType, PointIdx};
 
 #[cfg(feature = "evaluation")]
 use crate::eval;

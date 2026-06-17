@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use draco_oxide::prelude::ConfigType;
+use draco_oxide::core::types::ConfigType;
 use std::path::Path;
 
 #[derive(Parser)]

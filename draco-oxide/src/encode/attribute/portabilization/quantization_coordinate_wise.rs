@@ -1,6 +1,8 @@
-use crate::core::shared::{AttributeValueIdx, DataValue, Vector};
-use crate::prelude::{Attribute, ByteWriter, NdVector};
-use crate::shared::attribute::Portable;
+use draco_oxide_core::attribute::Attribute;
+use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::codec::attribute::Portable;
+use draco_oxide_core::types::NdVector;
+use draco_oxide_core::types::{AttributeValueIdx, DataValue, Vector};
 
 use super::{Config, PortabilizationImpl};
 

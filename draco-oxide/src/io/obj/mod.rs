@@ -1,14 +1,16 @@
-use crate::core::attribute::AttributeDomain;
+use draco_oxide_core::attribute::AttributeDomain;
 // use tobj to load the obj file and convert it to our internal mesh representation
-use crate::prelude::Mesh;
-use crate::prelude::{AttributeType, MeshBuilder, NdVector};
+use draco_oxide_core::attribute::AttributeType;
+use draco_oxide_core::mesh::builder::MeshBuilder;
+use draco_oxide_core::mesh::Mesh;
+use draco_oxide_core::types::NdVector;
 use std::fmt::Debug;
 use std::path::Path;
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum Err {
     #[error("Mesh Builder Error: {0}")]
-    MeshBuilderError(#[from] crate::core::mesh::builder::Err),
+    MeshBuilderError(#[from] draco_oxide_core::mesh::builder::Err),
 }
 
 pub fn load_obj<P: AsRef<Path> + Debug>(path: P) -> Result<Mesh, Err> {
@@ -89,7 +91,7 @@ fn load_tex_coords(mesh: &tobj::Mesh) -> (Vec<NdVector<2, f32>>, AttributeDomain
 
 #[cfg(test)]
 mod tests {
-    use crate::core::shared::PointIdx;
+    use draco_oxide_core::types::PointIdx;
 
     use super::*;
 

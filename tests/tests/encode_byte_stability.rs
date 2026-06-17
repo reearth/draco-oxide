@@ -10,7 +10,7 @@
 //! The fingerprints were captured from the pre-optimization implementation and
 //! confirmed byte-identical on the full 930-tile HighPoly corpus.
 
-use draco_oxide::prelude::ConfigType;
+use draco_oxide::core::types::ConfigType;
 use draco_oxide::{
     encode::{self, encode},
     io::obj::load_obj,

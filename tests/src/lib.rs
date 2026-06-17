@@ -18,10 +18,10 @@ use std::process::Command;
 
 use serde::Deserialize;
 
+use draco_oxide::core::mesh::Mesh;
+use draco_oxide::core::types::ConfigType;
 use draco_oxide::encode::{self as oxide_encode, encode as oxide_encode_fn};
 use draco_oxide::io::obj::load_obj;
-use draco_oxide::prelude::ConfigType;
-use draco_oxide::prelude::Mesh;
 
 // ---------------------------------------------------------------------------
 // Profile schema

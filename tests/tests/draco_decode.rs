@@ -12,9 +12,9 @@ use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use draco_oxide::core::types::ConfigType;
 use draco_oxide::encode::{self, encode};
 use draco_oxide::io::obj::load_obj;
-use draco_oxide::prelude::ConfigType;
 
 /// Meshes from `tests/data/` to round-trip through the reference decoder.
 const MESHES: &[&str] = &[

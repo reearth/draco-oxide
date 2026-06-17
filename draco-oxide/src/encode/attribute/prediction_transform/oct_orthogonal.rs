@@ -1,6 +1,6 @@
 use super::PredictionTransformImpl;
-use crate::core::shared::{NdVector, Vector};
-use crate::prelude::ByteWriter;
+use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::types::{NdVector, Vector};
 
 pub struct OctahedronOrthogonalTransform<const N: usize> {
     out: Vec<NdVector<N, i32>>,

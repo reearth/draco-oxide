@@ -7,8 +7,10 @@ use crate::encode::connectivity::ConnectivityEncoderOutput;
 #[cfg(feature = "evaluation")]
 use crate::eval;
 
-use crate::prelude::{Attribute, ByteWriter, ConfigType};
-use crate::shared::connectivity::edgebreaker::TraversalType;
+use draco_oxide_core::attribute::Attribute;
+use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::codec::connectivity::edgebreaker::TraversalType;
+use draco_oxide_core::types::ConfigType;
 
 pub fn encode_attributes<W>(
     atts: Vec<Attribute>,
@@ -29,7 +31,7 @@ where
     eval::write_json_pair("attributes count", atts.len().into(), writer);
 
     for (i, att) in atts.iter().enumerate() {
-        if cfg.encoder_method == crate::shared::header::EncoderMethod::Edgebreaker {
+        if cfg.encoder_method == draco_oxide_core::codec::header::EncoderMethod::Edgebreaker {
             // encode decoder id
             writer.write_u8((i as u8).wrapping_sub(1));
             // encode attribute type

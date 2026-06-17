@@ -1,0 +1,29 @@
+[package]
+name = "draco-oxide-core"
+description = "Shared core for draco-oxide: the geometry/attribute data model, numeric primitives, and the compression algorithms shared between the encoder and decoder."
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+draco-nd-vector.workspace = true
+remain = "0.2.15"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0.12"
+paste = "1.0"
+seq-macro = "0.3.6"
+kiddo = "5.2.4"
+
+[dev-dependencies]
+faer = "0.22.6"
+
+[features]
+# Gates the `debug_write!` / `debug_expect!` macros (defined in `utils/debug`).
+# Resolved at each macro call site, so every crate that invokes them must
+# declare this feature; the `draco-oxide` encoder forwards into it.
+debug_format = []
