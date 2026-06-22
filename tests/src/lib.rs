@@ -23,6 +23,8 @@ use draco_oxide::core::types::ConfigType;
 use draco_oxide::encode::{self as oxide_encode, encode as oxide_encode_fn};
 use draco_oxide::io::obj::load_obj;
 
+mod render;
+
 // ---------------------------------------------------------------------------
 // Profile schema
 // ---------------------------------------------------------------------------
@@ -151,9 +153,22 @@ pub enum ComparisonMethod {
     /// vertex reordering). Asserts the value is `<= max`. Both inputs must
     /// currently be OBJ files.
     L2Norm { max: f64 },
-    // Reserved: rendered-view image comparison via a headless browser, not yet
-    // implemented.
-    // RenderedView { ... },
+    /// Rendered-view structural similarity. Renders both inputs from several
+    /// viewpoints with a small CPU rasterizer (see [`render`]) and scores SSIM
+    /// per view. Asserts the *worst* view's score is `>= min` (1.0 = identical).
+    /// Both inputs must be OBJ files. The rendered PNGs are written to the
+    /// profile's output dir for debugging.
+    Ssim {
+        /// Minimum acceptable SSIM in `0.0..=1.0` for every view.
+        min: f64,
+        /// Square render size in pixels (default 512).
+        #[serde(default)]
+        resolution: Option<u32>,
+        /// Number of viewpoints rotated around the model's up axis; the worst
+        /// (minimum) score across them gates the test (default 4).
+        #[serde(default)]
+        views: Option<usize>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +315,81 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                                 p2.display(),
                             );
                         }
+                        ComparisonMethod::Ssim {
+                            min,
+                            resolution,
+                            views,
+                        } => {
+                            let res = resolution.unwrap_or(512);
+                            let n_views = views.unwrap_or(4).max(1);
+                            let (v1, t1) = render::load_obj_mesh(&p1).unwrap_or_else(|e| {
+                                panic!("{label} Ssim: failed to load {}: {e}", p1.display())
+                            });
+                            let (v2, t2) = render::load_obj_mesh(&p2).unwrap_or_else(|e| {
+                                panic!("{label} Ssim: failed to load {}: {e}", p2.display())
+                            });
+                            // Frame both meshes with input1's framing so only
+                            // genuine shape differences register.
+                            let cam = render::Framing::fit(&v1);
+                            let imgs1 = render::render_views(&v1, &t1, &cam, res, n_views);
+                            let imgs2 = render::render_views(&v2, &t2, &cam, res, n_views);
+
+                            let s1 = p1.file_stem().and_then(|s| s.to_str()).unwrap_or("ref");
+                            let s2 = p2.file_stem().and_then(|s| s.to_str()).unwrap_or("test");
+
+                            let mut worst = f64::INFINITY;
+                            let mut worst_view = 0;
+                            for (i, (a, b)) in imgs1.iter().zip(&imgs2).enumerate() {
+                                let sim = image_compare::gray_similarity_structure(
+                                    &image_compare::Algorithm::MSSIMSimple,
+                                    a,
+                                    b,
+                                )
+                                .unwrap_or_else(|e| {
+                                    panic!("{label} Ssim: comparison failed at view {i}: {e}")
+                                });
+                                if sim.score < worst {
+                                    worst = sim.score;
+                                    worst_view = i;
+                                }
+                            }
+                            // 0 = never, 1 = on failure (so a failing run is
+                            // debuggable without a rerun), 2+ = always.
+                            let should_save = match render_save_level() {
+                                0 => false,
+                                1 => worst < *min,
+                                _ => true,
+                            };
+                            if should_save {
+                                for (i, (a, b)) in imgs1.iter().zip(&imgs2).enumerate() {
+                                    let pa = out_dir.join(format!("ssim_{s1}_view{i}.png"));
+                                    let pb = out_dir.join(format!("ssim_{s2}_view{i}.png"));
+                                    a.save(&pa).unwrap_or_else(|e| {
+                                        panic!("{label} Ssim: writing {} failed: {e}", pa.display())
+                                    });
+                                    b.save(&pb).unwrap_or_else(|e| {
+                                        panic!("{label} Ssim: writing {} failed: {e}", pb.display())
+                                    });
+                                }
+                                eprintln!(
+                                    "{label} Ssim: wrote {} renders to {}",
+                                    imgs1.len() * 2,
+                                    out_dir.display()
+                                );
+                            }
+                            eprintln!(
+                                "{label} Ssim: worst score {worst} at view {worst_view} \
+                                 (min {min}, {n_views} views, {res}px)"
+                            );
+                            assert!(
+                                worst >= *min,
+                                "{label} Ssim: worst score {worst} < min {min} (view {worst_view})\n    \
+                                 inputs: {} vs {}\n    renders in: {}",
+                                p1.display(),
+                                p2.display(),
+                                out_dir.display(),
+                            );
+                        }
                     }
                 }
             }
@@ -321,6 +411,21 @@ fn op_kind(op: &Operation) -> &'static str {
 
 fn skip(name: &str, reason: &str) {
     eprintln!("SKIP [{name}]: {reason}");
+}
+
+/// Verbosity level for writing `Ssim` renders, from the `DRACO_SSIM_SAVE_RENDERS`
+/// env var:
+///   * `0` → never write,
+///   * `1` → write only on failure (the default when unset),
+///   * `2` (or higher) → always write, pass or fail.
+///
+/// e.g. `DRACO_SSIM_SAVE_RENDERS=2 cargo test -p tests`. A value that isn't a
+/// non-negative integer falls back to the default.
+fn render_save_level() -> u32 {
+    std::env::var("DRACO_SSIM_SAVE_RENDERS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(1)
 }
 
 fn run_subprocess(label: &str, tool: &str, mut cmd: Command) {

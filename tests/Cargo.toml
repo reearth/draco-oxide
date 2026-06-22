@@ -12,6 +12,11 @@ toml = "0.8"
 tobj = "4.0.3"
 gltf = { version = "1.4", features = ["import"] }
 kiddo = "5.2.4"
+# Rendering + SSIM for the camera/visual `Ssim` comparison method. `image` is
+# pinned to the same 0.25 the encoder crate uses, and `image-compare` (MIT)
+# depends on `image ^0.25`, so there's no duplicate-version churn.
+image = "0.25"
+image-compare = "0.5"
 
 [dev-dependencies]
 # Used by tests/eval/mod.rs (behind the `evaluation` feature) to serialize
