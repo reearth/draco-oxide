@@ -1,0 +1,36 @@
+# Visual round-trip test: encode a mesh with draco-oxide, decode it with Google
+# Draco's reference decoder, then compare the original and decoded meshes by
+# rendering both from several viewpoints with a small CPU rasterizer and scoring
+# structural similarity (SSIM). Catches gross visual/geometric regressions that a
+# point-set distance might smooth over.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "bunny.obj"
+output = "oxide.drc"
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "bunny.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "Ssim", min = 0.95, color_by = "Geometry" },
+]
+
+[[operations]]
+op = "Comparison"
+input1 = "bunny.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "Ssim", min = 0.95, color_by = "Normal" }
+]
