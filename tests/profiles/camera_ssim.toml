@@ -3,14 +3,6 @@
 # rendering both from several viewpoints with a small CPU rasterizer and scoring
 # structural similarity (SSIM). Catches gross visual/geometric regressions that a
 # point-set distance might smooth over.
-#
-# Like the other round-trip profiles this SKIPs (with a warning) when the Google
-# Draco binaries aren't available — see scripts/build-draco.sh or set
-# DRACO_ENCODER / DRACO_DECODER.
-#
-# Rendered PNGs are written to tests/outputs/camera_ssim/ (ssim_*_view*.png).
-# DRACO_SSIM_SAVE_RENDERS controls when: 0 = never, 1 = on failure (default),
-# 2 = always (e.g. `DRACO_SSIM_SAVE_RENDERS=2 cargo test -p tests camera_ssim`).
 
 [[operations]]
 op = "DracoOxideEncode"
