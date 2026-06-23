@@ -354,10 +354,18 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                             let mut worst = f64::INFINITY;
                             let mut worst_view = 0;
                             for (i, (a, b)) in imgs1.iter().zip(&imgs2).enumerate() {
-                                let sim =
-                                    image_compare::rgb_hybrid_compare(a, b).unwrap_or_else(|e| {
-                                        panic!("{label} Ssim: comparison failed at view {i}: {e}")
-                                    });
+                                // True RGB SSIM: per-channel MSSIM (SSIM over 8x8
+                                // windows) with the worst channel taken as the
+                                // score. Not `rgb_hybrid_compare`, which blends in
+                                // a color-distance term and so isn't SSIM.
+                                let sim = image_compare::rgb_similarity_structure(
+                                    &image_compare::Algorithm::MSSIMSimple,
+                                    a,
+                                    b,
+                                )
+                                .unwrap_or_else(|e| {
+                                    panic!("{label} Ssim: comparison failed at view {i}: {e}")
+                                });
                                 if sim.score < worst {
                                     worst = sim.score;
                                     worst_view = i;

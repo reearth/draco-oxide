@@ -320,15 +320,28 @@ fn render(
         let v1 = mesh.verts[i1];
         let v2 = mesh.verts[i2];
 
+        // Geometric face normal. We cull back faces (`n·w <= 0`, since `w`
+        // points toward the eye) so that a *missing* front face reveals the
+        // background instead of being filled in by the far side of the model —
+        // otherwise a hole, exactly the kind of regression this test exists to
+        // catch, would be hidden behind the model's interior and leave the SSIM
+        // score nearly unchanged. The encode/decode round-trip preserves face
+        // winding, so the reference and decoded meshes cull consistently.
+        let n = norm(cross(sub(v1, v0), sub(v2, v0)));
+        let facing = dot(n, w);
+        if facing <= 0.0 {
+            continue; // back-facing or degenerate.
+        }
+
         // Per-vertex colors in 0..1: either the chosen attribute, or a flat
-        // two-sided Lambert shade (|n·w| so inconsistent winding between the two
-        // meshes can't flip a face to black) replicated across the vertices.
+        // Lambert shade from the (front-facing) normal, replicated across the
+        // vertices.
         let (c0, c1, c2) = match vcolors {
             Some(vc) => (vc[i0], vc[i1], vc[i2]),
             None => {
-                let n = norm(cross(sub(v1, v0), sub(v2, v0)));
-                let s = (AMBIENT + DIFFUSE * dot(n, w).abs()).clamp(0.0, 1.0);
-                ([s, s, s], [s, s, s], [s, s, s])
+                let s = (AMBIENT + DIFFUSE * facing).clamp(0.0, 1.0);
+                let g = [s, s, s];
+                (g, g, g)
             }
         };
 
