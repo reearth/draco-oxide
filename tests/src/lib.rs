@@ -154,10 +154,10 @@ pub enum ComparisonMethod {
     /// currently be OBJ files.
     L2Norm { max: f64 },
     /// Rendered-view structural similarity. Renders both inputs from several
-    /// viewpoints with a small CPU rasterizer (see [`render`]) and scores SSIM
-    /// per view. Asserts the *worst* view's score is `>= min` (1.0 = identical).
-    /// Both inputs must be OBJ files. The rendered PNGs are written to the
-    /// profile's output dir for debugging.
+    /// viewpoints with a small CPU rasterizer (see [`render`]) and scores RGB
+    /// SSIM per view. Asserts the *worst* view's score is `>= min` (1.0 =
+    /// identical). Both inputs must be OBJ files. The rendered PNGs are written
+    /// to the profile's output dir for debugging.
     Ssim {
         /// Minimum acceptable SSIM in `0.0..=1.0` for every view.
         min: f64,
@@ -168,6 +168,12 @@ pub enum ComparisonMethod {
         /// (minimum) score across them gates the test (default 4).
         #[serde(default)]
         views: Option<usize>,
+        /// What to color fragments by: `"Geometry"` (default — shape via flat
+        /// shading), `"Normal"`, `"Uv"`, or `"VertexColor"`. The attribute modes
+        /// let the test catch regressions in non-position attributes; they
+        /// require the corresponding attribute to be present in both OBJs.
+        #[serde(default)]
+        color_by: render::ColorBy,
     },
 }
 
@@ -319,35 +325,39 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                             min,
                             resolution,
                             views,
+                            color_by,
                         } => {
                             let res = resolution.unwrap_or(512);
                             let n_views = views.unwrap_or(4).max(1);
-                            let (v1, t1) = render::load_obj_mesh(&p1).unwrap_or_else(|e| {
+                            let m1 = render::load_obj_mesh(&p1).unwrap_or_else(|e| {
                                 panic!("{label} Ssim: failed to load {}: {e}", p1.display())
                             });
-                            let (v2, t2) = render::load_obj_mesh(&p2).unwrap_or_else(|e| {
+                            let m2 = render::load_obj_mesh(&p2).unwrap_or_else(|e| {
                                 panic!("{label} Ssim: failed to load {}: {e}", p2.display())
                             });
                             // Frame both meshes with input1's framing so only
-                            // genuine shape differences register.
-                            let cam = render::Framing::fit(&v1);
-                            let imgs1 = render::render_views(&v1, &t1, &cam, res, n_views);
-                            let imgs2 = render::render_views(&v2, &t2, &cam, res, n_views);
+                            // genuine differences register.
+                            let cam = render::Framing::fit(&m1.verts);
+                            let imgs1 = render::render_views(&m1, &cam, res, n_views, *color_by)
+                                .unwrap_or_else(|e| {
+                                    panic!("{label} Ssim: rendering {} failed: {e}", p1.display())
+                                });
+                            let imgs2 = render::render_views(&m2, &cam, res, n_views, *color_by)
+                                .unwrap_or_else(|e| {
+                                    panic!("{label} Ssim: rendering {} failed: {e}", p2.display())
+                                });
 
                             let s1 = p1.file_stem().and_then(|s| s.to_str()).unwrap_or("ref");
                             let s2 = p2.file_stem().and_then(|s| s.to_str()).unwrap_or("test");
+                            let tag = color_by.tag();
 
                             let mut worst = f64::INFINITY;
                             let mut worst_view = 0;
                             for (i, (a, b)) in imgs1.iter().zip(&imgs2).enumerate() {
-                                let sim = image_compare::gray_similarity_structure(
-                                    &image_compare::Algorithm::MSSIMSimple,
-                                    a,
-                                    b,
-                                )
-                                .unwrap_or_else(|e| {
-                                    panic!("{label} Ssim: comparison failed at view {i}: {e}")
-                                });
+                                let sim =
+                                    image_compare::rgb_hybrid_compare(a, b).unwrap_or_else(|e| {
+                                        panic!("{label} Ssim: comparison failed at view {i}: {e}")
+                                    });
                                 if sim.score < worst {
                                     worst = sim.score;
                                     worst_view = i;
@@ -362,8 +372,8 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                             };
                             if should_save {
                                 for (i, (a, b)) in imgs1.iter().zip(&imgs2).enumerate() {
-                                    let pa = out_dir.join(format!("ssim_{s1}_view{i}.png"));
-                                    let pb = out_dir.join(format!("ssim_{s2}_view{i}.png"));
+                                    let pa = out_dir.join(format!("ssim_{s1}_{tag}_view{i}.png"));
+                                    let pb = out_dir.join(format!("ssim_{s2}_{tag}_view{i}.png"));
                                     a.save(&pa).unwrap_or_else(|e| {
                                         panic!("{label} Ssim: writing {} failed: {e}", pa.display())
                                     });
@@ -378,12 +388,12 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                                 );
                             }
                             eprintln!(
-                                "{label} Ssim: worst score {worst} at view {worst_view} \
+                                "{label} Ssim[{tag}]: worst score {worst} at view {worst_view} \
                                  (min {min}, {n_views} views, {res}px)"
                             );
                             assert!(
                                 worst >= *min,
-                                "{label} Ssim: worst score {worst} < min {min} (view {worst_view})\n    \
+                                "{label} Ssim[{tag}]: worst score {worst} < min {min} (view {worst_view})\n    \
                                  inputs: {} vs {}\n    renders in: {}",
                                 p1.display(),
                                 p2.display(),

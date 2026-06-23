@@ -32,7 +32,13 @@ op = "Comparison"
 input1 = "bunny.obj"
 input2 = "decoded.obj"
 methods = [
-    # 11-bit position quantization is fine enough that the silhouette and
-    # shading should be nearly indistinguishable across every view.
-    { method = "Ssim", min = 0.9 },
+    { method = "Ssim", min = 0.95, color_by = "Geometry" },
+]
+
+[[operations]]
+op = "Comparison"
+input1 = "bunny.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "Ssim", min = 0.95, color_by = "Normal" }
 ]

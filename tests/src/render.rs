@@ -1,17 +1,22 @@
 //! Minimal deterministic CPU rasterizer for the `Ssim` comparison method.
 //!
 //! It exists so the harness can compare two meshes *visually* without dragging
-//! a GPU or browser toolchain into CI. Rendering is orthographic with two-sided
-//! Lambert shading under a headlight, into a grayscale buffer — no PBR, no
-//! antialiasing, fully reproducible across machines.
+//! a GPU or browser toolchain into CI. Rendering is orthographic into an RGB
+//! buffer — no PBR, no antialiasing, fully reproducible across machines.
+//!
+//! Fragments are colored according to [`ColorBy`]: either by geometry (flat
+//! two-sided Lambert shading under a headlight) or by a non-position attribute
+//! (vertex normal / texture coordinate / vertex color), so the same harness can
+//! catch regressions in those attributes, not just in shape.
 //!
 //! The camera framing is computed once from the *reference* mesh and reused for
-//! the test mesh (see [`Framing`]), so only genuine shape differences show up in
-//! the SSIM score — not an incidental reframing from a tiny bounding-box shift.
+//! the test mesh (see [`Framing`]), so renders line up and only genuine
+//! differences register in the SSIM score.
 
 use std::path::Path;
 
-use image::{GrayImage, Luma};
+use image::{Rgb, RgbImage};
+use serde::Deserialize;
 
 type V3 = [f32; 3];
 
@@ -41,6 +46,163 @@ fn norm(a: V3) -> V3 {
 /// for the triangle's own orientation and for barycentric coverage tests.
 fn edge(x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
+}
+
+/// What to map onto fragment color. `Geometry` shades by surface orientation
+/// (so the score reflects shape); the others paint a non-position attribute
+/// directly (unlit) so the score reflects that attribute.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub enum ColorBy {
+    /// Flat two-sided Lambert shading from the geometric face normal.
+    #[default]
+    Geometry,
+    /// Per-vertex normal mapped to RGB via `n * 0.5 + 0.5`.
+    Normal,
+    /// Texture coordinate mapped to `(u, v, 0)`, clamped to `[0, 1]`.
+    Uv,
+    /// Per-vertex color used directly.
+    VertexColor,
+}
+
+impl ColorBy {
+    /// Short tag for filenames / messages.
+    pub fn tag(&self) -> &'static str {
+        match self {
+            ColorBy::Geometry => "geometry",
+            ColorBy::Normal => "normal",
+            ColorBy::Uv => "uv",
+            ColorBy::VertexColor => "vertex_color",
+        }
+    }
+
+    /// Per-vertex RGB colors in `0..1` for the attribute modes; `None` for
+    /// `Geometry`, which is shaded per-face at render time. Errors when the mesh
+    /// lacks the requested attribute.
+    fn vertex_colors(&self, mesh: &MeshData) -> Result<Option<Vec<V3>>, String> {
+        match self {
+            ColorBy::Geometry => Ok(None),
+            ColorBy::Normal => {
+                let n = mesh
+                    .normals
+                    .as_ref()
+                    .ok_or("color_by = Normal but the mesh has no normals")?;
+                Ok(Some(
+                    n.iter()
+                        .map(|v| [v[0] * 0.5 + 0.5, v[1] * 0.5 + 0.5, v[2] * 0.5 + 0.5])
+                        .collect(),
+                ))
+            }
+            ColorBy::Uv => {
+                let uv = mesh
+                    .uvs
+                    .as_ref()
+                    .ok_or("color_by = Uv but the mesh has no texture coordinates")?;
+                Ok(Some(
+                    uv.iter()
+                        .map(|t| [t[0].clamp(0.0, 1.0), t[1].clamp(0.0, 1.0), 0.0])
+                        .collect(),
+                ))
+            }
+            ColorBy::VertexColor => {
+                let c = mesh
+                    .colors
+                    .as_ref()
+                    .ok_or("color_by = VertexColor but the mesh has no vertex colors")?;
+                Ok(Some(c.clone()))
+            }
+        }
+    }
+}
+
+/// A loaded mesh: positions + triangles, plus whatever per-vertex attributes the
+/// OBJ carried. Attribute vectors, when `Some`, are index-aligned with `verts`.
+pub struct MeshData {
+    pub verts: Vec<V3>,
+    pub tris: Vec<[u32; 3]>,
+    pub normals: Option<Vec<V3>>,
+    pub uvs: Option<Vec<[f32; 2]>>,
+    pub colors: Option<Vec<V3>>,
+}
+
+/// Load an OBJ as a flat vertex list, triangle indices, and per-vertex
+/// attributes. Triangulated and single-indexed so the result is independent of
+/// how the decoder ordered or duplicated vertices, and so every attribute is
+/// aligned to the position index.
+pub fn load_obj_mesh(path: &Path) -> Result<MeshData, String> {
+    let (models, _materials) = tobj::load_obj(
+        path,
+        &tobj::LoadOptions {
+            triangulate: true,
+            single_index: true,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| format!("tobj failed: {e}"))?;
+
+    let mut verts = Vec::new();
+    let mut tris = Vec::new();
+    for m in &models {
+        let base = verts.len() as u32;
+        for c in m.mesh.positions.chunks_exact(3) {
+            verts.push([c[0], c[1], c[2]]);
+        }
+        for idx in m.mesh.indices.chunks_exact(3) {
+            tris.push([base + idx[0], base + idx[1], base + idx[2]]);
+        }
+    }
+    if verts.is_empty() {
+        return Err("no vertices found".into());
+    }
+    let n = verts.len();
+
+    Ok(MeshData {
+        verts,
+        tris,
+        normals: gather_vec3(&models, n, |m| &m.normals),
+        uvs: gather_vec2(&models, n, |m| &m.texcoords),
+        colors: gather_vec3(&models, n, |m| &m.vertex_color),
+    })
+}
+
+/// Concatenate a flat `[x,y,z,...]` per-vertex attribute across models into
+/// `[[x,y,z]; n]`. Returns `None` if any model is missing the attribute (so we
+/// never silently misalign), or if the total count doesn't match `n_verts`.
+fn gather_vec3(
+    models: &[tobj::Model],
+    n_verts: usize,
+    sel: impl Fn(&tobj::Mesh) -> &Vec<f32>,
+) -> Option<Vec<V3>> {
+    let mut out = Vec::with_capacity(n_verts);
+    for m in models {
+        let a = sel(&m.mesh);
+        if a.len() != m.mesh.positions.len() {
+            return None;
+        }
+        for c in a.chunks_exact(3) {
+            out.push([c[0], c[1], c[2]]);
+        }
+    }
+    (out.len() == n_verts).then_some(out)
+}
+
+/// Like [`gather_vec3`] but for 2-component attributes (texture coordinates).
+fn gather_vec2(
+    models: &[tobj::Model],
+    n_verts: usize,
+    sel: impl Fn(&tobj::Mesh) -> &Vec<f32>,
+) -> Option<Vec<[f32; 2]>> {
+    let mut out = Vec::with_capacity(n_verts);
+    for m in models {
+        let a = sel(&m.mesh);
+        // 2 components per vertex vs 3 for positions.
+        if a.len() * 3 != m.mesh.positions.len() * 2 {
+            return None;
+        }
+        for c in a.chunks_exact(2) {
+            out.push([c[0], c[1]]);
+        }
+    }
+    (out.len() == n_verts).then_some(out)
 }
 
 /// Shared camera framing: the bounding-sphere center and radius of the mesh the
@@ -79,74 +241,54 @@ impl Framing {
     }
 }
 
-/// Load an OBJ as a flat vertex list plus triangle indices. Triangulated and
-/// single-indexed so the result is independent of how the decoder ordered or
-/// duplicated vertices.
-pub fn load_obj_mesh(path: &Path) -> Result<(Vec<V3>, Vec<[u32; 3]>), String> {
-    let (models, _materials) = tobj::load_obj(
-        path,
-        &tobj::LoadOptions {
-            triangulate: true,
-            single_index: true,
-            ..Default::default()
-        },
-    )
-    .map_err(|e| format!("tobj failed: {e}"))?;
-
-    let mut verts = Vec::new();
-    let mut tris = Vec::new();
-    for m in &models {
-        let base = verts.len() as u32;
-        for c in m.mesh.positions.chunks_exact(3) {
-            verts.push([c[0], c[1], c[2]]);
-        }
-        for idx in m.mesh.indices.chunks_exact(3) {
-            tris.push([base + idx[0], base + idx[1], base + idx[2]]);
-        }
-    }
-    if verts.is_empty() {
-        return Err("no vertices found".into());
-    }
-    Ok((verts, tris))
-}
-
-/// Render `num_views` grayscale images, rotating the camera around the model's
-/// up axis at a fixed elevation. Returns one image per view, in azimuth order.
+/// Render `num_views` images, rotating the camera around the model's up axis at
+/// a fixed elevation. Returns one image per view, in azimuth order. Errors if
+/// `color_by` needs an attribute the mesh doesn't have.
 pub fn render_views(
-    verts: &[V3],
-    tris: &[[u32; 3]],
+    mesh: &MeshData,
     cam: &Framing,
     resolution: u32,
     num_views: usize,
-) -> Vec<GrayImage> {
+    color_by: ColorBy,
+) -> Result<Vec<RgbImage>, String> {
     const ELEVATION: f32 = 0.5; // ~28 degrees above the equator.
-    (0..num_views)
+    let vcolors = color_by.vertex_colors(mesh)?;
+    Ok((0..num_views)
         .map(|i| {
             let azimuth = (i as f32) * std::f32::consts::TAU / (num_views as f32);
-            render(verts, tris, cam, resolution, azimuth, ELEVATION)
+            render(
+                mesh,
+                cam,
+                resolution,
+                azimuth,
+                ELEVATION,
+                vcolors.as_deref(),
+            )
         })
-        .collect()
+        .collect())
 }
 
-/// Render a single orthographic view into a square grayscale image.
+/// Render a single orthographic view into a square RGB image. When `vcolors` is
+/// `Some`, fragments are the barycentric-interpolated per-vertex color (unlit);
+/// when `None`, triangles are flat-shaded by their geometric normal.
 fn render(
-    verts: &[V3],
-    tris: &[[u32; 3]],
+    mesh: &MeshData,
     cam: &Framing,
     resolution: u32,
     azimuth: f32,
     elevation: f32,
-) -> GrayImage {
-    const BACKGROUND: u8 = 30;
+    vcolors: Option<&[V3]>,
+) -> RgbImage {
+    const BACKGROUND: Rgb<u8> = Rgb([30, 30, 30]);
     const AMBIENT: f32 = 0.2;
     const DIFFUSE: f32 = 0.8;
 
     let res = resolution;
-    let mut img = GrayImage::from_pixel(res, res, Luma([BACKGROUND]));
+    let mut img = RgbImage::from_pixel(res, res, BACKGROUND);
     let mut zbuf = vec![f32::NEG_INFINITY; (res * res) as usize];
 
     // Camera basis. `w` points from the model center toward the eye; the camera
-    // also acts as a headlight along `w`, so every view is lit.
+    // also acts as a headlight along `w`, so every geometry view is lit.
     let w = norm([
         elevation.cos() * azimuth.sin(),
         elevation.sin(),
@@ -172,16 +314,23 @@ fn render(
         )
     };
 
-    for t in tris {
-        let v0 = verts[t[0] as usize];
-        let v1 = verts[t[1] as usize];
-        let v2 = verts[t[2] as usize];
+    for t in &mesh.tris {
+        let (i0, i1, i2) = (t[0] as usize, t[1] as usize, t[2] as usize);
+        let v0 = mesh.verts[i0];
+        let v1 = mesh.verts[i1];
+        let v2 = mesh.verts[i2];
 
-        // Two-sided Lambert via |n·w| so inconsistent winding between the two
-        // meshes can't flip a face to black.
-        let n = norm(cross(sub(v1, v0), sub(v2, v0)));
-        let shade = (AMBIENT + DIFFUSE * dot(n, w).abs()).clamp(0.0, 1.0);
-        let color = (shade * 255.0).round() as u8;
+        // Per-vertex colors in 0..1: either the chosen attribute, or a flat
+        // two-sided Lambert shade (|n·w| so inconsistent winding between the two
+        // meshes can't flip a face to black) replicated across the vertices.
+        let (c0, c1, c2) = match vcolors {
+            Some(vc) => (vc[i0], vc[i1], vc[i2]),
+            None => {
+                let n = norm(cross(sub(v1, v0), sub(v2, v0)));
+                let s = (AMBIENT + DIFFUSE * dot(n, w).abs()).clamp(0.0, 1.0);
+                ([s, s, s], [s, s, s], [s, s, s])
+            }
+        };
 
         let (ax, ay, az) = project(v0);
         let (bx, by, bz) = project(v1);
@@ -213,7 +362,11 @@ fn render(
                 let i = (py as u32 * res + px as u32) as usize;
                 if depth > zbuf[i] {
                     zbuf[i] = depth;
-                    img.put_pixel(px as u32, py as u32, Luma([color]));
+                    let chan = |k: usize| {
+                        ((l0 * c0[k] + l1 * c1[k] + l2 * c2[k]).clamp(0.0, 1.0) * 255.0).round()
+                            as u8
+                    };
+                    img.put_pixel(px as u32, py as u32, Rgb([chan(0), chan(1), chan(2)]));
                 }
             }
         }
