@@ -149,9 +149,14 @@ pub enum FormatName {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "method")]
 pub enum ComparisonMethod {
-    /// Symmetric nearest-neighbor RMS between the two point sets (robust to
-    /// vertex reordering). Asserts the value is `<= max`. Both inputs must
-    /// currently be OBJ files.
+    /// Symmetric area-weighted surface L2 (RMS) distance between the two
+    /// meshes. For each triangle the squared distance from its centroid to the
+    /// closest point on the *other* mesh's surface is weighted by the
+    /// triangle's area; summed and divided by total area gives a one-sided
+    /// mean-squared distance. Both directions are averaged and the square root
+    /// taken, yielding a true distance-unit norm. Robust to vertex reordering
+    /// and remeshing. Asserts the value is `<= max`. Both inputs must currently
+    /// be OBJ files.
     L2Norm { max: f64 },
     /// Rendered-view structural similarity. Renders both inputs from several
     /// viewpoints with a small CPU rasterizer (see [`render`]) and scores RGB
@@ -306,13 +311,13 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                 for method in methods {
                     match method {
                         ComparisonMethod::L2Norm { max } => {
-                            let pos1 = load_obj_positions(&p1).unwrap_or_else(|e| {
+                            let m1 = render::load_obj_mesh(&p1).unwrap_or_else(|e| {
                                 panic!("{label} L2Norm: failed to load {}: {e}", p1.display())
                             });
-                            let pos2 = load_obj_positions(&p2).unwrap_or_else(|e| {
+                            let m2 = render::load_obj_mesh(&p2).unwrap_or_else(|e| {
                                 panic!("{label} L2Norm: failed to load {}: {e}", p2.display())
                             });
-                            let dist = symmetric_nearest_neighbor_rms(&pos1, &pos2);
+                            let dist = symmetric_surface_l2(&m1, &m2);
                             eprintln!("{label} L2Norm: dist = {dist} (max {max})");
                             assert!(
                                 dist <= *max,
@@ -501,55 +506,83 @@ fn load_mesh_for_oxide(path: &Path) -> Result<Mesh, String> {
 /// Read raw vertex positions from an OBJ file, with no draco-oxide-specific
 /// processing. The comparison metric below works on point sets, so we don't
 /// need the full `Mesh` structure here.
-fn load_obj_positions(path: &Path) -> Result<Vec<[f32; 3]>, String> {
-    let (models, _materials) = tobj::load_obj(
-        path,
-        &tobj::LoadOptions {
-            triangulate: true,
-            single_index: true,
-            ..Default::default()
-        },
-    )
-    .map_err(|e| format!("tobj failed: {e}"))?;
-    let mut out = Vec::new();
-    for m in &models {
-        for chunk in m.mesh.positions.chunks_exact(3) {
-            out.push([chunk[0], chunk[1], chunk[2]]);
-        }
-    }
-    if out.is_empty() {
-        return Err("no vertex positions found".into());
-    }
-    Ok(out)
+/// Symmetric area-weighted surface L2 (RMS) distance between two triangle
+/// meshes — the standard Metro/MeshLab-style surface-to-surface metric.
+///
+/// For one direction A->B we approximate the area integral
+/// `(1/area(A)) * ∫_A d(x, B)² dx`, where `d(x, B)` is the exact distance from
+/// point `x` to the closest point on B's *surface*. Each triangle contributes
+/// `d(centroid, B)² * area` (midpoint quadrature); the sum divided by A's total
+/// area is the one-sided mean-squared distance. The two directions are averaged
+/// and the square root taken so the result is a true distance-unit norm.
+///
+/// Each mesh is indexed once with parry3d's `TriMesh` (an internal QBVH), so
+/// every closest-point query is O(log n) — versus the old nearest-*vertex*
+/// kd-tree, which both ignored triangle areas and overestimated surface
+/// distance (the closest point on a surface is almost never a vertex).
+fn symmetric_surface_l2(a: &render::MeshData, b: &render::MeshData) -> f64 {
+    let tri_a = build_trimesh(a);
+    let tri_b = build_trimesh(b);
+    let a_to_b = one_sided_area_weighted_msd(a, &tri_b);
+    let b_to_a = one_sided_area_weighted_msd(b, &tri_a);
+    (0.5 * (a_to_b + b_to_a)).sqrt()
 }
 
-/// Symmetric nearest-neighbor RMS between two point sets, computed with a
-/// kd-tree on each side. This is robust to vertex reordering by the decoder
-/// (Google Draco may permute vertices), unlike index-aligned comparisons.
-fn symmetric_nearest_neighbor_rms(a: &[[f32; 3]], b: &[[f32; 3]]) -> f64 {
-    use kiddo::float::{distance::SquaredEuclidean, kdtree::KdTree};
+/// Build a parry3d `TriMesh` (with its internal QBVH acceleration structure)
+/// from a loaded mesh. Degenerate/duplicate triangles are tolerated.
+fn build_trimesh(m: &render::MeshData) -> parry3d::shape::TriMesh {
+    let verts: Vec<parry3d::math::Vector> = m.verts.iter().map(|v| vert(*v)).collect();
+    parry3d::shape::TriMesh::new(verts, m.tris.clone())
+        .expect("TriMesh construction failed (empty or malformed mesh)")
+}
 
-    fn build(points: &[[f32; 3]]) -> KdTree<f32, u64, 3, 32, u32> {
-        let mut tree = KdTree::new();
-        for (i, p) in points.iter().enumerate() {
-            tree.add(p, i as u64);
+/// Convert a loaded `[x, y, z]` position into the glam `Vec3` (`parry3d`'s
+/// `Vector`) used for all the geometry math, so the rest of the code reads
+/// `.x/.y/.z` and uses `cross`/`length` instead of raw `[n]` indexing.
+fn vert(p: [f32; 3]) -> parry3d::math::Vector {
+    parry3d::math::Vector::from_array(p)
+}
+
+/// One-sided area-weighted mean-squared distance from the surface of `from` to
+/// the surface of `target`: `(Σ_T d(centroid_T, target)² · area_T) / Σ_T area_T`.
+fn one_sided_area_weighted_msd(from: &render::MeshData, target: &parry3d::shape::TriMesh) -> f64 {
+    use parry3d::query::PointQuery;
+
+    let mut weighted_sq = 0.0_f64;
+    let mut total_area = 0.0_f64;
+    for t in &from.tris {
+        let v0 = vert(from.verts[t[0] as usize]);
+        let v1 = vert(from.verts[t[1] as usize]);
+        let v2 = vert(from.verts[t[2] as usize]);
+
+        let area = triangle_area(v0, v1, v2);
+        if area == 0.0 {
+            continue; // degenerate triangle: no surface, no contribution
         }
-        tree
+
+        let centroid = (v0 + v1 + v2) / 3.0;
+        // Exact closest point on `target`'s surface (`solid = false`: we always
+        // want the boundary distance, never zero for points "inside").
+        let proj = target.project_local_point(centroid, false);
+        let d_sq = (proj.point - centroid).length_squared() as f64;
+
+        weighted_sq += d_sq * area;
+        total_area += area;
     }
 
-    fn one_sided_rms(query: &[[f32; 3]], tree: &KdTree<f32, u64, 3, 32, u32>) -> f64 {
-        let n = query.len() as f64;
-        let mut sum_sq = 0.0_f64;
-        for p in query {
-            let nn = tree.nearest_one::<SquaredEuclidean>(p);
-            sum_sq += nn.distance as f64;
-        }
-        (sum_sq / n).sqrt()
+    if total_area == 0.0 {
+        return 0.0;
     }
+    weighted_sq / total_area
+}
 
-    let tree_a = build(a);
-    let tree_b = build(b);
-    one_sided_rms(a, &tree_b).max(one_sided_rms(b, &tree_a))
+/// Area of the triangle `(v0, v1, v2)` via half the cross-product magnitude.
+fn triangle_area(
+    v0: parry3d::math::Vector,
+    v1: parry3d::math::Vector,
+    v2: parry3d::math::Vector,
+) -> f64 {
+    0.5 * (v1 - v0).cross(v2 - v0).length() as f64
 }
 
 // ---------------------------------------------------------------------------
@@ -577,4 +610,70 @@ fn find_binary(env_var: &str, default_name: &str) -> Option<PathBuf> {
         .join("../third_party/draco/_build")
         .join(default_name);
     default.is_file().then_some(default)
+}
+
+#[cfg(test)]
+mod surface_l2_tests {
+    use super::*;
+
+    /// A unit square in the `z = z0` plane, two triangles.
+    fn square(z0: f32) -> render::MeshData {
+        render::MeshData {
+            verts: vec![
+                [0.0, 0.0, z0],
+                [1.0, 0.0, z0],
+                [1.0, 1.0, z0],
+                [0.0, 1.0, z0],
+            ],
+            tris: vec![[0, 1, 2], [0, 2, 3]],
+            normals: None,
+            uvs: None,
+            colors: None,
+        }
+    }
+
+    #[test]
+    fn self_distance_is_zero() {
+        let m = square(0.0);
+        assert!(symmetric_surface_l2(&m, &m) < 1e-6);
+    }
+
+    #[test]
+    fn parallel_planes_equal_offset() {
+        // Two coincident-extent squares offset by `dz` along z. Every centroid
+        // projects straight onto the other plane, so the surface distance is
+        // exactly `dz` everywhere → the RMS norm equals `dz`.
+        let dz = 0.25;
+        let a = square(0.0);
+        let b = square(dz);
+        let d = symmetric_surface_l2(&a, &b);
+        assert!((d - dz as f64).abs() < 1e-5, "got {d}, expected {dz}");
+    }
+
+    #[test]
+    fn area_weighting_dominated_by_large_triangle() {
+        // `from` has one tiny far triangle and one large near triangle; the
+        // area weighting must pull the result toward the large (near) one.
+        let target = square(0.0);
+        let from = render::MeshData {
+            verts: vec![
+                // large triangle near the target plane (z = 0.1)
+                [0.0, 0.0, 0.1],
+                [1.0, 0.0, 0.1],
+                [0.0, 1.0, 0.1],
+                // tiny triangle far away (z = 10.0)
+                [0.0, 0.0, 10.0],
+                [0.01, 0.0, 10.0],
+                [0.0, 0.01, 10.0],
+            ],
+            tris: vec![[0, 1, 2], [3, 4, 5]],
+            normals: None,
+            uvs: None,
+            colors: None,
+        };
+        // Unweighted, the far triangle (dist 10) would dominate; area-weighted,
+        // the near 0.1-distance triangle dwarfs it, so the result stays small.
+        let d = symmetric_surface_l2(&from, &target);
+        assert!(d < 1.0, "area weighting failed: got {d}");
+    }
 }
