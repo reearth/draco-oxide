@@ -12,7 +12,10 @@ use crate::types::Vector;
 
 pub struct MeshNormalPrediction<'parents, C, const N: usize> {
     corner_table: &'parents C,
-    pos: &'parents Attribute,
+    /// Per-vertex precomputed prediction (octahedral, quantized), indexed by
+    /// `VertexIdx`. Built once in `new()`; `predict` only looks it up and applies
+    /// the sign flip.
+    predicted: Vec<NdVector<N, i32>>,
     flips: Vec<bool>,
 }
 
@@ -21,17 +24,22 @@ where
     C: GenericCornerTable,
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
-    fn compute_normal_of_face(&self, c: CornerIdx, pos_c: NdVector<3, i32>) -> NdVector<3, i64> {
+    /// Cross-product normal of the face owning corner `c`, with `pos_c` the
+    /// position of `c`'s vertex. For a triangle this area vector is independent
+    /// of which corner is chosen as the apex, so a face's normal can be computed
+    /// once (from any corner) and reused for all three of its vertices.
+    fn compute_normal_of_face(
+        corner_table: &C,
+        pos: &Attribute,
+        c: CornerIdx,
+        pos_c: NdVector<3, i32>,
+    ) -> NdVector<3, i64> {
         // corners.
-        let c_next = self.corner_table.next(c);
-        let c_prev = self.corner_table.previous(c);
+        let c_next = corner_table.next(c);
+        let c_prev = corner_table.previous(c);
 
-        let pos_next = self
-            .pos
-            .get::<NdVector<3, i32>, 3>(self.corner_table.point_idx(c_next));
-        let pos_prev = self
-            .pos
-            .get::<NdVector<3, i32>, 3>(self.corner_table.point_idx(c_prev));
+        let pos_next = pos.get::<NdVector<3, i32>, 3>(corner_table.point_idx(c_next));
+        let pos_prev = pos.get::<NdVector<3, i32>, 3>(corner_table.point_idx(c_prev));
 
         // Compute the difference to next and prev.
         let delta_next = pos_next - pos_c;
@@ -47,6 +55,41 @@ where
             cross
         };
         cross
+    }
+
+    /// Turn an accumulated per-vertex face-normal sum into the octahedral,
+    /// quantized prediction. Pure function of `sum` (matches the old inline
+    /// computation in `predict`).
+    fn sum_to_prediction(mut sum: NdVector<3, i64>) -> NdVector<N, i32> {
+        let upper_bound = 1 << 29;
+        let abs_sum = sum.get(0).abs() + sum.get(1).abs() + sum.get(2).abs();
+        if abs_sum > upper_bound {
+            let quotient = abs_sum / upper_bound;
+            sum /= quotient;
+        }
+        let mut out = NdVector::<3, i32>::zero();
+        *out.get_mut(0) = *sum.get(0) as i32;
+        *out.get_mut(1) = *sum.get(1) as i32;
+        *out.get_mut(2) = *sum.get(2) as i32;
+
+        if out == NdVector::<3, i32>::zero() {
+            let mut default_out = NdVector::<N, i32>::zero();
+            *default_out.get_mut(0) = 0;
+            *default_out.get_mut(1) = 0;
+            default_out
+        } else {
+            let val_oct = octahedral_transform(out) + NdVector::<2, f32>::from([1.0, 1.0]);
+            let quantized = val_oct * ((1 << (8 - 1)) - 1) as f32; // TODO: Stop hardcoding the quantization bits.
+            let mut out = NdVector::<2, i32>::zero();
+            for i in 0..2 {
+                *out.get_mut(i) = (*quantized.get(i)) as i32;
+            }
+            let quant_out = into_faithful_oct_quantization(out);
+            let mut out = NdVector::<N, i32>::zero();
+            *out.get_mut(0) = *quant_out.get(0);
+            *out.get_mut(1) = *quant_out.get(1);
+            out
+        }
     }
 }
 
@@ -66,9 +109,26 @@ where
             parents[0].get_attribute_type() == AttributeType::Position,
             "MeshNormalPrediction requires the first parent attribute to be of type Position."
         );
+        let pos = parents[0]; // we made sure that the first parent is the position attribute
+
+        let mut sums = vec![NdVector::<3, i64>::zero(); corner_table.num_vertices()];
+        for f in 0..corner_table.num_faces() {
+            let c0 = CornerIdx::from(3 * f);
+            let pos_c0 = pos.get::<NdVector<3, i32>, 3>(corner_table.point_idx(c0));
+            let face_normal = Self::compute_normal_of_face(corner_table, pos, c0, pos_c0);
+            for i in 0..3 {
+                let v = corner_table.vertex_idx(CornerIdx::from(3 * f + i));
+                sums[usize::from(v)] += face_normal;
+            }
+        }
+        let predicted = sums
+            .into_iter()
+            .map(Self::sum_to_prediction)
+            .collect::<Vec<_>>();
+
         Self {
             corner_table,
-            pos: parents[0], // we made sure that the first parent is the position attribute
+            predicted,
             flips: Vec::new(),
         }
     }
@@ -86,58 +146,9 @@ where
         _vertices_up_till_now: &[VertexIdx],
         attribute: &Attribute,
     ) -> NdVector<N, i32> {
-        let pos_c = self.pos.get(self.corner_table.point_idx(c));
-        let mut curr_c = c;
-        while let Some(left_c) = self.corner_table.swing_left(curr_c) {
-            curr_c = left_c;
-            if curr_c == c {
-                break;
-            }
-        }
-        let start_c = curr_c;
-        let mut sum = self.compute_normal_of_face(curr_c, pos_c);
-        while let Some(next_c) = self.corner_table.swing_right(curr_c) {
-            curr_c = next_c;
-            if curr_c == start_c {
-                break;
-            }
-            sum += self.compute_normal_of_face(curr_c, pos_c);
-        }
+        let v = self.corner_table.vertex_idx(c);
+        let mut out = self.predicted[usize::from(v)];
 
-        // Cast down to i32. The following upper bound is from the draco library.
-        let upper_bound = 1 << 29;
-        let abs_sum = sum.get(0).abs() + sum.get(1).abs() + sum.get(2).abs();
-        if abs_sum > upper_bound {
-            let quotient = abs_sum / upper_bound;
-            sum /= quotient;
-        }
-        let mut out = {
-            let mut out = NdVector::<3, i32>::zero();
-            *out.get_mut(0) = *sum.get(0) as i32;
-            *out.get_mut(1) = *sum.get(1) as i32;
-            *out.get_mut(2) = *sum.get(2) as i32;
-
-            // Check if the normal is zero and handle gracefully
-            if out == NdVector::<3, i32>::zero() {
-                // Return a default normal pointing up (0, 0, 1) in octahedral space
-                let mut default_out = NdVector::<N, i32>::zero();
-                *default_out.get_mut(0) = 0;
-                *default_out.get_mut(1) = 0;
-                default_out
-            } else {
-                let val_oct = octahedral_transform(out) + NdVector::<2, f32>::from([1.0, 1.0]);
-                let quantized = val_oct * ((1 << (8 - 1)) - 1) as f32; // TODO: Stop hardcoding the quantization bits.
-                let mut out = NdVector::<2, i32>::zero();
-                for i in 0..2 {
-                    *out.get_mut(i) = (*quantized.get(i)) as i32;
-                }
-                let quant_out = into_faithful_oct_quantization(out);
-                let mut out = NdVector::<N, i32>::zero();
-                *out.get_mut(0) = *quant_out.get(0);
-                *out.get_mut(1) = *quant_out.get(1);
-                out
-            }
-        };
         let actual_val = attribute.get::<NdVector<N, i32>, N>(self.corner_table.point_idx(c));
         let diff1 = out - actual_val;
         let diff2 = out * -1 - actual_val;
