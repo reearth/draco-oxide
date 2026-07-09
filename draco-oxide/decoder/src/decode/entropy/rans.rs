@@ -236,7 +236,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encode::entropy::rans::{RabsCoder, RansCoder};
+    use draco_oxide_core::codec::entropy::rans::{RabsCoder, RansCoder};
 
     #[test]
     fn test_rans_decoder() {

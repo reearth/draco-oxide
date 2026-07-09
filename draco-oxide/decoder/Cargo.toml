@@ -15,6 +15,12 @@ thiserror = "2.0.12"
 remain = "0.2.15"
 enum_dispatch = "0.3.13"
 
+[dev-dependencies]
+# Encoder, used only by the entropy unit tests to round-trip
+# encode_symbols -> decode_symbols. No dependency cycle: the draco-oxide
+# crate does not depend on this decoder crate.
+draco-oxide = { path = "..", default-features = false }
+
 [features]
 default = ["safety_assertions"]
 # Enables debug output from the core macros used in `decode/`. Forwarded to

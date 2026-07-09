@@ -1,6 +1,9 @@
 pub(crate) mod attribute;
 pub(crate) mod connectivity;
-pub(crate) mod entropy;
+// `pub` (not `pub(crate)`) so the decoder crate's entropy unit tests can
+// round-trip against the encoder via a dev-dependency. Only the already-`pub`
+// `symbol_coding::encode_symbols` / `Err` become reachable through it.
+pub mod entropy;
 pub(crate) mod header;
 pub(crate) mod metadata;
 

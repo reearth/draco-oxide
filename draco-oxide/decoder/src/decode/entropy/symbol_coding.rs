@@ -132,14 +132,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encode::entropy::*;
+    use draco_oxide::encode::entropy::symbol_coding::encode_symbols;
+    use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
 
     #[test]
     fn test_encode_decode_symbols() -> Result<(), Err> {
         let len = 100;
         let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
         let mut buffer = Vec::new();
-        symbol_coding::encode_symbols(
+        encode_symbols(
             symbols.clone(),
             1,
             SymbolEncodingMethod::LengthCoded,
@@ -162,7 +163,7 @@ mod tests {
         let len = 300;
         let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
         let mut buffer = Vec::new();
-        symbol_coding::encode_symbols(
+        encode_symbols(
             symbols.clone(),
             3,
             SymbolEncodingMethod::LengthCoded,
@@ -185,7 +186,7 @@ mod tests {
         let len = 100;
         let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
         let mut buffer = Vec::new();
-        symbol_coding::encode_symbols(
+        encode_symbols(
             symbols.clone(),
             1,
             SymbolEncodingMethod::DirectCoded,
@@ -208,7 +209,7 @@ mod tests {
         let len = 300;
         let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
         let mut buffer = Vec::new();
-        symbol_coding::encode_symbols(
+        encode_symbols(
             symbols.clone(),
             3,
             SymbolEncodingMethod::DirectCoded,

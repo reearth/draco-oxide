@@ -1,5 +1,6 @@
 use draco_oxide_core::bit_coder::BitWriter;
 use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::buffer::LsbFirst;
 use draco_oxide_core::codec::entropy::rans;
 use draco_oxide_core::codec::entropy::rans::RansSymbolEncoder;
 use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
@@ -91,8 +92,12 @@ where
     }
     encoder.flush()?;
 
-    // Append the values to the end of the target buffer.
-    let mut writer: BitWriter<_> = BitWriter::spown_from(writer);
+    // Append the values to the end of the target buffer. Google's decoder reads
+    // these via `DecodeLeastSignificantBits32`
+    // (`compression/entropy/symbol_decoding.cc`), so encode LSB-first — the
+    // crate split dropped this annotation and defaulted to MsbFirst, which
+    // mis-encodes the LengthCoded symbol length bits.
+    let mut writer: BitWriter<_, LsbFirst> = BitWriter::spown_from(writer);
     for val in values.into_iter() {
         writer.write_bits(val);
     }
