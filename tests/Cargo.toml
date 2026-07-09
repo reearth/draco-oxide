@@ -24,6 +24,12 @@ image-compare = "0.5"
 # EvalWriter output.
 serde_json = "1.0"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Native Google Draco C++ binding used by google_compat.rs to cross-check our
+# decoder output against the reference decoder. Builds the bundled C++ library
+# via cxx-build, so adds a few seconds to the first `cargo test` run.
+draco_decoder = "0.0.26"
+
 [features]
 # Forwarded so `cargo test -p tests --features evaluation` enables draco-oxide's
 # evaluation APIs used by tests/eval/mod.rs.
