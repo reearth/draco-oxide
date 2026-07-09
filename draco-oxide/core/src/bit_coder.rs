@@ -288,6 +288,57 @@ impl ByteReader for vec::IntoIter<u8> {
     }
 }
 
+/// Byte slice reader. Avoids the `Vec<u8>` clone that the iterator
+/// impl forces on callers who already hold a `&[u8]` (e.g. the GLB
+/// splice path, which carries multi-MB Draco buffers per primitive).
+impl ByteReader for &[u8] {
+    fn read_u8(&mut self) -> Result<u8, ReaderErr> {
+        let (&first, rest) = self.split_first().ok_or(ReaderErr::NotEnoughData)?;
+        *self = rest;
+        Ok(first)
+    }
+
+    fn read_u16(&mut self) -> Result<u16, ReaderErr> {
+        if self.len() < 2 {
+            return Err(ReaderErr::NotEnoughData);
+        }
+        let (head, rest) = self.split_at(2);
+        *self = rest;
+        Ok(u16::from_le_bytes([head[0], head[1]]))
+    }
+
+    fn read_u32(&mut self) -> Result<u32, ReaderErr> {
+        if self.len() < 4 {
+            return Err(ReaderErr::NotEnoughData);
+        }
+        let (head, rest) = self.split_at(4);
+        *self = rest;
+        Ok(u32::from_le_bytes([head[0], head[1], head[2], head[3]]))
+    }
+
+    fn read_u64(&mut self) -> Result<u64, ReaderErr> {
+        if self.len() < 8 {
+            return Err(ReaderErr::NotEnoughData);
+        }
+        let (head, rest) = self.split_at(8);
+        *self = rest;
+        Ok(u64::from_le_bytes([
+            head[0], head[1], head[2], head[3], head[4], head[5], head[6], head[7],
+        ]))
+    }
+
+    type Rev = Rev<vec::IntoIter<u8>>;
+    fn spown_reverse_reader_at(&mut self, offset: usize) -> Result<Self::Rev, ReaderErr> {
+        if offset > self.len() {
+            return Err(ReaderErr::NotEnoughData);
+        }
+        let (head, rest) = self.split_at(offset);
+        let rev = head.to_vec().into_iter().rev();
+        *self = rest;
+        Ok(rev)
+    }
+}
+
 /// A special byte reader that is provided by draco-oxide that allows users to build
 /// custom byte readers using a cloure.
 pub struct FunctionalByteReader<R> {

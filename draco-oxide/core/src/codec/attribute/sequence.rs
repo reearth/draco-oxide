@@ -126,3 +126,260 @@ where
         self.out
     }
 }
+
+
+/// Computes the attribute traversal order for the default
+/// `MESH_TRAVERSAL_DEPTH_FIRST` method and returns the per-data-value corner
+/// map (`out[p]` = corner at which the `p`-th value's vertex was first
+/// visited). Equivalent to [`Traverser::compute_sequence`] but a direct,
+/// **O(faces)** port of Google's `DepthFirstTraverser` driven by
+/// `MeshTraversalSequencer` (seed `traverse_from_corner(3*i)` for every face
+/// in order). The older `Traverser` does the same walk but rescans the whole
+/// traversal stack per face for handle cleanup, which is O(faces²); this is
+/// the hot path for large meshes, so we use the linear version everywhere in
+/// the decoder.
+pub fn compute_sequence_depth_first<T>(ct: &T) -> Vec<CornerIdx>
+where
+    T: GenericCornerTable,
+{
+    let num_faces = ct.num_faces();
+    let num_vertices = ct.num_vertices();
+    let mut out: Vec<CornerIdx> = Vec::with_capacity(num_vertices);
+    if num_faces == 0 {
+        return out;
+    }
+
+    let mut is_face_visited = vec![false; num_faces];
+    let mut is_vertex_visited = vec![false; num_vertices];
+    let mut stack: Vec<CornerIdx> = Vec::new();
+    let mut num_visited_faces = 0usize;
+
+    let face_of = |c: CornerIdx| usize::from(c) / 3;
+
+    for seed in 0..num_faces {
+        if num_visited_faces >= num_faces {
+            break;
+        }
+        let start = CornerIdx::from(3 * seed);
+        if is_face_visited[face_of(start)] {
+            continue;
+        }
+
+        stack.clear();
+        stack.push(start);
+
+        // For the seed face the other two corners may not be processed yet.
+        let next_c = ct.next(start);
+        let prev_c = ct.previous(start);
+        let nv = usize::from(ct.vertex_idx(next_c));
+        let pv = usize::from(ct.vertex_idx(prev_c));
+        if !is_vertex_visited[nv] {
+            is_vertex_visited[nv] = true;
+            out.push(next_c);
+        }
+        if !is_vertex_visited[pv] {
+            is_vertex_visited[pv] = true;
+            out.push(prev_c);
+        }
+
+        while let Some(&top) = stack.last() {
+            let mut corner_id = top;
+            if is_face_visited[face_of(corner_id)] {
+                stack.pop();
+                continue;
+            }
+
+            loop {
+                is_face_visited[face_of(corner_id)] = true;
+                num_visited_faces += 1;
+
+                let vid = usize::from(ct.vertex_idx(corner_id));
+                if !is_vertex_visited[vid] {
+                    let on_boundary = ct.is_on_boundary(ct.vertex_idx(corner_id));
+                    is_vertex_visited[vid] = true;
+                    out.push(corner_id);
+                    if !on_boundary {
+                        // Interior vertex: walk straight to the right corner.
+                        corner_id = ct.opposite(ct.next(corner_id)).unwrap();
+                        continue;
+                    }
+                }
+
+                // Current vertex already visited, or on a boundary.
+                let right = ct.opposite(ct.next(corner_id));
+                let left = ct.opposite(ct.previous(corner_id));
+                let right_visited = right.is_none_or(|c| is_face_visited[face_of(c)]);
+                let left_visited = left.is_none_or(|c| is_face_visited[face_of(c)]);
+
+                if right_visited {
+                    if left_visited {
+                        stack.pop();
+                        break;
+                    }
+                    corner_id = left.unwrap();
+                } else if left_visited {
+                    corner_id = right.unwrap();
+                } else {
+                    // Both neighbours unvisited: continue left now, resume right later.
+                    *stack.last_mut().unwrap() = left.unwrap();
+                    stack.push(right.unwrap());
+                    break;
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// Number of priority buckets used by the max-prediction-degree traversal.
+const MPD_MAX_PRIORITY: usize = 3;
+
+/// Priority of traversing the edge that lands on `corner`'s tip vertex, and
+/// (as a side effect) bumps that vertex's accumulated prediction degree.
+/// Mirrors `MaxPredictionDegreeTraverser::ComputePriority`: an already-visited
+/// tip gives priority 0; otherwise the degree is incremented and the priority
+/// is 1 when the degree is now > 1, else 2.
+fn mpd_compute_priority<T: GenericCornerTable>(
+    ct: &T,
+    corner: CornerIdx,
+    is_vertex_visited: &[bool],
+    prediction_degree: &mut [i32],
+) -> usize {
+    let v_tip = usize::from(ct.vertex_idx(corner));
+    let mut priority = 0usize;
+    if !is_vertex_visited[v_tip] {
+        prediction_degree[v_tip] += 1;
+        priority = if prediction_degree[v_tip] > 1 { 1 } else { 2 };
+    }
+    if priority >= MPD_MAX_PRIORITY {
+        priority = MPD_MAX_PRIORITY - 1;
+    }
+    priority
+}
+
+/// Computes the attribute traversal order for the
+/// `MESH_TRAVERSAL_PREDICTION_DEGREE` method (used by Draco at higher
+/// compression levels — e.g. positions encoded with constrained-multi-
+/// parallelogram). Returns the per-data-value corner map: `out[p]` is the
+/// corner at which the `p`-th attribute value's vertex was first visited,
+/// i.e. Google's `encoded_attribute_value_index_to_corner_map`.
+///
+/// Direct port of `compression/mesh/traverser/max_prediction_degree_traverser.h`
+/// driven by `MeshTraversalSequencer` (which seeds `traverse_from_corner(3*i)`
+/// for every face in order until all faces are visited).
+pub fn compute_sequence_max_prediction_degree<T>(ct: &T) -> Vec<CornerIdx>
+where
+    T: GenericCornerTable,
+{
+    let num_faces = ct.num_faces();
+    let num_vertices = ct.num_vertices();
+    let mut out: Vec<CornerIdx> = Vec::with_capacity(num_vertices);
+    if num_vertices == 0 {
+        return out;
+    }
+
+    let mut is_face_visited = vec![false; num_faces];
+    let mut is_vertex_visited = vec![false; num_vertices];
+    let mut prediction_degree = vec![0i32; num_vertices];
+    let mut stacks: [Vec<CornerIdx>; MPD_MAX_PRIORITY] = Default::default();
+    let mut num_visited_faces = 0usize;
+
+    let face_of = |c: CornerIdx| usize::from(c) / 3;
+
+    for i in 0..num_faces {
+        if num_visited_faces >= num_faces {
+            break;
+        }
+        let start = CornerIdx::from(3 * i);
+
+        // Seed: stage the start corner and visit the first face's three
+        // vertices (next, prev, tip — in that order) up front.
+        stacks[0].push(start);
+        let mut best_priority = 0usize;
+        let first_next = ct.next(start);
+        let first_prev = ct.previous(start);
+        for (corner, vtx) in [
+            (first_next, usize::from(ct.vertex_idx(first_next))),
+            (first_prev, usize::from(ct.vertex_idx(first_prev))),
+            (start, usize::from(ct.vertex_idx(start))),
+        ] {
+            if !is_vertex_visited[vtx] {
+                is_vertex_visited[vtx] = true;
+                out.push(corner);
+            }
+        }
+
+        // Drain the priority buckets.
+        loop {
+            // Pop the highest-priority (lowest bucket index) available corner.
+            let mut popped = None;
+            let mut p = best_priority;
+            while p < MPD_MAX_PRIORITY {
+                if let Some(c) = stacks[p].pop() {
+                    best_priority = p;
+                    popped = Some(c);
+                    break;
+                }
+                p += 1;
+            }
+            let Some(mut corner_id) = popped else { break };
+            if is_face_visited[face_of(corner_id)] {
+                continue;
+            }
+
+            loop {
+                is_face_visited[face_of(corner_id)] = true;
+                num_visited_faces += 1;
+
+                let vid = usize::from(ct.vertex_idx(corner_id));
+                if !is_vertex_visited[vid] {
+                    is_vertex_visited[vid] = true;
+                    out.push(corner_id);
+                }
+
+                // right = opposite(next(c)); left = opposite(prev(c)).
+                let right = ct.opposite(ct.next(corner_id));
+                let left = ct.opposite(ct.previous(corner_id));
+                let right_visited = right.is_none_or(|rc| is_face_visited[face_of(rc)]);
+                let left_visited = left.is_none_or(|lc| is_face_visited[face_of(lc)]);
+
+                let mut advanced = false;
+                if !left_visited {
+                    let lc = left.unwrap();
+                    let priority =
+                        mpd_compute_priority(ct, lc, &is_vertex_visited, &mut prediction_degree);
+                    if right_visited && priority <= best_priority {
+                        corner_id = lc;
+                        advanced = true;
+                    } else {
+                        stacks[priority].push(lc);
+                        if priority < best_priority {
+                            best_priority = priority;
+                        }
+                    }
+                }
+                if !advanced && !right_visited {
+                    let rc = right.unwrap();
+                    let priority =
+                        mpd_compute_priority(ct, rc, &is_vertex_visited, &mut prediction_degree);
+                    if priority <= best_priority {
+                        corner_id = rc;
+                        advanced = true;
+                    } else {
+                        stacks[priority].push(rc);
+                        if priority < best_priority {
+                            best_priority = priority;
+                        }
+                    }
+                }
+
+                if !advanced {
+                    break;
+                }
+            }
+        }
+    }
+
+    out
+}

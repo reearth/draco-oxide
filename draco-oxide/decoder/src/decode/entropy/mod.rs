@@ -1,2 +1,2 @@
 pub(crate) mod rans;
-pub mod symbol_coding;
+pub(crate) mod symbol_coding;

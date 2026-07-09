@@ -142,10 +142,13 @@ where
     }
 }
 
+// Reserved for symbol-decode precision selection (currently the
+// 12-bit precision is hardcoded in the symbol_coding wrapper).
+#[allow(dead_code)]
 const fn compute_rans_precision(num_symbols_bit_length: usize) -> usize {
     let mut precision = 12;
     if num_symbols_bit_length > 0 {
-        precision = (num_symbols_bit_length + 2) / 3;
+        precision = num_symbols_bit_length.div_ceil(3);
     }
     if precision < 12 {
         12
@@ -163,11 +166,16 @@ pub(crate) struct RansSymbolDecoder<
 > where
     R: ByteReader,
 {
+    // Kept for parity with the encoder side's `RansSymbolEncoder`; the
+    // decoder only needs `rans_decoder` itself for actual decoding,
+    // but freq_counts is filled at construction time and may be useful
+    // for diagnostics or future precision-selection logic.
+    #[allow(dead_code)]
     freq_counts: Vec<usize>,
     rans_decoder: RansDecoder<R::Rev, RANS_PRECISION>,
 }
 
-impl<'reader, R, const NUM_SYMBOLS_BIT_LENGTH: usize, const RANS_PRECISION: usize>
+impl<R, const NUM_SYMBOLS_BIT_LENGTH: usize, const RANS_PRECISION: usize>
     RansSymbolDecoder<R, NUM_SYMBOLS_BIT_LENGTH, RANS_PRECISION>
 where
     R: ByteReader,
@@ -228,7 +236,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use draco_oxide_core::codec::entropy::rans::{RabsCoder, RansCoder};
+    use crate::encode::entropy::rans::{RabsCoder, RansCoder};
 
     #[test]
     fn test_rans_decoder() {

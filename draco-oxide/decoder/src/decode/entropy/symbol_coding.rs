@@ -1,7 +1,9 @@
 use super::rans;
-use crate::decode::entropy::rans::RansSymbolDecoder;
+use draco_oxide_core::bit_coder::BitReader;
 use draco_oxide_core::bit_coder::ReaderErr;
-use draco_oxide_core::bit_coder::{BitReader, ByteReader};
+use draco_oxide_core::buffer::LsbFirst;
+use crate::decode::entropy::rans::RansSymbolDecoder;
+use crate::prelude::ByteReader;
 use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
@@ -54,7 +56,9 @@ where
     // Decode the encoded data.
     let mut length_coded_decoder: RansSymbolDecoder<R, 5, 12> = RansSymbolDecoder::new(reader)?;
 
-    let mut bit_reader: BitReader<'_, R> = BitReader::spown_from(reader).unwrap(); // ToDo: Handle error
+    // Google's encoder writes the value bitstream LSB-first via
+    // `EncodeLeastSignificantBits32` — match here.
+    let mut bit_reader: BitReader<'_, R, LsbFirst> = BitReader::spown_from(reader).unwrap();
     for _ in (0..num_symbols / num_components).map(|e| e * num_components) {
         // Decode the length
         let len = length_coded_decoder.decode_symbol()?;
@@ -101,7 +105,7 @@ where
         16 => decode_symbols_direcd_coded_precision_unwrapped::<R, 16, 20>(num_symbols, reader),
         17 => decode_symbols_direcd_coded_precision_unwrapped::<R, 17, 20>(num_symbols, reader),
         18 => decode_symbols_direcd_coded_precision_unwrapped::<R, 18, 20>(num_symbols, reader),
-        _ => return Err(Err::InvalidBitLength(max_bit_length as usize)),
+        _ => Err(Err::InvalidBitLength(max_bit_length as usize)),
     }
 }
 
@@ -123,4 +127,102 @@ where
         out.push(decoder.decode_symbol()? as u64);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::encode::entropy::*;
+
+    #[test]
+    fn test_encode_decode_symbols() -> Result<(), Err> {
+        let len = 100;
+        let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
+        let mut buffer = Vec::new();
+        symbol_coding::encode_symbols(
+            symbols.clone(),
+            1,
+            SymbolEncodingMethod::LengthCoded,
+            &mut buffer,
+        )
+        .unwrap();
+        let mut reader = buffer.into_iter();
+        let decoded_symbols = decode_symbols(len as usize, 1, &mut reader)?;
+        assert_eq!(
+            reader.next(),
+            None,
+            "Reader should be empty after decoding all symbols"
+        );
+        assert_eq!(decoded_symbols, symbols);
+        Ok(())
+    }
+
+    #[test]
+    fn test_encode_decode_symbols_multi_components() -> Result<(), Err> {
+        let len = 300;
+        let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
+        let mut buffer = Vec::new();
+        symbol_coding::encode_symbols(
+            symbols.clone(),
+            3,
+            SymbolEncodingMethod::LengthCoded,
+            &mut buffer,
+        )
+        .unwrap();
+        let mut reader = buffer.into_iter();
+        let decoded_symbols = decode_symbols(len as usize, 3, &mut reader)?;
+        assert_eq!(
+            reader.next(),
+            None,
+            "Reader should be empty after decoding all symbols"
+        );
+        assert_eq!(decoded_symbols, symbols);
+        Ok(())
+    }
+
+    #[test]
+    fn test_encode_decode_symbols_direct_coded() -> Result<(), Err> {
+        let len = 100;
+        let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
+        let mut buffer = Vec::new();
+        symbol_coding::encode_symbols(
+            symbols.clone(),
+            1,
+            SymbolEncodingMethod::DirectCoded,
+            &mut buffer,
+        )
+        .unwrap();
+        let mut reader = buffer.into_iter();
+        let decoded_symbols = decode_symbols(len as usize, 1, &mut reader)?;
+        assert_eq!(
+            reader.next(),
+            None,
+            "Reader should be empty after decoding all symbols"
+        );
+        assert_eq!(decoded_symbols, symbols);
+        Ok(())
+    }
+
+    #[test]
+    fn test_encode_decode_symbols_direct_coded_multi_components() -> Result<(), Err> {
+        let len = 300;
+        let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
+        let mut buffer = Vec::new();
+        symbol_coding::encode_symbols(
+            symbols.clone(),
+            3,
+            SymbolEncodingMethod::DirectCoded,
+            &mut buffer,
+        )
+        .unwrap();
+        let mut reader = buffer.into_iter();
+        let decoded_symbols = decode_symbols(len as usize, 3, &mut reader)?;
+        assert_eq!(
+            reader.next(),
+            None,
+            "Reader should be empty after decoding all symbols"
+        );
+        assert_eq!(decoded_symbols, symbols);
+        Ok(())
+    }
 }
