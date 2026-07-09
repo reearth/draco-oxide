@@ -18,6 +18,32 @@ where
     Ok(result)
 }
 
+/// Maximum bytes a single declared-length read pre-allocates up front.
+/// A larger declared length still succeeds — the buffer grows on
+/// demand — but the up-front allocation can't be larger than this,
+/// so a hostile bitstream containing a multi-GB leb128 length can't
+/// trigger an OOM-abort before any actual bytes are read. If the
+/// stream truly does carry more than the cap, the per-byte reads
+/// will succeed and the `Vec` will reallocate normally.
+const PREALLOC_CAP: usize = 64 * 1024 * 1024;
+
+/// Read `declared_len` bytes from `reader` into a fresh `Vec<u8>`.
+/// Use this any time the length comes from the bitstream itself
+/// (typically via `leb128_read`) — it caps the initial allocation so
+/// that a malformed length field can't OOM-abort the process before
+/// the decoder gets a chance to surface a `ReaderErr`.
+pub fn read_byte_buffer<R>(reader: &mut R, declared_len: usize) -> Result<Vec<u8>, ReaderErr>
+where
+    R: ByteReader,
+{
+    let cap = declared_len.min(PREALLOC_CAP);
+    let mut buf = Vec::with_capacity(cap);
+    for _ in 0..declared_len {
+        buf.push(reader.read_u8()?);
+    }
+    Ok(buf)
+}
+
 pub fn leb128_write<W>(mut value: u64, writer: &mut W)
 where
     W: ByteWriter,
