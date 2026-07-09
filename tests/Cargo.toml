@@ -7,7 +7,7 @@ description = "Internal integration tests for draco-oxide. Keeping the codegen b
 
 [dependencies]
 draco-oxide = { path = "../draco-oxide" }
-draco-oxide-decoder = { path = "../draco-oxide/decoder" }
+draco-oxide-decoder = { path = "../draco-oxide/decoder", features = ["gltf"] }
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 tobj = "4.0.3"

@@ -3,6 +3,12 @@
 
 pub mod decode;
 
+/// glTF / GLB `KHR_draco_mesh_compression` decode helpers. Behind the `gltf`
+/// feature so the core decode path (e.g. the wasm build) stays free of the
+/// serde_json dependency.
+#[cfg(feature = "gltf")]
+pub mod io;
+
 /// Convenience re-exports for the decoder. Mirrors the symbols the `decode`
 /// tree referenced via `crate::prelude` in the pre-split monolith, remapped
 /// onto [`draco_oxide_core`].
