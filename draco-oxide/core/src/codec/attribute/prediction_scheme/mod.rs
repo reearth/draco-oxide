@@ -107,9 +107,12 @@ impl PredictionSchemeType {
             0 => PredictionSchemeType::DeltaPrediction,
             1 => PredictionSchemeType::MeshParallelogramPrediction,
             2 => PredictionSchemeType::MeshMultiParallelogramPrediction,
-            5 => PredictionSchemeType::DerivativePrediction,
+            // `get_id` above writes 5 for MeshPredictionForTextureCoordinates
+            // and 7 for DerivativePrediction; from_id must mirror it (the two
+            // were swapped here, which mis-decoded texture-coord prediction).
+            5 => PredictionSchemeType::MeshPredictionForTextureCoordinates,
             6 => PredictionSchemeType::MeshNormalPrediction,
-            7 => PredictionSchemeType::MeshPredictionForTextureCoordinates,
+            7 => PredictionSchemeType::DerivativePrediction,
             0xFE => PredictionSchemeType::NoPrediction, // -2 in i8
             0xFF => PredictionSchemeType::Invalid,      // -1 in i8
             // If the id is not recognized, return an error.
