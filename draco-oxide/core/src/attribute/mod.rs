@@ -697,6 +697,26 @@ impl ComponentDataType {
         }
     }
 
+    /// glTF accessor componentType code (5120-5126). Returns `None` for
+    /// `Invalid` and 64-bit integer types (glTF only supports up to 32-bit
+    /// ints).
+    #[inline]
+    pub fn to_gltf_component_type(self) -> Option<u32> {
+        match self {
+            ComponentDataType::I8 => Some(5120),
+            ComponentDataType::U8 => Some(5121),
+            ComponentDataType::I16 => Some(5122),
+            ComponentDataType::U16 => Some(5123),
+            ComponentDataType::U32 => Some(5125),
+            ComponentDataType::F32 => Some(5126),
+            ComponentDataType::I32
+            | ComponentDataType::I64
+            | ComponentDataType::U64
+            | ComponentDataType::F64
+            | ComponentDataType::Invalid => None,
+        }
+    }
+
     /// Reads the data type from the reader.
     #[inline]
     pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
