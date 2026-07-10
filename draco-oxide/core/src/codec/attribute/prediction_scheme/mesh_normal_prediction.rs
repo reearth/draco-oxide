@@ -6,12 +6,12 @@ use crate::utils::bit_coder::leb128_write;
 use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
 use crate::attribute::AttributeType;
-use crate::corner_table::GenericCornerTable;
+use crate::mesh::ds::AttributeDS;
 use crate::types::NdVector;
 use crate::types::Vector;
 
-pub struct MeshNormalPrediction<'parents, C, const N: usize> {
-    corner_table: &'parents C,
+pub struct MeshNormalPrediction<'parents, const N: usize> {
+    ads: &'parents AttributeDS<'parents>,
     /// Per-vertex precomputed prediction (octahedral, quantized), indexed by
     /// `VertexIdx`. Built once in `new()`; `predict` only looks it up and applies
     /// the sign flip.
@@ -19,9 +19,8 @@ pub struct MeshNormalPrediction<'parents, C, const N: usize> {
     flips: Vec<bool>,
 }
 
-impl<'parents, C, const N: usize> MeshNormalPrediction<'parents, C, N>
+impl<'parents, const N: usize> MeshNormalPrediction<'parents, N>
 where
-    C: GenericCornerTable,
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
     /// Cross-product normal of the face owning corner `c`, with `pos_c` the
@@ -29,17 +28,17 @@ where
     /// of which corner is chosen as the apex, so a face's normal can be computed
     /// once (from any corner) and reused for all three of its vertices.
     fn compute_normal_of_face(
-        corner_table: &C,
+        ads: &AttributeDS,
         pos: &Attribute,
         c: CornerIdx,
         pos_c: NdVector<3, i32>,
     ) -> NdVector<3, i64> {
         // corners.
-        let c_next = corner_table.next(c);
-        let c_prev = corner_table.previous(c);
+        let c_next = c.next();
+        let c_prev = c.previous();
 
-        let pos_next = pos.get::<NdVector<3, i32>, 3>(corner_table.point_idx(c_next));
-        let pos_prev = pos.get::<NdVector<3, i32>, 3>(corner_table.point_idx(c_prev));
+        let pos_next = pos.get::<NdVector<3, i32>, 3>(ads.global_ds().point_idx(c_next));
+        let pos_prev = pos.get::<NdVector<3, i32>, 3>(ads.global_ds().point_idx(c_prev));
 
         // Compute the difference to next and prev.
         let delta_next = pos_next - pos_c;
@@ -93,17 +92,16 @@ where
     }
 }
 
-impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N>
-    for MeshNormalPrediction<'parents, C, N>
+impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N>
+    for MeshNormalPrediction<'parents, N>
 where
-    C: GenericCornerTable,
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
     const ID: u32 = 2;
 
     type AdditionalDataForMetadata = ();
 
-    fn new(parents: &[&'parents Attribute], corner_table: &'parents C) -> Self {
+    fn new(parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self {
         assert!(parents.len() == 1, "MeshNormalPrediction requires exactly one parent attribute for position. but it has {} parents.", parents.len());
         assert!(
             parents[0].get_attribute_type() == AttributeType::Position,
@@ -111,13 +109,13 @@ where
         );
         let pos = parents[0]; // we made sure that the first parent is the position attribute
 
-        let mut sums = vec![NdVector::<3, i64>::zero(); corner_table.num_vertices()];
-        for f in 0..corner_table.num_faces() {
+        let mut sums = vec![NdVector::<3, i64>::zero(); ads.num_vertices()];
+        for f in 0..ads.global_ds().num_faces() {
             let c0 = CornerIdx::from(3 * f);
-            let pos_c0 = pos.get::<NdVector<3, i32>, 3>(corner_table.point_idx(c0));
-            let face_normal = Self::compute_normal_of_face(corner_table, pos, c0, pos_c0);
+            let pos_c0 = pos.get::<NdVector<3, i32>, 3>(ads.global_ds().point_idx(c0));
+            let face_normal = Self::compute_normal_of_face(ads, pos, c0, pos_c0);
             for i in 0..3 {
-                let v = corner_table.vertex_idx(CornerIdx::from(3 * f + i));
+                let v = ads.vertex_idx(CornerIdx::from(3 * f + i));
                 sums[usize::from(v)] += face_normal;
             }
         }
@@ -127,7 +125,7 @@ where
             .collect::<Vec<_>>();
 
         Self {
-            corner_table,
+            ads,
             predicted,
             flips: Vec::new(),
         }
@@ -146,10 +144,10 @@ where
         _vertices_up_till_now: &[VertexIdx],
         attribute: &Attribute,
     ) -> NdVector<N, i32> {
-        let v = self.corner_table.vertex_idx(c);
+        let v = self.ads.vertex_idx(c);
         let mut out = self.predicted[usize::from(v)];
 
-        let actual_val = attribute.get::<NdVector<N, i32>, N>(self.corner_table.point_idx(c));
+        let actual_val = attribute.get::<NdVector<N, i32>, N>(self.ads.global_ds().point_idx(c));
         let diff1 = out - actual_val;
         let diff2 = out * -1 - actual_val;
         if diff1.dot(diff1) > diff2.dot(diff2) {

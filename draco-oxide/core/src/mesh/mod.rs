@@ -1,4 +1,5 @@
 pub mod builder;
+pub mod ds;
 
 use crate::attribute::{Attribute, AttributeType, ComponentDataType};
 use crate::types::{Float, Vector};

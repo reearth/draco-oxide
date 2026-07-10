@@ -213,6 +213,50 @@ idx_impl! {
     VertexIdx
 }
 
+impl CornerIdx {
+    pub fn previous(self) -> CornerIdx {
+        if self.is_none() {
+            return self;
+        }
+        let corner = usize::from(self);
+        let out = if corner % 3 == 0 {
+            corner + 2
+        } else {
+            corner - 1
+        };
+        CornerIdx::from(out)
+    }
+
+    pub fn next(self) -> CornerIdx {
+        if self.is_none() {
+            return self;
+        }
+        let corner = usize::from(self);
+        let out = if corner % 3 == 2 {
+            corner - 2
+        } else {
+            corner + 1
+        };
+        CornerIdx::from(out)
+    }
+
+    pub fn face_idx(self) -> FaceIdx {
+        FaceIdx::from(usize::from(self) / 3)
+    }
+
+    pub fn is_none(self) -> bool {
+        usize::from(self) == usize::MAX
+    }
+
+    pub fn none() -> Self {
+        CornerIdx(usize::MAX)
+    }
+
+    pub fn is_some(self) -> bool {
+        !self.is_none()
+    }
+}
+
 pub trait Float: DataValue + ops::Div<Output = Self> + ops::Neg<Output = Self> {
     fn sqrt(self) -> Self;
 }

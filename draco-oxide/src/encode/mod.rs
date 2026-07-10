@@ -1,5 +1,6 @@
 pub(crate) mod attribute;
 pub(crate) mod connectivity;
+pub(crate) mod ds;
 pub(crate) mod entropy;
 pub(crate) mod header;
 pub(crate) mod metadata;
@@ -87,12 +88,25 @@ where
         ..
     } = mesh;
 
-    // Encode connectivity
-    let conn_out = connectivity::encode_connectivity(&faces, &mut attributes, writer, &cfg)?;
+    let pos_att = attributes
+        .iter()
+        .find(|att| {
+            att.get_attribute_type() == draco_oxide_core::attribute::AttributeType::Position
+        })
+        .ok_or(Err::ConnectivityError(
+            connectivity::Err::PositionAttributeTypeError,
+        ))?;
+
+    let (pos_ds, pos_corner_table) = ds::build_global_ds(faces, pos_att);
+    let mut adss = ds::build_attribute_ds(&pos_ds, &pos_corner_table, attributes);
+
+    // Encode connectivity. This returns the corners of the edgebreaker traversal, which the
+    // attribute encoder needs to seed its per-attribute sequencing.
+    let corners_of_edgebreaker = connectivity::encode_connectivity(&mut adss, writer, &cfg)?;
     debug_write!("Connectivity done, now starting attributes.", writer);
 
     // Encode attributes
-    attribute::encode_attributes(attributes, writer, conn_out, &cfg)?;
+    attribute::encode_attributes(adss, corners_of_edgebreaker, writer, &cfg)?;
 
     debug_write!("All done", writer);
 

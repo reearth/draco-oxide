@@ -1,34 +1,29 @@
-use crate::corner_table::GenericCornerTable;
+use crate::mesh::ds::{AttributeDS, GenericCornerTable};
 use crate::types::{CornerIdx, VertexIdx};
 
 #[derive(Debug, Clone)]
-pub struct Traverser<'ct, CornerTableType>
-where
-    CornerTableType: GenericCornerTable,
-{
-    corner_table: &'ct CornerTableType,
+pub struct Traverser<'a> {
+    ads: &'a AttributeDS<'a>,
     visited_vertices: Vec<bool>,
     visited_faces: Vec<bool>,
     corner_traversal_stack: Vec<CornerIdx>,
     out: Vec<CornerIdx>,
 }
 
-impl<'ct, T> Traverser<'ct, T>
-where
-    T: GenericCornerTable,
-{
+impl<'a> Traverser<'a> {
     /// Creates a new `Traverser` instance.
     /// # Arguments
-    /// * `corner_table` - A reference to the corner table to traverse.
+    /// * `ads` - A reference to the attribute data structure to traverse.
     /// * `corners_of_edgebreaker_traversal` - A vector of corner indices
     ///   representing the last-encoded corners for connected components in encoded order.
-    pub fn new(corner_table: &'ct T, corners_of_edgebreaker_traversal: Vec<CornerIdx>) -> Self {
+    pub fn new(ads: &'a AttributeDS, corners_of_edgebreaker_traversal: Vec<CornerIdx>) -> Self {
+        let num_faces = ads.global_ds().num_faces();
         Self {
-            visited_vertices: vec![false; corner_table.num_vertices()],
-            visited_faces: vec![false; corner_table.num_faces()],
-            corner_table,
+            visited_vertices: vec![false; ads.num_vertices()],
+            visited_faces: vec![false; num_faces],
+            ads,
             corner_traversal_stack: corners_of_edgebreaker_traversal, // The last encoded connected component gets decoded first
-            out: Vec::with_capacity(corner_table.num_corners()),
+            out: Vec::with_capacity(num_faces * 3),
         }
     }
 
@@ -48,14 +43,14 @@ where
             // If the face has not yet been visited, then the
             // other vertices of the face are not visited yet either. If this is the case, then
             // we need to store them in self.next_outputs_stack so that they will get processed first.
-            let v = self.corner_table.vertex_idx(curr_corner);
-            if self.visited_faces[usize::from(self.corner_table.face_idx_containing(curr_corner))] {
+            let v = self.ads.vertex_idx(curr_corner);
+            if self.visited_faces[usize::from(curr_corner.face_idx())] {
                 continue;
             }
-            let next_c = self.corner_table.next(curr_corner);
-            let next_v = self.corner_table.vertex_idx(next_c);
-            let prev_c = self.corner_table.previous(curr_corner);
-            let prev_v = self.corner_table.vertex_idx(prev_c);
+            let next_c = curr_corner.next();
+            let next_v = self.ads.vertex_idx(next_c);
+            let prev_c = curr_corner.previous();
+            let prev_v = self.ads.vertex_idx(prev_c);
             if !self.is_vertex_visited(next_v) || !self.is_vertex_visited(prev_v) {
                 // We need to return the next corner first, then the previous corner, and finally the current corner.
                 // This order is determined by the draco library.
@@ -66,7 +61,7 @@ where
             }
 
             // Coming here means that we are visiting a new face.
-            let face_idx = self.corner_table.face_idx_containing(curr_corner);
+            let face_idx = curr_corner.face_idx();
             self.visited_faces[usize::from(face_idx)] = true;
             // Once a face is marked visited it is never unmarked, and the pop
             // loop above skips any corner whose face is already visited. So stale
@@ -76,9 +71,12 @@ where
             // If we have not yet visited the vertex of the current corner and if it is not on a boundary then we can simply return it.
             if !self.is_vertex_visited(v) {
                 self.visit(v, curr_corner);
-                if !self.corner_table.is_on_boundary(v) {
+                if !self.ads.is_on_boundary(v) {
                     self.corner_traversal_stack.push(
-                        self.corner_table.get_right_corner(curr_corner).unwrap(), // It is guaranteed to exist because the current corner is unvisited and not on a boundary
+                        self.ads
+                            .corner_table()
+                            .get_right_corner(curr_corner)
+                            .unwrap(), // It is guaranteed to exist because the current corner is unvisited and not on a boundary
                     );
                     continue;
                 }
@@ -86,10 +84,10 @@ where
 
             self.visit(v, curr_corner);
 
-            let right_corner = self.corner_table.get_right_corner(curr_corner);
-            let left_corner = self.corner_table.get_left_corner(curr_corner);
-            let right_face = right_corner.map(|c| self.corner_table.face_idx_containing(c));
-            let left_face = left_corner.map(|c| self.corner_table.face_idx_containing(c));
+            let right_corner = self.ads.corner_table().get_right_corner(curr_corner);
+            let left_corner = self.ads.corner_table().get_left_corner(curr_corner);
+            let right_face = right_corner.map(|c| c.face_idx());
+            let left_face = left_corner.map(|c| c.face_idx());
 
             if right_face.is_some() && self.visited_faces[usize::from(right_face.unwrap())] {
                 // Right face has been visited

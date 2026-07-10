@@ -1,26 +1,25 @@
 use crate::attribute::Attribute;
 use crate::codec::attribute::prediction_scheme::PredictionSchemeImpl;
-use crate::corner_table::GenericCornerTable;
+use crate::mesh::ds::AttributeDS;
 use crate::types::NdVector;
 use crate::types::{CornerIdx, Vector, VertexIdx};
 
-pub struct MeshMultiParallelogramPrediction<'parents, C, const N: usize> {
+pub struct MeshMultiParallelogramPrediction<'parents, const N: usize> {
     #[allow(unused)] // TODO: Remove this field when the implementation is complete
-    corner_table: &'parents C,
+    ads: &'parents AttributeDS<'parents>,
 }
 
-impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N>
-    for MeshMultiParallelogramPrediction<'parents, C, N>
+impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N>
+    for MeshMultiParallelogramPrediction<'parents, N>
 where
-    C: GenericCornerTable,
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
     const ID: u32 = 3;
 
     type AdditionalDataForMetadata = ();
 
-    fn new(_parents: &[&'parents Attribute], corner_table: &'parents C) -> Self {
-        Self { corner_table }
+    fn new(_parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self {
+        Self { ads }
     }
 
     fn get_values_impossible_to_predict(

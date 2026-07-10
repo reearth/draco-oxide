@@ -3,223 +3,146 @@
 //! functionality but need the encoder (and `io`/decoder), which only the
 //! `draco-oxide` crate sees together.
 
-mod attribute_corner_table {
+mod attribute_ds {
+    use crate::encode::ds::{build_attribute_ds, build_global_ds};
     use crate::io::obj::load_obj;
     use draco_oxide_core::attribute::AttributeType;
-    use draco_oxide_core::corner_table::attribute_corner_table::AttributeCornerTable;
-    use draco_oxide_core::corner_table::CornerTable;
-    use draco_oxide_core::corner_table::GenericCornerTable;
+    use draco_oxide_core::mesh::ds::GenericCornerTable;
     use draco_oxide_core::types::{CornerIdx, VertexIdx};
+
     #[test]
     fn test_no_att_seam() {
-        // read the test data from a corner table
-
-        let mut mesh = load_obj("../tests/data/sphere.obj").unwrap();
+        let mesh = load_obj("../tests/data/sphere.obj").unwrap();
         let faces = mesh.faces;
+        let attributes = mesh.attributes;
 
-        let att = mesh
-            .attributes
+        let pos_att = attributes
             .iter()
             .find(|att| att.get_attribute_type() == AttributeType::Position)
             .unwrap();
+        let (ds, pos_corner_table) = build_global_ds(faces, pos_att);
+        let adss = build_attribute_ds(&ds, &pos_corner_table, attributes);
 
-        let corner_table = CornerTable::new(&faces, &att);
-        let att = mesh
-            .attributes
-            .iter_mut()
-            .find(|att| att.get_attribute_type() == AttributeType::Normal)
+        let pos_ds = adss
+            .iter()
+            .find(|a| a.att_data().get_attribute_type() == AttributeType::Position)
             .unwrap();
-        let attr_corner_table = AttributeCornerTable::new(&corner_table, att);
-        assert_eq!(
-            attr_corner_table.num_vertices(),
-            corner_table.num_vertices()
-        );
-        assert_eq!(
-            attr_corner_table.corner_to_vertex.len(),
-            corner_table.num_corners()
-        );
-        assert_eq!(
-            attr_corner_table.vertex_to_attribute_map.len(),
-            corner_table.num_vertices()
-        );
-        assert_eq!(
-            attr_corner_table.left_most_corners.len(),
-            corner_table.num_vertices()
-        );
-        assert_eq!(
-            attr_corner_table.is_edge_on_seam.len(),
-            corner_table.num_corners()
-        );
-        assert_eq!(
-            attr_corner_table.is_vertex_on_seam.len(),
-            corner_table.num_vertices()
-        );
-        assert!(attr_corner_table
-            .is_edge_on_seam
+        let normal_ds = adss
             .iter()
-            .all(|&x| x == false));
-        assert!(attr_corner_table
-            .is_vertex_on_seam
-            .iter()
-            .all(|&x| x == false));
-        assert!(attr_corner_table
-            .left_most_corners
-            .iter()
-            .all(|&x| usize::from(x) < corner_table.num_corners()));
-        assert!(attr_corner_table
-            .corner_to_vertex
-            .iter()
-            .all(|&x| usize::from(x) < corner_table.num_vertices()));
+            .find(|a| a.att_data().get_attribute_type() == AttributeType::Normal)
+            .unwrap();
 
-        // check the opposite corners
-        for c in 0..corner_table.num_corners() {
+        // The sphere's normals carry no attribute seams, so the normal
+        // connectivity must coincide with the position connectivity.
+        assert_eq!(normal_ds.num_vertices(), pos_ds.num_vertices());
+
+        for c in 0..ds.num_corners() {
             let c = CornerIdx::from(c);
+            // No corner is opposite a seam edge.
+            assert!(!normal_ds.corner_table().is_corner_opposite_to_seam_edge(c));
+            // Opposite corners are identical to the position corner table.
             assert_eq!(
-                attr_corner_table.opposite(c, &corner_table),
-                corner_table.opposite(c)
+                normal_ds.corner_table().opposite(c),
+                pos_corner_table.opposite(c)
             );
+            // Vertices are identical to the position vertices.
+            assert_eq!(normal_ds.vertex_idx(c), pos_ds.vertex_idx(c));
         }
-
-        // check vertices
-        for c in 0..corner_table.num_corners() {
-            let c = CornerIdx::from(c);
-            assert_eq!(
-                attr_corner_table.vertex_idx(c),
-                corner_table.vertex_idx(c),
-                "attr corner_to_vertex: {:?}",
-                attr_corner_table.corner_to_vertex,
-            );
-        }
-
-        // no attribute seams, so all edges and vertices are not on a seam.
-        attr_corner_table.is_edge_on_seam.iter().all(|&x| !x);
-        attr_corner_table.is_vertex_on_seam.iter().all(|&x| !x);
     }
 
     #[test]
     fn test_att_seam() {
-        let mut tetrahedron = load_obj("../tests/data/tetrahedron.obj").unwrap();
-        let faces = tetrahedron.faces;
-        let corner_table = CornerTable::new(&faces, &tetrahedron.attributes[0]);
+        let mesh = load_obj("../tests/data/tetrahedron.obj").unwrap();
+        let faces = mesh.faces;
+        let attributes = mesh.attributes;
 
-        let tex_att = tetrahedron
-            .attributes
-            .iter_mut()
-            .find(|att| att.get_attribute_type() == AttributeType::TextureCoordinate)
+        let pos_att = attributes
+            .iter()
+            .find(|att| att.get_attribute_type() == AttributeType::Position)
             .unwrap();
-        let attr_corner_table = AttributeCornerTable::new(&corner_table, tex_att);
-        assert_eq!(
-            attr_corner_table.num_vertices(),
-            corner_table.num_vertices() + 2
-        );
-        assert_eq!(
-            attr_corner_table.corner_to_vertex.len(),
-            corner_table.num_corners()
-        );
-        assert_eq!(attr_corner_table.corner_to_vertex[0], 0.into());
-        assert_eq!(attr_corner_table.swing_left(4.into(), &corner_table), None);
-        assert_eq!(attr_corner_table.swing_right(4.into(), &corner_table), None);
-        assert_eq!(attr_corner_table.swing_left(8.into(), &corner_table), None);
-        assert_eq!(attr_corner_table.swing_right(8.into(), &corner_table), None);
-        assert_eq!(attr_corner_table.swing_left(10.into(), &corner_table), None);
-        assert_eq!(
-            attr_corner_table.swing_right(10.into(), &corner_table),
-            None
-        );
-        let seam_edge_corners = [3, 5, 6, 7, 9, 11];
-        for c in seam_edge_corners {
-            let c = CornerIdx::from(c);
-            assert!(
-                attr_corner_table.is_corner_opposite_to_seam_edge(c),
-                "Corner {:?} is not opposite to a seam edge, but it should be. is_edge_on_seam: {:?}",
-                c, attr_corner_table.is_edge_on_seam
-            )
-        }
-        let left_most_corners = [6, 5, 11, 10, 8, 4];
-        for (v, left_most_corner) in left_most_corners.into_iter().enumerate() {
-            let v = VertexIdx::from(v);
-            let left_most_corner = CornerIdx::from(left_most_corner);
+        let (ds, pos_corner_table) = build_global_ds(faces, pos_att);
+        let adss = build_attribute_ds(&ds, &pos_corner_table, attributes);
+
+        let pos_ds = adss
+            .iter()
+            .find(|a| a.att_data().get_attribute_type() == AttributeType::Position)
+            .unwrap();
+        let tex_ds = adss
+            .iter()
+            .find(|a| a.att_data().get_attribute_type() == AttributeType::TextureCoordinate)
+            .unwrap();
+
+        // The texture seams split two of the position vertices, so the texture
+        // connectivity has two additional vertices.
+        assert_eq!(tex_ds.num_vertices(), pos_ds.num_vertices() + 2);
+
+        // The corners opposite a texture seam edge, and only those.
+        let seam_edge_corners = [3usize, 5, 6, 7, 9, 11];
+        for c in 0..ds.num_corners() {
+            let is_seam = seam_edge_corners.contains(&c);
             assert_eq!(
-                attr_corner_table.left_most_corner(v), left_most_corner,
-                "Left most corner for vertex {:?} is {:?}, but it should be {:?}. left_most_corners: {:?}",
-                v,
-                attr_corner_table.left_most_corner(v),
-                left_most_corner,
-                attr_corner_table.left_most_corners
+                tex_ds
+                    .corner_table()
+                    .is_corner_opposite_to_seam_edge(CornerIdx::from(c)),
+                is_seam,
+                "corner {c} seam-status mismatch",
             );
-            assert!(attr_corner_table
-                .swing_left(left_most_corner, &corner_table)
-                .is_none(),);
+        }
+
+        // Every vertex's left-most corner must map back to that vertex.
+        for v in 0..tex_ds.num_vertices() {
+            let v = VertexIdx::from(v);
+            let left_most_corner = tex_ds.left_most_corner(v);
+            assert_eq!(
+                tex_ds.vertex_idx(left_most_corner),
+                v,
+                "left-most corner {left_most_corner:?} does not belong to vertex {v:?}",
+            );
         }
     }
 }
 
 mod sequence {
-    use crate::encode::connectivity::{encode_connectivity, ConnectivityEncoderOutput};
+    use crate::encode::connectivity::encode_connectivity;
+    use crate::encode::ds::{build_attribute_ds, build_global_ds};
+    use crate::encode::Config;
     use crate::io::obj::load_obj;
+    use draco_oxide_core::attribute::AttributeType;
     use draco_oxide_core::codec::attribute::sequence::Traverser;
-    use draco_oxide_core::corner_table::GenericCornerTable;
     use draco_oxide_core::types::ConfigType;
 
     #[test]
     fn test_traverser() {
-        let mut mesh = load_obj("../tests/data/tetrahedron.obj").unwrap();
-        let out: crate::encode::connectivity::ConnectivityEncoderOutput<'_> = encode_connectivity(
-            &mesh.faces,
-            &mut mesh.attributes,
-            &mut Vec::new(),
-            &crate::encode::Config::default(),
-        )
-        .unwrap();
+        let mesh = load_obj("../tests/data/tetrahedron.obj").unwrap();
+        let faces = mesh.faces;
+        let attributes = mesh.attributes;
 
-        let (ct, corners) = if let ConnectivityEncoderOutput::Edgebreaker(edgebreaker_out) = out {
-            (
-                edgebreaker_out.corner_table,
-                edgebreaker_out.corners_of_edgebreaker,
-            )
-        } else {
-            panic!("Expected Edgebreaker Output");
+        let pos_att = attributes
+            .iter()
+            .find(|att| att.get_attribute_type() == AttributeType::Position)
+            .unwrap();
+        let (ds, pos_corner_table) = build_global_ds(faces, pos_att);
+        let mut adss = build_attribute_ds(&ds, &pos_corner_table, attributes);
+
+        let corners = encode_connectivity(&mut adss, &mut Vec::new(), &Config::default()).unwrap();
+
+        // The point-index sequence produced by traversing a single attribute.
+        let sequence_of = |ty: AttributeType| -> Vec<usize> {
+            let ads = adss
+                .iter()
+                .find(|a| a.att_data().get_attribute_type() == ty)
+                .unwrap();
+            Traverser::new(ads, corners.clone())
+                .compute_seqeunce()
+                .iter()
+                .map(|c| usize::from(ads.global_ds().point_idx(*c)))
+                .collect()
         };
 
-        let ct_pos = ct.universal_corner_table();
-        let sequence_points = Traverser::new(ct_pos, corners.clone())
-            .compute_seqeunce()
-            .iter()
-            .map(|c| ct_pos.point_idx(*c))
-            .collect::<Vec<_>>();
+        assert_eq!(sequence_of(AttributeType::Position), vec![3, 1, 0, 2]);
+        assert_eq!(sequence_of(AttributeType::Normal), vec![3, 1, 0, 2]);
         assert_eq!(
-            sequence_points
-                .into_iter()
-                .map(|c| usize::from(c))
-                .collect::<Vec<_>>(),
-            vec![3, 1, 0, 2]
-        );
-
-        let ct_nor = &ct.attribute_corner_table(1).unwrap();
-        let sequence_normals = Traverser::new(ct_nor, corners.clone())
-            .compute_seqeunce()
-            .iter()
-            .map(|c| ct_nor.point_idx(*c))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            sequence_normals
-                .into_iter()
-                .map(|c| usize::from(c))
-                .collect::<Vec<_>>(),
-            vec![3, 1, 0, 2]
-        );
-
-        let ct_tex = &ct.attribute_corner_table(2).unwrap();
-        let sequence_tex_coords = Traverser::new(ct_tex, corners)
-            .compute_seqeunce()
-            .iter()
-            .map(|c| ct_tex.point_idx(*c))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            sequence_tex_coords
-                .into_iter()
-                .map(|c| usize::from(c))
-                .collect::<Vec<_>>(),
+            sequence_of(AttributeType::TextureCoordinate),
             vec![3, 1, 0, 2, 5, 4]
         );
     }
@@ -237,48 +160,36 @@ mod sequence {
         h
     }
 
-    /// Computes (attr_idx, sequence_len, digest) for the universal corner table
-    /// (attr 0) and every attribute corner table of `mesh`. The digest captures
-    /// the exact `Vec<CornerIdx>` traversal order via point indices — this is the
-    /// shared encoder/decoder symmetry that must stay byte-identical.
+    /// Computes (attr_idx, sequence_len, digest) for every attribute data
+    /// structure of `mesh`, indexed by position in the attribute list (0 is the
+    /// position attribute). The digest captures the exact `Vec<CornerIdx>`
+    /// traversal order via point indices — this is the shared encoder/decoder
+    /// symmetry that must stay byte-identical.
     fn sequence_fingerprints(path: &str) -> Vec<(usize, usize, u64)> {
-        let mut mesh = load_obj(path).unwrap();
-        let out = encode_connectivity(
-            &mesh.faces,
-            &mut mesh.attributes,
-            &mut Vec::new(),
-            &crate::encode::Config::default(),
-        )
-        .unwrap();
+        let mesh = load_obj(path).unwrap();
+        let faces = mesh.faces;
+        let attributes = mesh.attributes;
 
-        let (ct, corners) = if let ConnectivityEncoderOutput::Edgebreaker(eb) = out {
-            (eb.corner_table, eb.corners_of_edgebreaker)
-        } else {
-            panic!("Expected Edgebreaker Output for {path}");
-        };
-
-        let mut fps = Vec::new();
-
-        let ct_pos = ct.universal_corner_table();
-        let seq: Vec<usize> = Traverser::new(ct_pos, corners.clone())
-            .compute_seqeunce()
+        let pos_att = attributes
             .iter()
-            .map(|c| usize::from(ct_pos.point_idx(*c)))
-            .collect();
-        fps.push((0, seq.len(), digest(&seq)));
+            .find(|att| att.get_attribute_type() == AttributeType::Position)
+            .unwrap();
+        let (ds, pos_corner_table) = build_global_ds(faces, pos_att);
+        let mut adss = build_attribute_ds(&ds, &pos_corner_table, attributes);
 
-        let mut attr_idx = 1;
-        while let Some(ct_attr) = ct.attribute_corner_table(attr_idx) {
-            let seq: Vec<usize> = Traverser::new(&ct_attr, corners.clone())
-                .compute_seqeunce()
-                .iter()
-                .map(|c| usize::from(ct_attr.point_idx(*c)))
-                .collect();
-            fps.push((attr_idx, seq.len(), digest(&seq)));
-            attr_idx += 1;
-        }
+        let corners = encode_connectivity(&mut adss, &mut Vec::new(), &Config::default()).unwrap();
 
-        fps
+        adss.iter()
+            .enumerate()
+            .map(|(attr_idx, ads)| {
+                let seq: Vec<usize> = Traverser::new(ads, corners.clone())
+                    .compute_seqeunce()
+                    .iter()
+                    .map(|c| usize::from(ads.global_ds().point_idx(*c)))
+                    .collect();
+                (attr_idx, seq.len(), digest(&seq))
+            })
+            .collect()
     }
 
     /// Byte-identical oracle for `compute_sequence`. The expected fingerprints

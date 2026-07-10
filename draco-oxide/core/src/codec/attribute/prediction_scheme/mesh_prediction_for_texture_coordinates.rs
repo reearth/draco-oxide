@@ -2,15 +2,15 @@ use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
 use crate::bit_coder::ByteWriter;
 use crate::codec::entropy::rans::RabsCoder;
-use crate::corner_table::GenericCornerTable;
+use crate::mesh::ds::AttributeDS;
 use crate::safety_assert_eq;
 use crate::types::NdVector;
 use crate::types::{CornerIdx, PointIdx, VertexIdx};
 use crate::types::{Dot, Vector};
 use crate::utils::bit_coder::leb128_write;
 
-pub struct MeshPredictionForTextureCoordinates<'parents, C, const N: usize> {
-    corner_table: &'parents C,
+pub struct MeshPredictionForTextureCoordinates<'parents, const N: usize> {
+    ads: &'parents AttributeDS<'parents>,
     pos_att: &'parents Attribute,
     orientation: Vec<bool>, // Stores orientation for encoder
     // O(1) "has this vertex been processed yet" membership, replacing a linear
@@ -21,9 +21,8 @@ pub struct MeshPredictionForTextureCoordinates<'parents, C, const N: usize> {
     synced: usize,
 }
 
-impl<'parents, C, const N: usize> MeshPredictionForTextureCoordinates<'parents, C, N>
+impl<'parents, const N: usize> MeshPredictionForTextureCoordinates<'parents, N>
 where
-    C: GenericCornerTable,
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
     /// Get 3D position for a vertex from the position attribute
@@ -65,17 +64,17 @@ where
     ) -> NdVector<N, i32> {
         // Check if next vertex has been processed. `visited` is kept in sync by
         // `predict`, the only caller, before any fallback is taken.
-        let next_corner = self.corner_table.next(c);
-        let next_vertex = self.corner_table.vertex_idx(next_corner);
+        let next_corner = c.next();
+        let next_vertex = self.ads.vertex_idx(next_corner);
         if self.visited[usize::from(next_vertex)] {
-            return attribute.get(self.corner_table.point_idx(next_corner));
+            return attribute.get(self.ads.global_ds().point_idx(next_corner));
         }
 
         // The following chunk of code is supposed to be there, but it is commented out
         // as draco contains a bug that avoids using the previous vertex for prediction.
 
         // // Check if previous vertex has been processed
-        // let prev_corner = self.corner_table.previous(i);
+        // let prev_corner = c.previous();
         // let prev_vertex = self.corner_table.vertex_idx(prev_corner);
         // if vertices_up_till_now.contains(&prev_vertex) {
         //     return attribute.get(prev_vertex);
@@ -84,8 +83,9 @@ where
         // Use the most recently processed vertex
         if let Some(&last_vertex) = vertices_up_till_now.last() {
             return attribute.get(
-                self.corner_table
-                    .point_idx(self.corner_table.left_most_corner(last_vertex)),
+                self.ads
+                    .global_ds()
+                    .point_idx(self.ads.left_most_corner(last_vertex)),
             );
         }
 
@@ -94,22 +94,21 @@ where
     }
 }
 
-impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N>
-    for MeshPredictionForTextureCoordinates<'parents, C, N>
+impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N>
+    for MeshPredictionForTextureCoordinates<'parents, N>
 where
-    C: GenericCornerTable,
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
     const ID: u32 = 2;
 
     type AdditionalDataForMetadata = ();
 
-    fn new(parents: &[&'parents Attribute], corner_table: &'parents C) -> Self {
+    fn new(parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self {
         Self {
-            corner_table,
+            ads,
             pos_att: parents[0],
             orientation: Vec::new(), // Initialize orientation vector
-            visited: vec![false; corner_table.num_vertices()],
+            visited: vec![false; ads.num_vertices()],
             synced: 0,
         }
     }
@@ -139,16 +138,16 @@ where
         self.synced = vertices_up_till_now.len();
 
         // Get next and previous corners for the current corner
-        let next_corner = self.corner_table.next(i);
-        let prev_corner = self.corner_table.previous(i);
+        let next_corner = i.next();
+        let prev_corner = i.previous();
 
         // Get vertex indices from corners
-        let next_pt = self.corner_table.point_idx(next_corner);
-        let prev_pt = self.corner_table.point_idx(prev_corner);
-        let curr_pt = self.corner_table.point_idx(i);
+        let next_pt = self.ads.global_ds().point_idx(next_corner);
+        let prev_pt = self.ads.global_ds().point_idx(prev_corner);
+        let curr_pt = self.ads.global_ds().point_idx(i);
 
-        let next_vertex = self.corner_table.vertex_idx(next_corner);
-        let prev_vertex = self.corner_table.vertex_idx(prev_corner);
+        let next_vertex = self.ads.vertex_idx(next_corner);
+        let prev_vertex = self.ads.vertex_idx(prev_corner);
 
         // Check if both neighboring vertices have already been processed
         if self.visited[usize::from(next_vertex)] && self.visited[usize::from(prev_vertex)] {

@@ -1,6 +1,5 @@
 use std::{ops, vec};
 
-use crate::encode::connectivity::ConnectivityEncoderOutput;
 use crate::encode::entropy::symbol_coding::encode_symbols;
 use draco_oxide_core::attribute::Attribute;
 use draco_oxide_core::attribute::AttributeType;
@@ -9,7 +8,7 @@ use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::attribute::Portable;
 use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
-use draco_oxide_core::corner_table::GenericCornerTable;
+use draco_oxide_core::mesh::ds::AttributeDS;
 use draco_oxide_core::types::ConfigType;
 use draco_oxide_core::types::{CornerIdx, DataValue, NdVector};
 use thiserror::Error;
@@ -159,37 +158,37 @@ impl Config {
     }
 }
 
-pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, 'co, 'mesh, W> {
-    att: Attribute,
+pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, 'ds, W> {
     att_data_id: usize,
     #[allow(unused)]
     cfg: Config,
     writer: &'writer mut W,
     parents: &'encoder [&'parents Attribute],
-    conn_out: &'co ConnectivityEncoderOutput<'mesh>,
+    ads: AttributeDS<'ds>,
+    /// Corners of the edgebreaker traversal, used to seed this attribute's sequencing.
+    corners_of_edgebreaker: &'encoder [CornerIdx],
 }
 
-impl<'parents, 'encoder, 'writer, 'co, 'mesh, W>
-    AttributeEncoder<'parents, 'encoder, 'writer, 'co, 'mesh, W>
+impl<'parents, 'encoder, 'writer, 'ds, W> AttributeEncoder<'parents, 'encoder, 'writer, 'ds, W>
 where
     W: ByteWriter,
     'parents: 'encoder,
 {
     pub(super) fn new(
-        att: Attribute,
+        ads: AttributeDS<'ds>,
         att_data_id: usize,
         parents: &'encoder [&'parents Attribute],
-        conn_out: &'co ConnectivityEncoderOutput<'mesh>,
+        corners_of_edgebreaker: &'encoder [CornerIdx],
         writer: &'writer mut W,
         cfg: Config,
     ) -> Self {
         AttributeEncoder {
-            att,
             att_data_id,
             cfg,
             writer,
             parents,
-            conn_out,
+            ads,
+            corners_of_edgebreaker,
         }
     }
 
@@ -203,7 +202,7 @@ where
             .ty
             .write_to(self.writer);
 
-        let component_type = self.att.get_component_type();
+        let component_type = self.ads.att_data().get_component_type();
         match component_type {
             ComponentDataType::F32 => self.unpack_num_components::<WRITE_NOW, BOOST, f32>(),
             ComponentDataType::F64 => self.unpack_num_components::<WRITE_NOW, BOOST, f64>(),
@@ -229,7 +228,7 @@ where
         NdVector<3, T>: Vector<3>,
         NdVector<4, T>: Vector<4>,
     {
-        let num_components = self.att.get_num_components();
+        let num_components = self.ads.att_data().get_num_components();
         match num_components {
             0 => unreachable!("Vector of dimension 0 is not allowed"),
             1 => self.encode_typed::<WRITE_NOW, BOOST, 1, _>(),
@@ -250,37 +249,14 @@ where
         NdVector<N, f32>: Vector<N, Component = f32> + Portable,
     {
         if !BOOST {
-            match self.conn_out {
-                ConnectivityEncoderOutput::Edgebreaker(edgebreaker_out) => {
-                    if let Some(corner_table) = edgebreaker_out
-                        .corner_table
-                        .attribute_corner_table(self.att_data_id)
-                    {
-                        let sequence = Traverser::new(
-                            &corner_table,
-                            edgebreaker_out.corners_of_edgebreaker.clone(), // ToDo: take this value
-                        )
-                        .compute_seqeunce();
-                        self.encode_impl_edgebreaker::<WRITE_NOW, _, _, NdVector<N, T>, N>(
-                            &corner_table,
-                            sequence.into_iter(),
-                        )
-                    } else {
-                        let corner_table = edgebreaker_out.corner_table.universal_corner_table();
-                        let sequence = Traverser::new(
-                            corner_table,
-                            edgebreaker_out.corners_of_edgebreaker.clone(), // ToDo: take this value
-                        )
-                        .compute_seqeunce();
-                        self.encode_impl_edgebreaker::<WRITE_NOW, _, _, NdVector<N, T>, N>(
-                            corner_table,
-                            sequence.into_iter(),
-                        )
-                    }
-                }
-                ConnectivityEncoderOutput::Sequential(_) => {
-                    unimplemented!("Sequential connectivity encoding is not implemented yet");
-                }
+            if !self.corners_of_edgebreaker.is_empty() {
+                let sequence = Traverser::new(&self.ads, self.corners_of_edgebreaker.to_vec())
+                    .compute_seqeunce();
+                self.encode_impl_edgebreaker::<WRITE_NOW, _, NdVector<N, T>, N>(
+                    sequence.into_iter(),
+                )
+            } else {
+                unimplemented!("Sequential connectivity encoding is not implemented yet");
             }
         } else {
             unimplemented!("BOOST is not implemented yet");
@@ -298,19 +274,18 @@ where
         }
     }
 
-    fn encode_impl_edgebreaker<const WRITE_NOW: bool, CT, S, Data, const N: usize>(
+    fn encode_impl_edgebreaker<const WRITE_NOW: bool, S, Data, const N: usize>(
         mut self,
-        corner_table: &CT,
         sequence: S,
     ) -> Result<Attribute, Err>
     where
-        CT: GenericCornerTable,
         S: Iterator<Item = CornerIdx> + Clone,
         Data: Vector<N> + Portable,
         NdVector<N, i32>: Vector<N, Component = i32>,
         NdVector<N, f32>: Vector<N, Component = f32> + Portable,
     {
-        let por_cfg = portabilization::Config::default_for(self.att.get_attribute_type());
+        let por_cfg =
+            portabilization::Config::default_for(self.ads.att_data().get_attribute_type());
 
         let mut att = Attribute::new(
             Vec::<Data>::new(),
@@ -318,57 +293,35 @@ where
             AttributeDomain::Position,
             Vec::new(),
         );
-        std::mem::swap(&mut att, &mut self.att);
+        std::mem::swap(&mut att, &mut self.ads.att_data_mut());
         let mut port_info_buffer = Vec::new();
         let portabilization: portabilization::Portabilization<Data, N> =
             portabilization::Portabilization::new(att, por_cfg, &mut port_info_buffer);
         let port_att = portabilization.portabilize();
 
         match port_att.get_num_components() {
-            1 => self.encode_portabilized::<CT, S, 1>(
-                corner_table,
-                sequence,
-                port_att,
-                port_info_buffer,
-            ),
-            2 => self.encode_portabilized::<CT, S, 2>(
-                corner_table,
-                sequence,
-                port_att,
-                port_info_buffer,
-            ),
-            3 => self.encode_portabilized::<CT, S, 3>(
-                corner_table,
-                sequence,
-                port_att,
-                port_info_buffer,
-            ),
-            4 => self.encode_portabilized::<CT, S, 4>(
-                corner_table,
-                sequence,
-                port_att,
-                port_info_buffer,
-            ),
+            1 => self.encode_portabilized::<S, 1>(sequence, port_att, port_info_buffer),
+            2 => self.encode_portabilized::<S, 2>(sequence, port_att, port_info_buffer),
+            3 => self.encode_portabilized::<S, 3>(sequence, port_att, port_info_buffer),
+            4 => self.encode_portabilized::<S, 4>(sequence, port_att, port_info_buffer),
             _ => Err(Err::UnsupportedNumComponents(port_att.get_num_components())),
         }
     }
 
-    fn encode_portabilized<CT, S, const N: usize>(
+    fn encode_portabilized<S, const N: usize>(
         &mut self,
-        corner_table: &CT,
         sequence: S,
         port_att: Attribute,
         port_info_buffer: Vec<u8>,
     ) -> Result<Attribute, Err>
     where
-        CT: GenericCornerTable,
         S: Iterator<Item = CornerIdx>,
         NdVector<N, i32>: Vector<N, Component = i32> + Portable,
     {
         let mut prediction_scheme = prediction_scheme::PredictionScheme::new(
             self.cfg.group_cfgs[0].prediction_scheme.ty.clone(),
             self.parents,
-            corner_table,
+            &self.ads,
         );
 
         // Transform the predicted values
@@ -379,9 +332,9 @@ where
 
         for c in sequence {
             let val = prediction_scheme.predict(c, &sequence_record, &port_att);
-            let v = corner_table.vertex_idx(c);
+            let v = self.ads.vertex_idx(c);
             sequence_record.push(v);
-            let p = corner_table.point_idx(c);
+            let p = self.ads.global_ds().point_idx(c);
             transform.map_with_tentative_metadata(port_att.get(p), val);
         }
 

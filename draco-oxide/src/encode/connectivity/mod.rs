@@ -8,27 +8,27 @@ use crate::encode::connectivity::edgebreaker::{DefaultTraversal, ValenceTraversa
 use draco_oxide_core::attribute::{Attribute, AttributeType};
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::connectivity::edgebreaker::EdgebreakerKind;
-use draco_oxide_core::types::{ConfigType, PointIdx};
+use draco_oxide_core::mesh::ds::AttributeDS;
+use draco_oxide_core::types::{ConfigType, CornerIdx, PointIdx};
 
 #[cfg(feature = "evaluation")]
 use crate::eval;
 
 /// entry point for encoding connectivity.
 pub fn encode_connectivity<'faces, W>(
-    faces: &'faces [[PointIdx; 3]],
-    atts: &mut [Attribute],
+    adss: &mut [AttributeDS<'faces>],
     writer: &mut W,
     #[allow(unused)]
     // This parameter is unused in the current implementation, as we only support default configuration.
     cfg: &super::Config,
-) -> Result<ConnectivityEncoderOutput<'faces>, Err>
+) -> Result<Vec<CornerIdx>, Err>
 where
     W: ByteWriter,
 {
     #[cfg(feature = "evaluation")]
     eval::scope_begin("connectivity info", writer);
 
-    let result = encode_connectivity_datatype_unpacked(faces, atts, writer, Config::default());
+    let result = encode_connectivity_datatype_unpacked(adss, writer, Config::default());
 
     #[cfg(feature = "evaluation")]
     eval::scope_end(writer);
@@ -36,77 +36,71 @@ where
 }
 
 pub fn encode_connectivity_datatype_unpacked<'faces, W>(
-    faces: &'faces [[PointIdx; 3]],
-    atts: &mut [Attribute],
+    adss: &mut [AttributeDS<'faces>],
     writer: &mut W,
     cfg: Config,
-) -> Result<ConnectivityEncoderOutput<'faces>, Err>
+) -> Result<Vec<CornerIdx>, Err>
 where
     W: ByteWriter,
 {
-    let result = match cfg {
+    let corners_of_edgebreaker = match cfg {
         Config::Edgebreaker(cfg) => {
             #[cfg(feature = "evaluation")]
             eval::scope_begin("edgebreaker", writer);
 
             let result = match cfg.traversal {
                 EdgebreakerKind::Standard => {
-                    let encoder =
-                        edgebreaker::Edgebreaker::<DefaultTraversal>::new(cfg, atts, faces)?;
-                    encoder.encode_connectivity(faces, writer)
+                    let encoder = edgebreaker::Edgebreaker::<DefaultTraversal>::new(cfg, adss)?;
+                    encoder.encode_connectivity(writer)?
                 }
                 EdgebreakerKind::Predictive => {
                     unimplemented!("Predictive edgebreaker encoding is not implemented yet");
                 }
                 EdgebreakerKind::Valence => {
-                    let encoder =
-                        edgebreaker::Edgebreaker::<ValenceTraversal>::new(cfg, atts, faces)?;
-                    encoder.encode_connectivity(faces, writer)
+                    let encoder = edgebreaker::Edgebreaker::<ValenceTraversal>::new(cfg, adss)?;
+                    encoder.encode_connectivity(writer)?
                 }
             };
 
             #[cfg(feature = "evaluation")]
             eval::scope_end(writer);
 
-            result.map(ConnectivityEncoderOutput::Edgebreaker)?
+            result
         }
         Config::Sequential(cfg) => {
             #[cfg(feature = "evaluation")]
             eval::scope_begin("sequential", writer);
 
-            let num_points = atts
+            let num_points = adss
                 .iter()
-                .find(|att| att.get_attribute_type() == AttributeType::Position)
+                .find(|ads| ads.att_data().get_attribute_type() == AttributeType::Position)
                 .unwrap()
+                .att_data()
                 .len();
-            let encoder = sequential::Sequential::new(cfg, num_points);
-            encoder.encode_connectivity(faces, writer)?;
-
-            #[cfg(feature = "evaluation")]
-            eval::scope_end(writer);
-
-            ConnectivityEncoderOutput::Sequential(())
+            let faces = (0..adss[0].global_ds().num_faces())
+                .map(|i| {
+                    let c = CornerIdx::from(3 * i);
+                    [
+                        adss[0].global_ds().point_idx(c),
+                        adss[0].global_ds().point_idx(c.next()),
+                        adss[0].global_ds().point_idx(c.next().next()),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            let encoder = sequential::Sequential::new(&faces, cfg, num_points);
+            // Sequential encoding does not produce an edgebreaker traversal ordering.
+            encoder.encode_connectivity(writer)?
         }
     };
-    Ok(result)
+    Ok(corners_of_edgebreaker)
 }
 
 pub trait ConnectivityEncoder {
     type Err;
     type Config;
-    type Output;
-    fn encode_connectivity<W>(
-        self,
-        faces: &[[PointIdx; 3]],
-        buffer: &mut W,
-    ) -> Result<Self::Output, Self::Err>
+    fn encode_connectivity<W>(self, writer: &mut W) -> Result<Vec<CornerIdx>, Self::Err>
     where
         W: ByteWriter;
-}
-
-pub(crate) enum ConnectivityEncoderOutput<'faces> {
-    Edgebreaker(edgebreaker::Output<'faces>),
-    Sequential(()),
 }
 
 #[remain::sorted]

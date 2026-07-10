@@ -1,35 +1,28 @@
 use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
-use crate::corner_table::GenericCornerTable;
+use crate::mesh::ds::AttributeDS;
 use crate::types::{CornerIdx, NdVector, Vector, VertexIdx};
 use std::mem;
 
-pub struct DeltaPrediction<'parents, C, const N: usize> {
+pub struct DeltaPrediction<'parents, const N: usize> {
     faces: &'parents [[usize; 3]],
-    corner_table: &'parents C,
-    _marker: std::marker::PhantomData<&'parents C>,
+    ads: &'parents AttributeDS<'parents>,
 }
 
-impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N>
-    for DeltaPrediction<'parents, C, N>
+impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N> for DeltaPrediction<'parents, N>
 where
-    C: GenericCornerTable,
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
     const ID: u32 = 1;
 
     type AdditionalDataForMetadata = ();
 
-    fn new(_parents: &[&'parents Attribute], corner_table: &'parents C) -> Self {
+    fn new(_parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self {
         // Note: Connectivity is now passed via conn_att parameter instead of parent attributes
         // For now, use an empty slice as this prediction scheme needs to be updated for the new architecture
         let faces: &[[usize; 3]] = &[];
 
-        Self {
-            faces,
-            corner_table,
-            _marker: std::marker::PhantomData,
-        }
+        Self { faces, ads }
     }
 
     fn get_values_impossible_to_predict(
@@ -73,8 +66,9 @@ where
             return NdVector::zero();
         };
         let prev_pt = self
-            .corner_table
-            .point_idx(self.corner_table.left_most_corner(prev_v));
+            .ads
+            .global_ds()
+            .point_idx(self.ads.left_most_corner(prev_v));
         att.get(prev_pt)
     }
 }

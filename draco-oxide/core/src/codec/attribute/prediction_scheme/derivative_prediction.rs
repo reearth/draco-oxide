@@ -1,18 +1,17 @@
 use super::PredictionSchemeImpl;
 use crate::attribute::{Attribute, AttributeType};
-use crate::corner_table::GenericCornerTable;
+use crate::mesh::ds::AttributeDS;
 use crate::types::{CornerIdx, Float, NdVector, Vector, VertexIdx};
 
-pub struct DerivativePredictionForTextureCoordinates<'a, C, const N: usize> {
+pub struct DerivativePredictionForTextureCoordinates<'a, const N: usize> {
     #[allow(dead_code)] // TODO: Remove this field when the implementation is complete
-    corner_table: &'a C,
+    ads: &'a AttributeDS<'a>,
     #[allow(dead_code)] // TODO: Remove this field when the implementation is complete
     points: &'a Attribute,
 }
 
-impl<'a, C, const N: usize> DerivativePredictionForTextureCoordinates<'a, C, N>
+impl<'a, const N: usize> DerivativePredictionForTextureCoordinates<'a, N>
 where
-    C: GenericCornerTable,
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
     #[allow(dead_code)] // TODO: Remove this field when the implementation is complete
@@ -112,10 +111,9 @@ where
     }
 }
 
-impl<'parents, C, const N: usize> PredictionSchemeImpl<'parents, C, N>
-    for DerivativePredictionForTextureCoordinates<'parents, C, N>
+impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N>
+    for DerivativePredictionForTextureCoordinates<'parents, N>
 where
-    C: GenericCornerTable,
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
     const ID: u32 = 4;
@@ -123,7 +121,7 @@ where
     type AdditionalDataForMetadata = ();
 
     /// We need two parents: faces and points.
-    fn new(parents: &[&'parents Attribute], corner_table: &'parents C) -> Self {
+    fn new(parents: &[&'parents Attribute], corner_table: &'parents AttributeDS<'parents>) -> Self {
         assert!(
             parents.len() == 2,
             "Derivative prediction needs two parents: faces and points."
@@ -135,7 +133,7 @@ where
         );
 
         Self {
-            corner_table,
+            ads: corner_table,
             points: parents[0],
         }
     }
