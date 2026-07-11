@@ -63,7 +63,7 @@ where
 
     // `adss` is built one-per-attribute and in the same order as `atts`, so each attribute is
     // paired with its own attribute data structure here.
-    for (i, ads) in adss.into_iter().enumerate() {
+    for ads in adss {
         #[cfg(feature = "evaluation")]
         eval::scope_begin("attribute", writer);
 
@@ -77,7 +77,6 @@ where
         let len = ads.att_data().len();
         let encoder = attribute_encoder::AttributeEncoder::new(
             ads,
-            i,
             &parents,
             &corners_of_edgebreaker,
             writer,

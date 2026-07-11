@@ -1,9 +1,10 @@
-use draco_oxide_core::attribute::Attribute;
+use draco_oxide_core::attribute::{Attribute, AttributeType};
 use draco_oxide_core::mesh::ds::{
     AttributeCornerTable, AttributeDS, CornerTable, GenericCornerTable, DS,
 };
+use draco_oxide_core::safety_assert;
 use draco_oxide_core::types::{
-    CornerIdx, PointIdx, VecCornerIdx, VecPointIdx, VecVertexIdx, VertexIdx,
+    CornerIdx, PointIdx, VecCornerIdx, VecFaceIdx, VecPointIdx, VecVertexIdx, VertexIdx,
 };
 
 pub(crate) fn build_attribute_ds<'a>(
@@ -17,7 +18,7 @@ pub(crate) fn build_attribute_ds<'a>(
         .collect()
 }
 
-/// Builds a single attribute data structure for the given attribute and the provided global data structure and
+/// Builds a single attribute data structure for the given attribute, the global data structure and
 /// the position corner table.
 /// The input manifold (ds and pos_corner_table) is assumed to be a disjoint union of manifolds with boundary.
 fn build_single_attribute_ds<'a>(
@@ -132,11 +133,19 @@ fn build_single_attribute_ds<'a>(
     )
 }
 
+/// Builds the global data structure and position corner table, and extends
+/// `attributes` in place to cover any phantom points minted while splitting the
+/// mesh into orientable manifolds-with-boundary. `attributes` must contain a
+/// position attribute.
 pub(crate) fn build_global_ds(
     mut mesh_faces: Vec<[PointIdx; 3]>,
-    pos_att: &Attribute,
+    attributes: &mut [Attribute],
 ) -> (DS, CornerTable) {
-    let pos_faces = &mesh_faces
+    let pos_att = attributes
+        .iter()
+        .find(|att| att.get_attribute_type() == AttributeType::Position)
+        .expect("position attribute must be present");
+    let mut pos_faces = mesh_faces
         .iter()
         .map(|face| {
             [
@@ -146,7 +155,8 @@ pub(crate) fn build_global_ds(
             ]
         })
         .collect::<Vec<[VertexIdx; 3]>>();
-    let corner_table = compute_corner_table(pos_faces, &mut mesh_faces);
+    let (corner_table, new_to_old_point_map) =
+        compute_corner_table(&mut pos_faces, &mut mesh_faces);
 
     let corner_to_point_map: VecCornerIdx<PointIdx> = mesh_faces
         .iter()
@@ -154,7 +164,16 @@ pub(crate) fn build_global_ds(
         .collect::<Vec<_>>()
         .into();
 
-    (DS::new(corner_to_point_map), corner_table)
+    let ds = DS::new(corner_to_point_map);
+
+    let num_points = ds.num_points();
+    for att in attributes.iter_mut() {
+        for p in att.len()..num_points {
+            att.mint(new_to_old_point_map[p]);
+        }
+    }
+
+    (ds, corner_table)
 }
 
 /// Builds the corner table for the given position faces, and updates the mesh faces so that the mesh
@@ -165,9 +184,9 @@ pub(crate) fn build_global_ds(
 /// connected component but not in the current component, it means that the vertex is non-manifold and a new
 /// vertex is created for the current component.
 fn compute_corner_table(
-    pos_faces: &[[VertexIdx; 3]],
+    pos_faces: &mut [[VertexIdx; 3]],
     mesh_faces: &mut [[PointIdx; 3]],
-) -> CornerTable {
+) -> (CornerTable, Vec<PointIdx>) {
     use std::collections::HashMap;
 
     let num_corners = pos_faces.len() * 3;
@@ -176,26 +195,31 @@ fn compute_corner_table(
 
     let mut opposite: VecCornerIdx<CornerIdx> = vec![CornerIdx::none(); num_corners].into();
 
-    let mut half_edges: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    let mut edge_coboundary: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
     for c in 0..num_corners {
         let c = CornerIdx::from(c);
-        half_edges
-            .entry((pos_vertex(c.next()), pos_vertex(c.previous())))
-            .or_default()
-            .push(c.into());
+        let next = pos_vertex(c.next());
+        let prev = pos_vertex(c.previous());
+        let entry = if next < prev {
+            (next, prev)
+        } else {
+            (prev, next)
+        };
+        edge_coboundary.entry(entry).or_default().push(c.into());
     }
-    for c in 0..num_corners {
-        let c = CornerIdx::from(c);
-        let forward = (pos_vertex(c.next()), pos_vertex(c.previous()));
-        if half_edges[&forward].len() != 1 {
+    for corners in edge_coboundary.values() {
+        if corners.len() != 2 {
             continue; // non-manifold in this direction -> boundary.
         }
-        if let Some(reverse) = half_edges.get(&(forward.1, forward.0)) {
-            if reverse.len() == 1 {
-                opposite[c] = reverse[0].into();
-            }
-        }
+        let c1 = CornerIdx::from(corners[0]);
+        let c2 = CornerIdx::from(corners[1]);
+        opposite[c1] = c2;
+        opposite[c2] = c1;
     }
+
+    orient_faces(&mut opposite, pos_faces, mesh_faces);
+
+    let pos_vertex = |c: CornerIdx| usize::from(pos_faces[usize::from(c) / 3][usize::from(c) % 3]);
 
     let swing_left = |c: CornerIdx| opposite[c.next()].next();
     let swing_right = |c: CornerIdx| opposite[c.previous()].previous();
@@ -214,8 +238,6 @@ fn compute_corner_table(
         .map(|p| usize::from(*p) + 1)
         .unwrap_or(0);
     let mut new_to_old_point_map: Vec<PointIdx> = (0..num_points).map(PointIdx::from).collect();
-
-    let mut left_most_corners: Vec<CornerIdx> = vec![CornerIdx::none(); num_vertices];
 
     let mut visited_vertices = vec![false; num_vertices];
     let mut visited_corners: VecCornerIdx<bool> = vec![false; num_corners].into();
@@ -243,7 +265,6 @@ fn compute_corner_table(
             fan.push(c);
             c = swing_left(c);
         }
-        let left_most = CornerIdx::from(c);
         if !closed {
             let mut c = start;
             c = swing_right(c);
@@ -255,11 +276,9 @@ fn compute_corner_table(
         }
 
         if !is_non_manifold {
-            left_most_corners[v] = left_most;
             continue;
         }
 
-        left_most_corners.push(left_most);
         let mut remap: HashMap<PointIdx, PointIdx> = HashMap::new();
         for c in fan {
             let c = usize::from(c);
@@ -279,13 +298,87 @@ fn compute_corner_table(
         .collect::<Vec<_>>()
         .into();
 
-    for (new, old) in new_to_old_point_map.iter().enumerate() {
-        if usize::from(*old) != new {
-            left_most_corners.push(left_most_corners[usize::from(*old)]);
+    (
+        CornerTable::from_raw_data(opposite_corners),
+        new_to_old_point_map,
+    )
+}
+
+/// Orient faces, in the sense that faces connected by an edge will have consistent orientation.
+/// When the input mesh has a non-orientable surface, then the opposite relation will be removed at
+/// some edges.
+fn orient_faces(
+    corner_table: &mut VecCornerIdx<CornerIdx>,
+    pos_faces: &mut [[VertexIdx; 3]],
+    mesh_faces: &mut [[PointIdx; 3]],
+) {
+    let mut face_orientation: VecFaceIdx<Option<bool>> = vec![None; pos_faces.len()].into();
+    for c in 0..pos_faces.len() * 3 {
+        let c = CornerIdx::from(c);
+        if face_orientation[c.face_idx()].is_some() {
+            continue;
+        }
+        let mut stack = vec![c, c.next(), c.previous()];
+        face_orientation[c.face_idx()] = Some(true);
+        while let Some(c) = stack.pop() {
+            let next_c = c.next();
+            let prev_c = c.previous();
+            let opp_c = corner_table[c];
+            if opp_c.is_none() {
+                continue;
+            }
+            let next_opp_c = opp_c.next();
+            let prev_opp_c = opp_c.previous();
+            if pos_faces[usize::from(c.face_idx())][usize::from(next_c) % 3]
+                == pos_faces[usize::from(opp_c.face_idx())][usize::from(prev_opp_c) % 3]
+                && pos_faces[usize::from(c.face_idx())][usize::from(prev_c) % 3]
+                    == pos_faces[usize::from(opp_c.face_idx())][usize::from(next_opp_c) % 3]
+            {
+                if face_orientation[opp_c.face_idx()].is_none() {
+                    face_orientation[opp_c.face_idx()] = face_orientation[c.face_idx()];
+                    // Only recurse into a face the first time it is oriented;
+                    // re-pushing already-oriented faces loops forever on any mesh
+                    // with cycles (e.g. a closed manifold).
+                    stack.push(next_opp_c);
+                    stack.push(prev_opp_c);
+                } else if face_orientation[opp_c.face_idx()] != face_orientation[c.face_idx()] {
+                    // The two faces have inconsistent orientation, so we remove the opposite relation.
+                    corner_table[c] = CornerIdx::none();
+                    corner_table[opp_c] = CornerIdx::none();
+                }
+            } else {
+                if face_orientation[opp_c.face_idx()].is_none() {
+                    face_orientation[opp_c.face_idx()] =
+                        Some(!face_orientation[c.face_idx()].unwrap());
+                    stack.push(next_opp_c);
+                    stack.push(prev_opp_c);
+                } else if face_orientation[opp_c.face_idx()] == face_orientation[c.face_idx()] {
+                    // The two faces have inconsistent orientation, so we remove the opposite relation.
+                    corner_table[c] = CornerIdx::none();
+                    corner_table[opp_c] = CornerIdx::none();
+                }
+            }
         }
     }
+    safety_assert!(face_orientation.iter().all(|o| o.is_some()));
+    for (f, o) in face_orientation.into_iter().enumerate() {
+        // Safety: face_orientation is guaranteed to be all Some, so unwrap_unchecked is safe here.
+        if unsafe { o.unwrap_unchecked() } {
+            continue;
+        }
 
-    CornerTable::from_raw_data(opposite_corners)
+        mesh_faces[f].swap(0, 1);
+        pos_faces[f].swap(0, 1);
+        corner_table.swap((f * 3).into(), (f * 3 + 1).into());
+        let opp1 = corner_table[(f * 3).into()];
+        let opp2 = corner_table[(f * 3 + 1).into()];
+        if opp1.is_some() {
+            corner_table[opp1] = (f * 3).into();
+        }
+        if opp2.is_some() {
+            corner_table[opp2] = (f * 3 + 1).into();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -346,14 +439,14 @@ mod tests {
             })
             .collect();
 
-        let attributes = vec![pos_attribute(vec![
+        let mut attributes = vec![pos_attribute(vec![
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
             [0.0, 0.0, 1.0],
         ])];
 
-        let (ds, pos_corner_table) = build_global_ds(faces, &attributes[0]);
+        let (ds, pos_corner_table) = build_global_ds(faces, &mut attributes);
 
         // The mesh has no duplicate points, so no point should be created.
         assert_eq!(
@@ -377,13 +470,13 @@ mod tests {
     /// interior; every other edge is a boundary.
     #[test]
     fn corner_table_two_triangles() {
-        let attributes = vec![pos_attribute_2d(vec![
+        let mut attributes = vec![pos_attribute_2d(vec![
             [0.0, 0.0],
             [1.0, 0.0],
             [0.0, 1.0],
             [1.0, 1.0],
         ])];
-        let (ds, ct) = build_global_ds(faces(vec![[0, 1, 2], [2, 1, 3]]), &attributes[0]);
+        let (ds, ct) = build_global_ds(faces(vec![[0, 1, 2], [2, 1, 3]]), &mut attributes);
         let adss = build_attribute_ds(&ds, &ct, attributes);
         let pos = &adss[0];
 
@@ -410,7 +503,7 @@ mod tests {
     /// and no point duplication.
     #[test]
     fn corner_table_no_attribute_seam() {
-        let attributes = vec![pos_attribute(vec![
+        let mut attributes = vec![pos_attribute(vec![
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
@@ -420,7 +513,7 @@ mod tests {
         ])];
         let (ds, ct) = build_global_ds(
             faces(vec![[0, 1, 2], [1, 3, 2], [2, 3, 4], [2, 4, 5]]),
-            &attributes[0],
+            &mut attributes,
         );
         let adss = build_attribute_ds(&ds, &ct, attributes);
 
@@ -433,8 +526,8 @@ mod tests {
     /// A single triangle: three boundary vertices, each with its own corner.
     #[test]
     fn corner_table_triangle() {
-        let attributes = vec![pos_attribute_2d(vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])];
-        let (ds, ct) = build_global_ds(faces(vec![[0, 1, 2]]), &attributes[0]);
+        let mut attributes = vec![pos_attribute_2d(vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])];
+        let (ds, ct) = build_global_ds(faces(vec![[0, 1, 2]]), &mut attributes);
         let adss = build_attribute_ds(&ds, &ct, attributes);
         let pos = &adss[0];
 
@@ -455,14 +548,14 @@ mod tests {
     /// point count grows from 5 to 6 and there are 6 vertices.
     #[test]
     fn corner_table_non_manifold_vertex() {
-        let attributes = vec![pos_attribute_2d(vec![
+        let mut attributes = vec![pos_attribute_2d(vec![
             [0.0, 0.0],
             [1.0, 0.0],
             [0.0, 1.0],
             [-1.0, 1.0],
             [0.0, -1.0],
         ])];
-        let (ds, ct) = build_global_ds(faces(vec![[0, 1, 2], [0, 3, 4]]), &attributes[0]);
+        let (ds, ct) = build_global_ds(faces(vec![[0, 1, 2], [0, 3, 4]]), &mut attributes);
         let adss = build_attribute_ds(&ds, &ct, attributes);
         let pos = &adss[0];
 
@@ -485,7 +578,7 @@ mod tests {
     /// and leaves the corners across them without an opposite.
     #[test]
     fn corner_table_non_manifold_edge_is_boundary() {
-        let attributes = vec![pos_attribute_2d(vec![
+        let mut attributes = vec![pos_attribute_2d(vec![
             [0.0, 0.0],
             [1.0, 0.0],
             [0.0, 1.0],
@@ -493,7 +586,7 @@ mod tests {
             [-1.0, 0.0],
         ])];
         let (ds, ct) =
-            build_global_ds(faces(vec![[0, 1, 2], [1, 3, 2], [2, 1, 4]]), &attributes[0]);
+            build_global_ds(faces(vec![[0, 1, 2], [1, 3, 2], [2, 1, 4]]), &mut attributes);
         let _adss = build_attribute_ds(&ds, &ct, attributes);
 
         // Corners 0, 4, 8 are opposite the non-manifold edge {1,2}; none is linked.
@@ -503,5 +596,127 @@ mod tests {
                 "corner {c} across the non-manifold edge must be a boundary"
             );
         }
+    }
+
+    /// Minimal 5-triangle Möbius band, used to probe how `build_global_ds`
+    /// behaves on a non-orientable input.
+    ///
+    /// The interior edges form the core {0,1},{1,2},{2,3},{3,4},{0,4}; the five
+    /// remaining edges form a single boundary cycle 0-2-4-1-3-0 (one boundary
+    /// component ⇒ Möbius, not an annulus). The closing edge {0,1} is the twist:
+    /// both incident faces traverse it in the same direction (0→1).
+    fn mobius_band() -> Vec<[PointIdx; 3]> {
+        faces(vec![[0, 1, 2], [2, 1, 3], [2, 3, 4], [4, 3, 0], [4, 0, 1]])
+    }
+
+    fn mobius_positions() -> Vec<Attribute> {
+        // Positions are arbitrary and distinct; only connectivity matters.
+        vec![pos_attribute(vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [4.0, 0.0, 0.0],
+        ])]
+    }
+
+    /// A genuinely NON-ORIENTABLE surface. `orient_faces` propagates a
+    /// consistent orientation as far as it can, then hits a contradiction at the
+    /// twist and cuts that one edge, so `build_global_ds` itself completes: of
+    /// the 5 core edges, 4 stay linked (8 corners) and the twist edge is cut.
+    #[test]
+    fn build_global_ds_cuts_twist_edge_of_non_orientable_surface() {
+        let mut attributes = mobius_positions();
+        let (ds, ct) = build_global_ds(mobius_band(), &mut attributes);
+
+        assert_eq!(ds.num_faces(), 5);
+        assert_eq!(ds.num_corners(), 15);
+
+        // Exactly one of the five core edges (the twist) is cut, leaving four
+        // interior edges = eight linked corners.
+        let linked = (0..ds.num_corners())
+            .filter(|&c| ct.opposite(CornerIdx::from(c)).is_some())
+            .count();
+        assert_eq!(linked, 8, "one core (twist) edge should be cut");
+    }
+
+    /// A genuinely NON-ORIENTABLE surface now builds its attribute DS without
+    /// panicking. Cutting the twist edge turns its two endpoints into
+    /// non-manifold vertices, which `compute_corner_table` splits by minting new
+    /// point indices; `build_single_attribute_ds` then extends the position
+    /// attribute so each phantom point aliases the value of the point it was
+    /// split from (`Attribute::mint`). The result: 5 original points grow to 7
+    /// (one phantom per cut endpoint), the attribute is extended to match, and
+    /// the whole `corner -> point -> vertex -> value` chain is total.
+    #[test]
+    fn build_attribute_ds_handles_non_orientable_surface() {
+        let mut attributes = mobius_positions();
+        let (ds, ct) = build_global_ds(mobius_band(), &mut attributes);
+
+        // Two phantom points minted (the twist edge's two endpoints).
+        assert_eq!(ds.num_points(), 7, "two phantom points from the cut");
+
+        let adss = build_attribute_ds(&ds, &ct, attributes);
+        let pos = &adss[0];
+
+        // The attribute was extended to cover the phantom points, so the value
+        // lookup is total over every point (no more out-of-bounds panic).
+        assert_eq!(pos.att_data().len(), ds.num_points());
+
+        // Position carries no seams, so each point is its own vertex, and every
+        // vertex's left-most corner maps back to it.
+        assert_eq!(pos.num_vertices(), ds.num_points());
+        for v in 0..pos.num_vertices() {
+            let v = VertexIdx::from(v);
+            assert_eq!(pos.vertex_idx(pos.left_most_corner(v)), v);
+        }
+    }
+
+    /// An ORIENTABLE surface whose input faces are wound inconsistently. Two
+    /// triangles form a quad sharing edge {1,2}; face 1 is wound the "wrong" way
+    /// ([1,2,3]). `orient_faces` now reorients it, so the shared edge links and
+    /// the quad stays a single connected component — 4 points, 4 vertices, no
+    /// duplication (contrast the old behavior, which shattered it into 6 points).
+    #[test]
+    fn build_global_ds_reorients_inconsistent_orientable_quad() {
+        let mut attributes = vec![pos_attribute_2d(vec![
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+        ])];
+        let (ds, ct) = build_global_ds(faces(vec![[0, 1, 2], [1, 2, 3]]), &mut attributes);
+
+        // No duplication: the quad is preserved as a connected component.
+        assert_eq!(ds.num_points(), 4);
+        // The shared edge is linked (exactly one interior edge = two corners).
+        let linked = (0..ds.num_corners())
+            .filter(|&c| ct.opposite(CornerIdx::from(c)).is_some())
+            .count();
+        assert_eq!(linked, 2);
+
+        let adss = build_attribute_ds(&ds, &ct, attributes);
+        assert_eq!(adss[0].num_vertices(), 4);
+    }
+
+    /// An ORIENTABLE 3-triangle strip with its END triangle wound the wrong way
+    /// ([3,2,4] instead of [2,3,4]). `orient_faces` reorients it, so both
+    /// interior edges link and no vertex is duplicated — 5 points, 5 vertices
+    /// (contrast the old behavior: 7 points / 7 vertices).
+    #[test]
+    fn build_global_ds_reorients_inconsistent_orientable_strip() {
+        let mut attributes = vec![pos_attribute_2d(vec![
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [2.0, 0.0],
+        ])];
+        let (ds, ct) =
+            build_global_ds(faces(vec![[0, 1, 2], [2, 1, 3], [3, 2, 4]]), &mut attributes);
+
+        assert_eq!(ds.num_points(), 5);
+        let adss = build_attribute_ds(&ds, &ct, attributes);
+        assert_eq!(adss[0].num_vertices(), 5);
     }
 }

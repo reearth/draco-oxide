@@ -159,7 +159,6 @@ impl Config {
 }
 
 pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, 'ds, W> {
-    att_data_id: usize,
     #[allow(unused)]
     cfg: Config,
     writer: &'writer mut W,
@@ -176,14 +175,12 @@ where
 {
     pub(super) fn new(
         ads: AttributeDS<'ds>,
-        att_data_id: usize,
         parents: &'encoder [&'parents Attribute],
         corners_of_edgebreaker: &'encoder [CornerIdx],
         writer: &'writer mut W,
         cfg: Config,
     ) -> Self {
         AttributeEncoder {
-            att_data_id,
             cfg,
             writer,
             parents,

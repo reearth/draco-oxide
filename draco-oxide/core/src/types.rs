@@ -136,6 +136,10 @@ macro_rules! vec_with_new_idx {
                     pub fn clear(&mut self) {
                         self.inner.clear();
                     }
+
+                    pub fn swap(&mut self, idx1: $Idx, idx2: $Idx) {
+                        self.inner.swap(usize::from(idx1), usize::from(idx2));
+                    }
                 }
 
                 impl<T> ::std::ops::Index<$Idx> for [<Vec $Idx:camel>]<T> {

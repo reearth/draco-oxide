@@ -246,6 +246,31 @@ impl Attribute {
         self.buffer.len()
     }
 
+    /// Appends a new point/vertex whose attribute value aliases that of `src`,
+    /// and returns its index.
+    ///
+    /// During data-structure construction the point and vertex index spaces
+    /// coincide (`PointIdx == VertexIdx`), so this is how an attribute is
+    /// extended in lock-step when `compute_corner_table` splits a point: the
+    /// phantom point takes the source point's value. No new unique value is
+    /// stored — the phantom aliases the source's `AttributeValueIdx`. If the
+    /// attribute is still on the implicit identity `point -> value` map, that
+    /// map is materialized first so the appended entry can diverge from
+    /// identity.
+    pub fn mint(&mut self, src: PointIdx) -> PointIdx {
+        let src_val = self.get_unique_val_idx(src);
+        let num_unique = self.num_unique_values();
+        let map = self.point_to_att_val_map.get_or_insert_with(|| {
+            (0..num_unique)
+                .map(AttributeValueIdx::from)
+                .collect::<Vec<_>>()
+                .into()
+        });
+        let new_idx = PointIdx::from(map.len());
+        map.push(src_val);
+        new_idx
+    }
+
     #[inline]
     pub fn get_unique_val_idx(&self, idx: PointIdx) -> AttributeValueIdx {
         let idx_usize = usize::from(idx);

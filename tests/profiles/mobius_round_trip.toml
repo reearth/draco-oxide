@@ -1,0 +1,40 @@
+# Non-orientable round-trip: encode a genuine Möbius band with draco-oxide,
+# decode it with Google Draco's reference decoder, then validate the decoded
+# OBJ parses.
+#
+# `data/mobius.obj` is a triangulated Möbius band (N=24 rings of M=3 quads) with
+# the closing ring identified to ring 0 with the cross-section flipped — the
+# half twist. The seam vertices are shared, so it is a real non-orientable
+# manifold with one boundary component, not a strip whose ends sit near each
+# other. It is the full-pipeline sibling of the `orient_faces` unit tests in
+# `draco-oxide/src/encode/ds.rs`.
+#
+# `orient_faces` cuts the twist edge, which turns its endpoints into
+# non-manifold vertices; `compute_corner_table` splits them by minting phantom
+# point indices, and `build_single_attribute_ds` extends each attribute so a
+# phantom point aliases the value of the point it was split from
+# (`Attribute::mint`). The full corner -> point -> vertex -> value chain is then
+# total, and the band encodes and round-trips through Google Draco's decoder.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "mobius.obj"
+output = "oxide.drc"
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "mobius.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.0005 },
+]

@@ -5,11 +5,11 @@ pub(crate) mod sequential;
 use std::fmt::Debug;
 
 use crate::encode::connectivity::edgebreaker::{DefaultTraversal, ValenceTraversal};
-use draco_oxide_core::attribute::{Attribute, AttributeType};
+use draco_oxide_core::attribute::AttributeType;
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::connectivity::edgebreaker::EdgebreakerKind;
 use draco_oxide_core::mesh::ds::AttributeDS;
-use draco_oxide_core::types::{ConfigType, CornerIdx, PointIdx};
+use draco_oxide_core::types::{ConfigType, CornerIdx};
 
 #[cfg(feature = "evaluation")]
 use crate::eval;
@@ -50,14 +50,15 @@ where
 
             let result = match cfg.traversal {
                 EdgebreakerKind::Standard => {
-                    let encoder = edgebreaker::Edgebreaker::<DefaultTraversal>::new(cfg, adss)?;
+                    let encoder =
+                        edgebreaker::Edgebreaker::new(cfg, adss, |_| DefaultTraversal::new())?;
                     encoder.encode_connectivity(writer)?
                 }
                 EdgebreakerKind::Predictive => {
                     unimplemented!("Predictive edgebreaker encoding is not implemented yet");
                 }
                 EdgebreakerKind::Valence => {
-                    let encoder = edgebreaker::Edgebreaker::<ValenceTraversal>::new(cfg, adss)?;
+                    let encoder = edgebreaker::Edgebreaker::new(cfg, adss, ValenceTraversal::new)?;
                     encoder.encode_connectivity(writer)?
                 }
             };

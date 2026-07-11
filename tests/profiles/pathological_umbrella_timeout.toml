@@ -1,0 +1,12 @@
+# `pathological_umbrella.obj` is pathological for Google Draco's encoder — it
+# takes tens of minutes there. draco-oxide encodes it in ~275ms (release) /
+# ~1.9s (debug), so this profile guards that with a build-agnostic 5s ceiling:
+# `timeout_secs` fails the op if the encode ever runs long, catching a
+# regression that reintroduces the blow-up. The timeout covers only the encode,
+# not the (much slower in debug) OBJ load.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "pathological_umbrella.obj"
+output = "oxide.drc"
+timeout_secs = 5.0

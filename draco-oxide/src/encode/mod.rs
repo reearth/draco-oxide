@@ -88,20 +88,19 @@ where
         ..
     } = mesh;
 
-    let pos_att = attributes
+    if !attributes
         .iter()
-        .find(|att| {
-            att.get_attribute_type() == draco_oxide_core::attribute::AttributeType::Position
-        })
-        .ok_or(Err::ConnectivityError(
+        .any(|att| att.get_attribute_type() == draco_oxide_core::attribute::AttributeType::Position)
+    {
+        return Err(Err::ConnectivityError(
             connectivity::Err::PositionAttributeTypeError,
-        ))?;
+        ));
+    }
 
-    let (pos_ds, pos_corner_table) = ds::build_global_ds(faces, pos_att);
+    let (pos_ds, pos_corner_table) = ds::build_global_ds(faces, &mut attributes);
     let mut adss = ds::build_attribute_ds(&pos_ds, &pos_corner_table, attributes);
 
-    // Encode connectivity. This returns the corners of the edgebreaker traversal, which the
-    // attribute encoder needs to seed its per-attribute sequencing.
+    // Encode connectivity
     let corners_of_edgebreaker = connectivity::encode_connectivity(&mut adss, writer, &cfg)?;
     debug_write!("Connectivity done, now starting attributes.", writer);
 

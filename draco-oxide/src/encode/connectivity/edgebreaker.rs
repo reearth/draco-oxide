@@ -48,8 +48,6 @@ where
     // A map from vertices to the hole id if the vertex is on a hole or void if the vertex is not on a hole.
     vertex_hole_id: VecVertexIdx<Option<usize>>,
 
-    num_decoded_vertices: usize,
-
     corner_traversal_stack: Vec<CornerIdx>,
 
     last_encoded_symbol_idx: usize,
@@ -125,14 +123,17 @@ where
     T: Traversal,
 {
     // Build the object with empty arrays.
-    pub fn new(config: Config, adss: &'ads mut [AttributeDS<'faces>]) -> Result<Self, Err> {
+    pub fn new(
+        config: Config,
+        adss: &'ads [AttributeDS<'faces>],
+        make_traversal: impl FnOnce(&'ads AttributeDS<'faces>) -> T,
+    ) -> Result<Self, Err> {
         let pos_ads = adss
             .iter()
             .find(|ads| ads.att_data().get_attribute_type() == AttributeType::Position)
             .ok_or(Err::EmptyAttributeDSArray)?;
         let gds = pos_ads.global_ds();
-
-        let traversal = T::new(&pos_ads);
+        let traversal = make_traversal(pos_ads);
 
         let out = Self {
             visited_vertices: VecVertexIdx::from(vec![false; pos_ads.num_vertices()]),
@@ -141,7 +142,6 @@ where
             pos_corner_table: pos_ads.corner_table().pos_corner_table(),
             posds: pos_ads,
             vertex_hole_id: VecVertexIdx::new(),
-            num_decoded_vertices: 0,
             corner_traversal_stack: Vec::new(),
             last_encoded_symbol_idx: usize::MAX,
             processed_connectivity_corners: Vec::new(),
@@ -532,7 +532,6 @@ where
 }
 
 pub(crate) trait Traversal {
-    fn new(pos_ds: &AttributeDS) -> Self;
     fn record_symbol(
         &mut self,
         symbol: Symbol,
@@ -559,15 +558,17 @@ pub(crate) struct DefaultTraversal {
     processed_connectivity_corners: Vec<CornerIdx>,
 }
 
-impl Traversal for DefaultTraversal {
-    fn new(_pos_ds: &AttributeDS) -> Self {
+impl DefaultTraversal {
+    pub(crate) fn new() -> Self {
         Self {
             symbols: Vec::new(),
             interior_cfg: Vec::new(),
             processed_connectivity_corners: Vec::new(),
         }
     }
+}
 
+impl Traversal for DefaultTraversal {
     fn record_symbol(
         &mut self,
         symbol: Symbol,
@@ -694,29 +695,31 @@ impl Traversal for DefaultTraversal {
     }
 }
 
-pub(crate) struct ValenceTraversal {
-    vertex_valences: Vec<usize>,
-    corner_to_vertex_map: Vec<VertexIdx>,
+pub(crate) struct ValenceTraversal<'pos_ds> {
+    vertex_valences: VecVertexIdx<usize>,
+    pos_ds: &'pos_ds AttributeDS<'pos_ds>,
+    diff_corner_to_vertex_map: BTreeMap<CornerIdx, VertexIdx>,
     context_symbols: Vec<Vec<Symbol>>,
     last_corner: CornerIdx,
     prev_symbol: Option<Symbol>,
     interior_cfg: Vec<bool>,
     num_symbols: usize,
 }
+impl<'pos_ds> ValenceTraversal<'pos_ds> {
+    fn vertex_idx(&self, corner: CornerIdx) -> VertexIdx {
+        if let Some(&vertex) = self.diff_corner_to_vertex_map.get(&corner) {
+            vertex
+        } else {
+            self.pos_ds.vertex_idx(corner)
+        }
+    }
 
-impl Traversal for ValenceTraversal {
-    fn new(pos_ds: &AttributeDS) -> Self {
-        let gds = pos_ds.global_ds();
-        let mut vertex_valences = Vec::with_capacity(pos_ds.num_vertices());
+    pub(crate) fn new(pos_ds: &'pos_ds AttributeDS) -> Self {
+        let mut vertex_valences: VecVertexIdx<usize> =
+            Vec::with_capacity(pos_ds.num_vertices()).into();
         for i in 0..pos_ds.num_vertices() {
             let v = VertexIdx::from(i);
             vertex_valences.push(pos_ds.vertex_valence(v));
-        }
-
-        let mut corner_to_vertex_map = Vec::with_capacity(gds.num_corners());
-        for i in 0..gds.num_corners() {
-            let c = CornerIdx::from(i);
-            corner_to_vertex_map.push(pos_ds.vertex_idx(c));
         }
 
         let num_unique_valences = MAX_VALENCE - MIN_VALENCE + 1;
@@ -724,7 +727,8 @@ impl Traversal for ValenceTraversal {
         let context_symbols = vec![Vec::new(); num_unique_valences];
         Self {
             vertex_valences,
-            corner_to_vertex_map,
+            pos_ds,
+            diff_corner_to_vertex_map: BTreeMap::new(),
             context_symbols,
             last_corner: CornerIdx::from(usize::MAX), // This will be set to a valid corner index in `new_corner_reached` before the first call to record symbol.
             prev_symbol: None,
@@ -732,7 +736,9 @@ impl Traversal for ValenceTraversal {
             num_symbols: 0,
         }
     }
+}
 
+impl<'pos_ds> Traversal for ValenceTraversal<'pos_ds> {
     fn record_symbol(
         &mut self,
         symbol: Symbol,
@@ -744,19 +750,17 @@ impl Traversal for ValenceTraversal {
         let next = self.last_corner.next();
         let prev = self.last_corner.previous();
 
-        let active_valence =
-            self.vertex_valences[usize::from(self.corner_to_vertex_map[usize::from(next)])];
+        let v_last = self.vertex_idx(self.last_corner);
+        let v_next = self.vertex_idx(next);
+        let v_prev = self.vertex_idx(prev);
+
+        let active_valence = self.vertex_valences[v_next];
         match symbol {
             Symbol::C => {}
             Symbol::S => {
-                // Update valences.
-                self.vertex_valences[usize::from(self.corner_to_vertex_map[usize::from(next)])] -=
-                    1;
-                self.vertex_valences[usize::from(self.corner_to_vertex_map[usize::from(prev)])] -=
-                    1;
+                self.vertex_valences[v_next] -= 1;
+                self.vertex_valences[v_prev] -= 1;
 
-                // Count the number of faces on the left side of the split vertex and
-                // update the valence on the "left vertex".
                 let mut num_left_faces = 0;
                 let mut maybe_act_c = corner_table.opposite(prev);
                 while maybe_act_c.is_some() {
@@ -767,52 +771,39 @@ impl Traversal for ValenceTraversal {
                     num_left_faces += 1;
                     maybe_act_c = corner_table.opposite(act_c.next());
                 }
-                self.vertex_valences
-                    [usize::from(self.corner_to_vertex_map[usize::from(self.last_corner)])] =
-                    num_left_faces + 1;
+                self.vertex_valences[v_last] = num_left_faces + 1;
 
-                // Create a new vertex for the right side and count the number of
-                // faces that should be attached to this vertex.
-                let new_vert_id = self.vertex_valences.len();
+                let new_vertex = self.vertex_valences.len();
                 let mut num_right_faces = 0;
 
                 maybe_act_c = corner_table.opposite(next);
                 while maybe_act_c.is_some() {
                     let act_c = maybe_act_c;
                     if visited_faces[act_c.face_idx()] {
-                        break; // Stop when we reach the first visited face.
+                        break;
                     }
                     num_right_faces += 1;
-                    // Map corners on the right side to the newly created vertex.
-                    self.corner_to_vertex_map[usize::from(act_c.next())] = new_vert_id.into();
+                    self.diff_corner_to_vertex_map
+                        .insert(act_c.next(), new_vertex.into());
                     maybe_act_c = corner_table.opposite(act_c.previous());
                 }
                 self.vertex_valences.push(num_right_faces + 1);
             }
             Symbol::R => {
                 // Update valences.
-                self.vertex_valences
-                    [usize::from(self.corner_to_vertex_map[usize::from(self.last_corner)])] -= 1;
-                self.vertex_valences[usize::from(self.corner_to_vertex_map[usize::from(next)])] -=
-                    1;
-                self.vertex_valences[usize::from(self.corner_to_vertex_map[usize::from(prev)])] -=
-                    2;
+                self.vertex_valences[v_last] -= 1;
+                self.vertex_valences[v_next] -= 1;
+                self.vertex_valences[v_prev] -= 2;
             }
             Symbol::L => {
-                self.vertex_valences
-                    [usize::from(self.corner_to_vertex_map[usize::from(self.last_corner)])] -= 1;
-                self.vertex_valences[usize::from(self.corner_to_vertex_map[usize::from(next)])] -=
-                    2;
-                self.vertex_valences[usize::from(self.corner_to_vertex_map[usize::from(prev)])] -=
-                    1;
+                self.vertex_valences[v_last] -= 1;
+                self.vertex_valences[v_next] -= 2;
+                self.vertex_valences[v_prev] -= 1;
             }
             Symbol::E => {
-                self.vertex_valences
-                    [usize::from(self.corner_to_vertex_map[usize::from(self.last_corner)])] -= 2;
-                self.vertex_valences[usize::from(self.corner_to_vertex_map[usize::from(next)])] -=
-                    2;
-                self.vertex_valences[usize::from(self.corner_to_vertex_map[usize::from(prev)])] -=
-                    2;
+                self.vertex_valences[v_last] -= 2;
+                self.vertex_valences[v_next] -= 2;
+                self.vertex_valences[v_prev] -= 2;
             }
         }
 

@@ -14,13 +14,9 @@ mod attribute_ds {
     fn test_no_att_seam() {
         let mesh = load_obj("../tests/data/sphere.obj").unwrap();
         let faces = mesh.faces;
-        let attributes = mesh.attributes;
+        let mut attributes = mesh.attributes;
 
-        let pos_att = attributes
-            .iter()
-            .find(|att| att.get_attribute_type() == AttributeType::Position)
-            .unwrap();
-        let (ds, pos_corner_table) = build_global_ds(faces, pos_att);
+        let (ds, pos_corner_table) = build_global_ds(faces, &mut attributes);
         let adss = build_attribute_ds(&ds, &pos_corner_table, attributes);
 
         let pos_ds = adss
@@ -54,13 +50,9 @@ mod attribute_ds {
     fn test_att_seam() {
         let mesh = load_obj("../tests/data/tetrahedron.obj").unwrap();
         let faces = mesh.faces;
-        let attributes = mesh.attributes;
+        let mut attributes = mesh.attributes;
 
-        let pos_att = attributes
-            .iter()
-            .find(|att| att.get_attribute_type() == AttributeType::Position)
-            .unwrap();
-        let (ds, pos_corner_table) = build_global_ds(faces, pos_att);
+        let (ds, pos_corner_table) = build_global_ds(faces, &mut attributes);
         let adss = build_attribute_ds(&ds, &pos_corner_table, attributes);
 
         let pos_ds = adss
@@ -115,13 +107,9 @@ mod sequence {
     fn test_traverser() {
         let mesh = load_obj("../tests/data/tetrahedron.obj").unwrap();
         let faces = mesh.faces;
-        let attributes = mesh.attributes;
+        let mut attributes = mesh.attributes;
 
-        let pos_att = attributes
-            .iter()
-            .find(|att| att.get_attribute_type() == AttributeType::Position)
-            .unwrap();
-        let (ds, pos_corner_table) = build_global_ds(faces, pos_att);
+        let (ds, pos_corner_table) = build_global_ds(faces, &mut attributes);
         let mut adss = build_attribute_ds(&ds, &pos_corner_table, attributes);
 
         let corners = encode_connectivity(&mut adss, &mut Vec::new(), &Config::default()).unwrap();
@@ -168,13 +156,9 @@ mod sequence {
     fn sequence_fingerprints(path: &str) -> Vec<(usize, usize, u64)> {
         let mesh = load_obj(path).unwrap();
         let faces = mesh.faces;
-        let attributes = mesh.attributes;
+        let mut attributes = mesh.attributes;
 
-        let pos_att = attributes
-            .iter()
-            .find(|att| att.get_attribute_type() == AttributeType::Position)
-            .unwrap();
-        let (ds, pos_corner_table) = build_global_ds(faces, pos_att);
+        let (ds, pos_corner_table) = build_global_ds(faces, &mut attributes);
         let mut adss = build_attribute_ds(&ds, &pos_corner_table, attributes);
 
         let corners = encode_connectivity(&mut adss, &mut Vec::new(), &Config::default()).unwrap();

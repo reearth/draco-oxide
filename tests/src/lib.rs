@@ -15,6 +15,9 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -49,7 +52,17 @@ pub struct Profile {
 pub enum Operation {
     /// Encode a mesh with draco-oxide. No config field today — the encoder
     /// doesn't expose tunable knobs yet; default `encode::Config` is used.
-    DracoOxideEncode { input: String, output: String },
+    ///
+    /// `timeout_secs` (optional) fails the operation if the encode runs longer
+    /// than that many seconds. draco-oxide encodes meshes that are pathological
+    /// for other encoders in well under a second, so this is a cheap regression
+    /// guard against reintroducing a blow-up.
+    DracoOxideEncode {
+        input: String,
+        output: String,
+        #[serde(default)]
+        timeout_secs: Option<f64>,
+    },
     /// Decode a `.drc` with draco-oxide. Currently stubbed in the library
     /// itself, so this op deliberately errors with a clear message rather
     /// than silently producing garbage.
@@ -257,14 +270,30 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
         let label = format!("[{name}] op#{idx} {}", op_kind(op));
         eprintln!("{label} starting");
         match op {
-            Operation::DracoOxideEncode { input, output } => {
+            Operation::DracoOxideEncode {
+                input,
+                output,
+                timeout_secs,
+            } => {
                 let in_path = resolve_input(input);
-                let mesh = load_mesh_for_oxide(&in_path).unwrap_or_else(|e| {
-                    panic!("{label}: failed to load {}: {e}", in_path.display())
-                });
-                let mut buf = Vec::new();
-                oxide_encode_fn(mesh, &mut buf, oxide_encode::Config::default())
-                    .unwrap_or_else(|e| panic!("{label}: draco-oxide encode failed: {e:?}"));
+                let buf = match timeout_secs {
+                    Some(secs) => encode_oxide_with_timeout(
+                        &label,
+                        in_path.clone(),
+                        Duration::from_secs_f64(*secs),
+                    ),
+                    None => {
+                        let mesh = load_mesh_for_oxide(&in_path).unwrap_or_else(|e| {
+                            panic!("{label}: failed to load {}: {e}", in_path.display())
+                        });
+                        let mut buf = Vec::new();
+                        oxide_encode_fn(mesh, &mut buf, oxide_encode::Config::default())
+                            .unwrap_or_else(|e| {
+                                panic!("{label}: draco-oxide encode failed: {e:?}")
+                            });
+                        buf
+                    }
+                };
                 let out_path = resolve_output(output);
                 std::fs::write(&out_path, &buf).unwrap_or_else(|e| {
                     panic!("{label}: writing {} failed: {e}", out_path.display())
@@ -487,6 +516,67 @@ fn validate(label: &str, path: &Path, fmt: &FormatName) {
                     path.display()
                 )
             });
+        }
+    }
+}
+
+/// Load and encode `in_path` with draco-oxide on a worker thread, panicking if
+/// the **encode** doesn't finish within `timeout`.
+///
+/// The work runs on the worker because `Mesh` is `!Send` (it owns a raw buffer
+/// pointer), so it can't be built on one thread and handed to another — only the
+/// `PathBuf` in and the encoded `Vec<u8>` out cross the boundary. The worker
+/// signals `Loaded` once the OBJ is parsed; the main thread waits for that
+/// unbounded (OBJ parsing is slow in debug and isn't what we're guarding), then
+/// bounds only the encode with `timeout`. The encode is CPU-bound and can't be
+/// interrupted, so on timeout the worker is left to run to completion (or until
+/// the process exits) while the operation fails — fine for a guard whose whole
+/// point is that the encode *shouldn't* take that long.
+fn encode_oxide_with_timeout(label: &str, in_path: PathBuf, timeout: Duration) -> Vec<u8> {
+    enum WorkerMsg {
+        Loaded,
+        Done(Result<Vec<u8>, String>),
+    }
+
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mesh = match load_mesh_for_oxide(&in_path) {
+            Ok(m) => m,
+            Err(e) => {
+                let _ = tx.send(WorkerMsg::Done(Err(format!(
+                    "failed to load {}: {e}",
+                    in_path.display()
+                ))));
+                return;
+            }
+        };
+        if tx.send(WorkerMsg::Loaded).is_err() {
+            return; // receiver gone
+        }
+        let mut buf = Vec::new();
+        let result = oxide_encode_fn(mesh, &mut buf, oxide_encode::Config::default())
+            .map(|()| buf)
+            .map_err(|e| format!("encode failed: {e:?}"));
+        let _ = tx.send(WorkerMsg::Done(result));
+    });
+
+    // Wait (unbounded) for the load to finish — only the encode is timed.
+    match rx.recv() {
+        Ok(WorkerMsg::Loaded) => {}
+        Ok(WorkerMsg::Done(Err(e))) => panic!("{label}: draco-oxide {e}"),
+        Ok(WorkerMsg::Done(Ok(_))) => unreachable!("worker sends Loaded before Done"),
+        Err(_) => panic!("{label}: draco-oxide worker died during load"),
+    }
+
+    match rx.recv_timeout(timeout) {
+        Ok(WorkerMsg::Done(Ok(buf))) => buf,
+        Ok(WorkerMsg::Done(Err(e))) => panic!("{label}: draco-oxide {e}"),
+        Ok(WorkerMsg::Loaded) => unreachable!("Loaded already consumed"),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            panic!("{label}: draco-oxide encode exceeded timeout of {timeout:?}")
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("{label}: draco-oxide worker panicked during encode")
         }
     }
 }

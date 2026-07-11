@@ -1,0 +1,15 @@
+# `pathological_book.obj` is pathological for Google Draco's encoder: 425k
+# triangles all share the single "spine" edge (1, 2) — a fan of pages hinged on
+# one line — so that edge has a 425k-corner coboundary. draco-oxide treats it as
+# a boundary (coboundary != 2) and encodes the whole book in ~3s (debug), so
+# this profile guards that with a build-agnostic 10s ceiling: `timeout_secs`
+# fails the op if the encode ever runs long, catching a regression that
+# reintroduces a blow-up (which on this input is minutes-scale, so the ceiling
+# has ample headroom). The timeout covers only the encode, not the (much slower
+# in debug) OBJ load. Sibling of `pathological_umbrella_timeout.toml`.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "pathological_book.obj"
+output = "oxide.drc"
+timeout_secs = 10.0
