@@ -1,0 +1,40 @@
+# Round-trip test for the zero-CPU "trust the prediction" normal path
+# (`NormalEncoding::PredictedOnly`).
+#
+# cube_flat_random_normals.obj has the SAME geometry and the SAME per-face
+# normal-index grouping (seams) as cube_flat.obj, but its 6 normal vectors are
+# random placeholders; the values are effectively "dropped". Encoding it with
+# `cfg.normal = "PredictedOnly"` ignores those values (using only the seams) and
+# writes an all-zero correction stream. Google Draco then reconstructs the
+# normals purely from the cube's geometry; because every per-face normal-vertex
+# of a flat cube predicts its own face normal, the decoded normals must match
+# the TRUE flat normals of cube_flat.obj.
+#
+# The comparison therefore checks the decoded mesh against cube_flat.obj:
+#   * L2Norm: positions round-trip (near-lossless for an axis-aligned cube),
+#   * Ssim[Normal]: the reconstructed normals match the true flat normals.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "cube_flat_random_normals.obj"
+output = "predicted.drc"
+cfg = { normal = "PredictedOnly" }
+
+[[operations]]
+op = "DracoDecode"
+input = "predicted.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "cube_flat.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.05 },
+    { method = "Ssim", min = 0.97, color_by = "Normal" },
+]

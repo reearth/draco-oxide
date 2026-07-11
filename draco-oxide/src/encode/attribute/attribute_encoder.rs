@@ -133,10 +133,26 @@ impl GroupConfig {
     }
 }
 
+/// How the correction stream for an attribute is produced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodingMode {
+    /// Predict every value, transform against the prediction, and encode the real
+    /// corrections (the standard, lossy-by-quantization path).
+    Full,
+    /// Emit an all-zero correction stream and neutral prediction metadata, so the
+    /// decoder reconstructs exactly what it predicts. The input attribute's values
+    /// are never read, and only its seams matter. Currently only meaningful for 
+    /// normals under
+    /// [`MeshNormalPrediction`](draco_oxide_core::codec::attribute::prediction_scheme::mesh_normal_prediction),
+    /// where it makes normal compression effectively zero-CPU.
+    ZeroCorrection,
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     group_cfgs: Vec<GroupConfig>,
     rans_encoding: bool,
+    mode: EncodingMode,
 }
 
 // ToDo: THIS IMPLEMENTATION IS NOT FINAL
@@ -145,6 +161,7 @@ impl ConfigType for Config {
         Self {
             group_cfgs: Vec::new(),
             rans_encoding: true,
+            mode: EncodingMode::Full,
         }
     }
 }
@@ -154,6 +171,18 @@ impl Config {
         Self {
             group_cfgs: vec![GroupConfig::default_for(att_ty, size)],
             rans_encoding: true,
+            mode: EncodingMode::Full,
+        }
+    }
+
+    /// Zero-CPU normal encoding: keeps the normal prediction/transform metadata of
+    /// the default normal path, but the encoder synthesizes an all-zero correction
+    /// stream instead of reading the input normals (see [`EncodingMode::ZeroCorrection`]).
+    pub fn predicted_normals(size: usize) -> Self {
+        Self {
+            group_cfgs: vec![GroupConfig::default_for(AttributeType::Normal, size)],
+            rans_encoding: true,
+            mode: EncodingMode::ZeroCorrection,
         }
     }
 }
@@ -199,6 +228,10 @@ where
             .ty
             .write_to(self.writer);
 
+        if self.cfg.mode == EncodingMode::ZeroCorrection {
+            return self.encode_zero_correction_normal();
+        }
+
         let component_type = self.ads.att_data().get_component_type();
         match component_type {
             ComponentDataType::F32 => self.unpack_num_components::<WRITE_NOW, BOOST, f32>(),
@@ -213,6 +246,64 @@ where
             ComponentDataType::I64 => self.unpack_num_components::<WRITE_NOW, BOOST, i64>(),
             ComponentDataType::Invalid => Err(Err::UnsupportedDataType),
         }
+    }
+
+    /// Emits the zero-CPU normal stream: an all-zero octahedral correction
+    /// sequence plus the same transform/prediction/portabilization metadata the
+    /// default normal path writes, so Google Draco (and our decoder) rebuild the
+    /// geometry-derived predicted normals. The input normal values are never read;
+    /// only the connectivity-derived value count (the traversal length) is used.
+    fn encode_zero_correction_normal(self) -> Result<Attribute, Err> {
+        let sequence =
+            Traverser::new(&self.ads, self.corners_of_edgebreaker.to_vec()).compute_seqeunce();
+        let num_values = sequence.len();
+
+        const N: usize = 2;
+
+        let por_cfg = portabilization::Config::default_for(AttributeType::Normal);
+        let mut port_info_buffer: Vec<u8> = Vec::new();
+        port_info_buffer.write_u8(por_cfg.quantization_bits);
+
+        let mut transform_info_buffer: Vec<u8> = Vec::new();
+        let transform = PredictionTransform::<N>::new(self.cfg.group_cfgs[0].prediction_transform);
+        let _ = transform.squeeze(&mut transform_info_buffer);
+
+        self.writer.write_u8(self.cfg.rans_encoding as u8);
+        if self.cfg.rans_encoding {
+            let symbols = vec![0u64; num_values * N];
+            encode_symbols(symbols, N, SymbolEncodingMethod::DirectCoded, self.writer)?;
+        } else {
+            let zero = NdVector::<N, i32>::zero();
+            for _ in 0..num_values {
+                zero.write_to(self.writer);
+            }
+        }
+
+        for byte in transform_info_buffer {
+            self.writer.write_u8(byte);
+        }
+        prediction_scheme::mesh_normal_prediction::encode_flip_metadata(
+            &vec![false; num_values],
+            self.writer,
+        )?;
+
+        // Portabilization metadata last.
+        for byte in port_info_buffer {
+            self.writer.write_u8(byte);
+        }
+
+        // Normals are a leaf attribute, so this returned octahedral attribute is
+        // never consulted as a parent; an empty 2-component attribute suffices.
+        Ok(Attribute::from_without_removing_duplicates::<
+            NdVector<N, i32>,
+            N,
+        >(
+            self.ads.att_data().get_id(),
+            Vec::new(),
+            AttributeType::Normal,
+            self.ads.att_data().get_domain(),
+            self.ads.att_data().get_parents().clone(),
+        ))
     }
 
     fn unpack_num_components<const WRITE_NOW: bool, const BOOST: bool, T>(

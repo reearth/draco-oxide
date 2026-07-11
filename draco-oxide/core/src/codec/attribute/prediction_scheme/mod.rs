@@ -5,11 +5,11 @@ pub mod mesh_normal_prediction;
 pub mod mesh_parallelogram_prediction;
 pub mod mesh_prediction_for_texture_coordinates;
 
+use crate::attribute::Attribute;
 use crate::bit_coder::{ByteReader, ByteWriter};
 use crate::mesh::ds::AttributeDS;
 use crate::types::NdVector;
 use crate::types::{ConfigType, CornerIdx, Vector, VertexIdx};
-use crate::attribute::Attribute;
 
 /// PredictionScheme traits are not generic and the structs implementing the
 /// trait are generic. This is so because some of the structs need to store

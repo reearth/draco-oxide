@@ -19,6 +19,7 @@ draco-oxide-core.workspace = true
 # draco-oxide-decoder = { workspace = true, optional = true }
 enum_dispatch = "0.3.13"
 remain = "0.2.15"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.12"
 tobj = "4.0.3"

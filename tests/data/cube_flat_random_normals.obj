@@ -1,0 +1,32 @@
+# The "normals dropped" twin of cube_flat.obj: identical positions, faces, and
+# winding, and the identical seams.
+# Compressing this mesh with `NormalEncoding::PredictedOnly` must ignore these
+# bogus values (using only the seams) and reconstruct the flat normals of
+# cube_flat.obj from the geometry alone.
+
+v -1 -1 -1
+v  1 -1 -1
+v  1  1 -1
+v -1  1 -1
+v -1 -1  1
+v  1 -1  1
+v  1  1  1
+v -1  1  1
+vn  0.30  0.10  0.95
+vn -0.80  0.50  0.20
+vn  0.60 -0.70  0.40
+vn  0.10  0.90 -0.40
+vn -0.50 -0.50  0.70
+vn  0.90  0.20 -0.30
+f 1//1 4//1 3//1
+f 1//1 3//1 2//1
+f 5//2 6//2 7//2
+f 5//2 7//2 8//2
+f 1//3 5//3 8//3
+f 1//3 8//3 4//3
+f 2//4 3//4 7//4
+f 2//4 7//4 6//4
+f 1//5 2//5 6//5
+f 1//5 6//5 5//5
+f 4//6 8//6 7//6
+f 4//6 7//6 3//6

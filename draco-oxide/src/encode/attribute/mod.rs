@@ -6,7 +6,9 @@ use crate::encode::attribute::portabilization::PortabilizationType;
 #[cfg(feature = "evaluation")]
 use crate::eval;
 
-use draco_oxide_core::attribute::Attribute;
+use std::collections::HashMap;
+
+use draco_oxide_core::attribute::{Attribute, AttributeType};
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::connectivity::edgebreaker::TraversalType;
 use draco_oxide_core::mesh::ds::AttributeDS;
@@ -80,7 +82,7 @@ where
             &parents,
             &corners_of_edgebreaker,
             writer,
-            attribute_encoder::Config::default_for(ty, len),
+            cfg.attribute.encoder_config_for(ty, len),
         );
 
         let port_att = encoder.encode::<true, false>()?;
@@ -99,17 +101,59 @@ where
     Ok(())
 }
 
+/// Per-attribute encoding configuration, keyed by attribute type. Any type
+/// without an explicit override falls back to the built-in `default_for(ty, len)`
+/// behaviour, so `Config::default()` reproduces the previous hardcoded pipeline.
 #[derive(Clone, Debug)]
 pub struct Config {
-    #[allow(unused)]
-    // This field is unused in the current implementation, as we only support the default attribute encoder configuration.
-    cfgs: Vec<attribute_encoder::Config>,
+    overrides: HashMap<AttributeType, AttributeEncoding>,
+}
+
+/// Per-attribute-type encoding choice. Only normals are configurable today; this
+/// is the extension point for future per-type knobs (position quantization,
+/// texcoord bits, …).
+#[derive(Clone, Copy, Debug)]
+pub enum AttributeEncoding {
+    Normal(NormalEncoding),
+}
+
+/// How a normal attribute is compressed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+pub enum NormalEncoding {
+    /// Octahedrally quantize the input normals and encode the real octahedral
+    /// corrections (the default, lossy-by-quantization path).
+    #[default]
+    Quantized,
+    /// Zero-CPU: trust the decoder's geometry-derived prediction and emit an
+    /// all-zero correction stream. The input normal values are ignored, and  
+    /// only their seams are used.
+    PredictedOnly,
 }
 
 impl ConfigType for Config {
     fn default() -> Self {
         Self {
-            cfgs: vec![attribute_encoder::Config::default()],
+            overrides: HashMap::new(),
+        }
+    }
+}
+
+impl Config {
+    /// Overrides how normal attributes are compressed.
+    pub fn set_normal_encoding(&mut self, enc: NormalEncoding) {
+        self.overrides
+            .insert(AttributeType::Normal, AttributeEncoding::Normal(enc));
+    }
+
+    /// Resolves the per-attribute encoder config for an attribute of type `ty`
+    /// with `len` values, honoring any override and otherwise falling back to the
+    /// built-in default.
+    fn encoder_config_for(&self, ty: AttributeType, len: usize) -> attribute_encoder::Config {
+        match self.overrides.get(&ty) {
+            Some(AttributeEncoding::Normal(NormalEncoding::PredictedOnly)) => {
+                attribute_encoder::Config::predicted_normals(len)
+            }
+            _ => attribute_encoder::Config::default_for(ty, len),
         }
     }
 }

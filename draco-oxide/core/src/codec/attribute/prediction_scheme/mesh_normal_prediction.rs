@@ -164,20 +164,36 @@ where
     where
         W: crate::bit_coder::ByteWriter,
     {
-        let freq_count_0 = self.flips.iter().filter(|&&o| !o).count();
-        let zero_prob = (((freq_count_0 as f32 / self.flips.len() as f32) * 256.0 + 0.5) as u16)
-            .clamp(1, 255) as u8;
-        let mut rabs_coder: RabsCoder = RabsCoder::new(zero_prob as usize, None);
-        writer.write_u8(zero_prob);
-        for &b in &self.flips {
-            // Encode each flip as a single bit
-            rabs_coder.write(if b { 1 } else { 0 })?;
-        }
-        let buffer = rabs_coder.flush()?;
-        leb128_write(buffer.len() as u64, writer);
-        for byte in buffer {
-            writer.write_u8(byte);
-        }
-        Ok(())
+        encode_flip_metadata(&self.flips, writer)
     }
+}
+
+/// Encodes the per-value sign-flip bits of mesh-normal prediction into `writer`,
+/// using the exact rABS layout the decoder expects: a `zero_prob` byte, then the
+/// leb128 length of the coded buffer, then the buffer itself.
+///
+/// This is factored out of [`MeshNormalPrediction::encode_prediction_metadtata`]
+/// so the zero-CPU "trust prediction" encode path can emit neutral (all-false)
+/// flips for `count` values without constructing the predictor at all — an
+/// all-false slice is a valid input and reproduces the byte layout of a run in
+/// which every predicted normal was kept as-is.
+pub fn encode_flip_metadata<W>(flips: &[bool], writer: &mut W) -> Result<(), super::Err>
+where
+    W: crate::bit_coder::ByteWriter,
+{
+    let freq_count_0 = flips.iter().filter(|&&o| !o).count();
+    let zero_prob =
+        (((freq_count_0 as f32 / flips.len() as f32) * 256.0 + 0.5) as u16).clamp(1, 255) as u8;
+    let mut rabs_coder: RabsCoder = RabsCoder::new(zero_prob as usize, None);
+    writer.write_u8(zero_prob);
+    for &b in flips {
+        // Encode each flip as a single bit
+        rabs_coder.write(if b { 1 } else { 0 })?;
+    }
+    let buffer = rabs_coder.flush()?;
+    leb128_write(buffer.len() as u64, writer);
+    for byte in buffer {
+        writer.write_u8(byte);
+    }
+    Ok(())
 }

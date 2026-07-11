@@ -19,28 +19,81 @@ pub trait EncoderConfig {
     fn get_encoder(&self) -> Self::Encoder;
 }
 
-#[derive(Debug, Clone)]
+pub use attribute::{AttributeEncoding, NormalEncoding};
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(from = "ConfigSpec")]
 pub struct Config {
     #[allow(unused)]
     // This field is unused in the current implementation, as we only support edgebreaker.
     connectivity_encoder_cfg: connectivity::Config,
-    #[allow(unused)]
-    // This field is unused in the current implementation, as we only suport the default attribute encoder configuration.
-    attribute_encoder_cfg: attribute::Config,
+    // Per-attribute encoding configuration (see `attribute::Config`).
+    attribute: attribute::Config,
     geometry_type: header::EncodedGeometryType,
     encoder_method: draco_oxide_core::codec::header::EncoderMethod,
     metdata: bool,
+}
+
+/// TOML/serde-facing view of [`Config`]. Deserializing a `Config` goes through
+/// this flat, all-optional spec (every field defaults, so an empty table yields
+/// `Config::default()`), keeping the real config's private fields and internal
+/// representation off the public deserialization surface. Grow it alongside the
+/// builder methods as more knobs become configurable.
+///
+/// ```toml
+/// # e.g. an encode operation's inline config
+/// normal = "PredictedOnly"
+/// metadata = false
+/// ```
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ConfigSpec {
+    normal: NormalEncoding,
+    metadata: bool,
+}
+
+impl From<ConfigSpec> for Config {
+    fn from(spec: ConfigSpec) -> Self {
+        <Config as ConfigType>::default()
+            .with_normals(spec.normal)
+            .with_metadata(spec.metadata)
+    }
 }
 
 impl ConfigType for Config {
     fn default() -> Self {
         Self {
             connectivity_encoder_cfg: connectivity::Config::default(),
-            attribute_encoder_cfg: attribute::Config::default(),
+            attribute: attribute::Config::default(),
             geometry_type: header::EncodedGeometryType::TrianglarMesh,
             encoder_method: draco_oxide_core::codec::header::EncoderMethod::Edgebreaker,
             metdata: false,
         }
+    }
+}
+
+impl Config {
+    /// Sets how normal attributes are compressed.
+    ///
+    /// [`NormalEncoding::PredictedOnly`] makes normal compression effectively
+    /// zero-CPU: the encoder ignores the input normal values (using only their
+    /// seam topology) and emits an all-zero correction stream, so the decoder
+    /// reconstructs exactly the normals it predicts from the geometry.
+    ///
+    /// ```no_run
+    /// # use draco_oxide::core::types::ConfigType;
+    /// use draco_oxide::encode::{Config, NormalEncoding};
+    /// let cfg = Config::default().with_normals(NormalEncoding::PredictedOnly);
+    /// ```
+    pub fn with_normals(mut self, enc: NormalEncoding) -> Self {
+        self.attribute.set_normal_encoding(enc);
+        self
+    }
+
+    /// Enables or disables metadata encoding.
+    pub fn with_metadata(mut self, metadata: bool) -> Self {
+        self.metdata = metadata;
+        self
     }
 }
 

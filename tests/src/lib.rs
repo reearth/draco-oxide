@@ -37,6 +37,11 @@ pub struct Profile {
     pub operations: Vec<Operation>,
 }
 
+/// serde default for `DracoOxideEncode::cfg` — the plain encoder default.
+fn default_oxide_cfg() -> oxide_encode::Config {
+    <oxide_encode::Config as ConfigType>::default()
+}
+
 /// One step in a test profile.
 ///
 /// Tag field is `op = "..."` so the TOML is flat and idiomatic:
@@ -50,8 +55,20 @@ pub struct Profile {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op")]
 pub enum Operation {
-    /// Encode a mesh with draco-oxide. No config field today — the encoder
-    /// doesn't expose tunable knobs yet; default `encode::Config` is used.
+    /// Encode a mesh with draco-oxide.
+    ///
+    /// `cfg` (optional) is the encoder [`Config`](oxide_encode::Config),
+    /// deserialized inline from TOML (an omitted table means
+    /// `encode::Config::default()`). For example, to compress normals with the
+    /// zero-CPU "trust the prediction" path:
+    ///
+    /// ```toml
+    /// [[operations]]
+    /// op = "DracoOxideEncode"
+    /// input = "cube.obj"
+    /// output = "oxide.drc"
+    /// cfg = { normal = "PredictedOnly" }
+    /// ```
     ///
     /// `timeout_secs` (optional) fails the operation if the encode runs longer
     /// than that many seconds. draco-oxide encodes meshes that are pathological
@@ -62,6 +79,8 @@ pub enum Operation {
         output: String,
         #[serde(default)]
         timeout_secs: Option<f64>,
+        #[serde(default = "default_oxide_cfg")]
+        cfg: oxide_encode::Config,
     },
     /// Decode a `.drc` with draco-oxide. Currently stubbed in the library
     /// itself, so this op deliberately errors with a clear message rather
@@ -274,6 +293,7 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                 input,
                 output,
                 timeout_secs,
+                cfg,
             } => {
                 let in_path = resolve_input(input);
                 let buf = match timeout_secs {
@@ -281,16 +301,16 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                         &label,
                         in_path.clone(),
                         Duration::from_secs_f64(*secs),
+                        cfg.clone(),
                     ),
                     None => {
                         let mesh = load_mesh_for_oxide(&in_path).unwrap_or_else(|e| {
                             panic!("{label}: failed to load {}: {e}", in_path.display())
                         });
                         let mut buf = Vec::new();
-                        oxide_encode_fn(mesh, &mut buf, oxide_encode::Config::default())
-                            .unwrap_or_else(|e| {
-                                panic!("{label}: draco-oxide encode failed: {e:?}")
-                            });
+                        oxide_encode_fn(mesh, &mut buf, cfg.clone()).unwrap_or_else(|e| {
+                            panic!("{label}: draco-oxide encode failed: {e:?}")
+                        });
                         buf
                     }
                 };
@@ -532,7 +552,12 @@ fn validate(label: &str, path: &Path, fmt: &FormatName) {
 /// interrupted, so on timeout the worker is left to run to completion (or until
 /// the process exits) while the operation fails — fine for a guard whose whole
 /// point is that the encode *shouldn't* take that long.
-fn encode_oxide_with_timeout(label: &str, in_path: PathBuf, timeout: Duration) -> Vec<u8> {
+fn encode_oxide_with_timeout(
+    label: &str,
+    in_path: PathBuf,
+    timeout: Duration,
+    cfg: oxide_encode::Config,
+) -> Vec<u8> {
     enum WorkerMsg {
         Loaded,
         Done(Result<Vec<u8>, String>),
@@ -554,7 +579,7 @@ fn encode_oxide_with_timeout(label: &str, in_path: PathBuf, timeout: Duration) -
             return; // receiver gone
         }
         let mut buf = Vec::new();
-        let result = oxide_encode_fn(mesh, &mut buf, oxide_encode::Config::default())
+        let result = oxide_encode_fn(mesh, &mut buf, cfg)
             .map(|()| buf)
             .map_err(|e| format!("encode failed: {e:?}"));
         let _ = tx.send(WorkerMsg::Done(result));

@@ -585,8 +585,10 @@ mod tests {
             [1.0, 1.0],
             [-1.0, 0.0],
         ])];
-        let (ds, ct) =
-            build_global_ds(faces(vec![[0, 1, 2], [1, 3, 2], [2, 1, 4]]), &mut attributes);
+        let (ds, ct) = build_global_ds(
+            faces(vec![[0, 1, 2], [1, 3, 2], [2, 1, 4]]),
+            &mut attributes,
+        );
         let _adss = build_attribute_ds(&ds, &ct, attributes);
 
         // Corners 0, 4, 8 are opposite the non-manifold edge {1,2}; none is linked.
@@ -712,8 +714,10 @@ mod tests {
             [1.0, 1.0],
             [2.0, 0.0],
         ])];
-        let (ds, ct) =
-            build_global_ds(faces(vec![[0, 1, 2], [2, 1, 3], [3, 2, 4]]), &mut attributes);
+        let (ds, ct) = build_global_ds(
+            faces(vec![[0, 1, 2], [2, 1, 3], [3, 2, 4]]),
+            &mut attributes,
+        );
 
         assert_eq!(ds.num_points(), 5);
         let adss = build_attribute_ds(&ds, &ct, attributes);
