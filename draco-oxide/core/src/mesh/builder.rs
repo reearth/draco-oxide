@@ -8,6 +8,19 @@ use super::Mesh;
 use crate::attribute::{Attribute, AttributeDomain, AttributeId, AttributeType, ComponentDataType};
 use crate::types::{PointIdx, VecPointIdx, Vector};
 
+/// Rotates a triangle so its smallest `PointIdx` comes first, preserving the
+/// cyclic order: two triangles share a canonical form iff they have the same
+/// points AND the same winding.
+fn canonical_face(f: &[PointIdx; 3]) -> [PointIdx; 3] {
+    if f[0] <= f[1] && f[0] <= f[2] {
+        [f[0], f[1], f[2]]
+    } else if f[1] <= f[0] && f[1] <= f[2] {
+        [f[1], f[2], f[0]]
+    } else {
+        [f[2], f[0], f[1]]
+    }
+}
+
 pub struct MeshBuilder {
     pub attributes: Vec<Attribute>,
     faces: Vec<[usize; 3]>,
@@ -81,6 +94,11 @@ impl MeshBuilder {
             .into_iter()
             .filter(|f| f[0] != f[1] && f[1] != f[2] && f[2] != f[0]) // filter out degenerate faces
             .collect::<Vec<_>>();
+
+        // Remove duplicate faces (identical points and winding); an
+        // opposite-wound face is a distinct face and is kept.
+        let mut seen_faces = std::collections::HashSet::new();
+        faces.retain(|f| seen_faces.insert(canonical_face(f)));
 
         Self::remove_unused_vertices(&mut attributes, &mut faces)?;
 

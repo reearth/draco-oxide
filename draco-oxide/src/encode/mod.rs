@@ -297,8 +297,8 @@ where
         ));
     }
 
-    let (pos_ds, pos_corner_table) = ds::build_global_ds(faces, &mut attributes);
-    let mut adss = ds::build_attribute_ds(&pos_ds, &pos_corner_table, attributes);
+    let (ds, pos_corner_table) = ds::build_global_ds(faces, &mut attributes);
+    let mut adss = ds::build_attribute_ds(&ds, &pos_corner_table, attributes);
 
     // Encode connectivity
     let corners_of_edgebreaker = connectivity::encode_connectivity(&mut adss, writer, &cfg)?;

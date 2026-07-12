@@ -1,0 +1,28 @@
+# Duplicate faces: every face of open_box.obj is listed twice with identical
+# winding (as CityGML Solid + boundary surfaces produce). The duplicates must
+# be dropped at mesh construction; if they survive, every edge of the box is
+# non-manifold and the decoded normals corrupt.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "open_box.obj"
+output = "o.drc"
+
+[[operations]]
+op = "DracoDecode"
+input = "o.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "open_box.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "Ssim", min = 0.90, color_by = "Geometry" },
+    { method = "Ssim", min = 0.95, color_by = "Normal" },
+]

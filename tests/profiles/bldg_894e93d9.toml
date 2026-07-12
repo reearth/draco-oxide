@@ -1,0 +1,32 @@
+# Multi-sector points on real-world data: several points of this mesh have
+# corners in more than one seam-separated sector of a position fan (the normal
+# values around the fan read A|B|A), so a point-keyed `point -> vertex` map is
+# a function only after `sort_mesh` splits them. Guards round-trip normal
+# quality at reference parity with Google Draco (~0.997 vs 0.998).
+#
+# Data: a PLATEAU Shinjuku-ku building; see bldg_894e93d9.obj for the source
+# citation.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "bldg_894e93d9.obj"
+output = "o.drc"
+
+[[operations]]
+op = "DracoDecode"
+input = "o.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "bldg_894e93d9.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "Ssim", min = 0.98, color_by = "Geometry" },
+    { method = "Ssim", min = 0.98, color_by = "Normal" },
+]

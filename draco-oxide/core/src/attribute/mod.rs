@@ -246,17 +246,14 @@ impl Attribute {
         self.buffer.len()
     }
 
-    /// Appends a new point/vertex whose attribute value aliases that of `src`,
-    /// and returns its index.
+    /// Appends a new point whose attribute value aliases that of `src`, and
+    /// returns its index. No new unique value is stored; the new point reuses
+    /// the source's `AttributeValueIdx`. If the attribute is still on the
+    /// implicit identity `point -> value` map, that map is materialized first
+    /// so the appended entry can diverge from identity.
     ///
-    /// During data-structure construction the point and vertex index spaces
-    /// coincide (`PointIdx == VertexIdx`), so this is how an attribute is
-    /// extended in lock-step when `compute_corner_table` splits a point: the
-    /// phantom point takes the source point's value. No new unique value is
-    /// stored — the phantom aliases the source's `AttributeValueIdx`. If the
-    /// attribute is still on the implicit identity `point -> value` map, that
-    /// map is materialized first so the appended entry can diverge from
-    /// identity.
+    /// This is how the encoder splits a non-manifold point, calling `mint`
+    /// on every attribute in lockstep so the point spaces stay equal.
     pub fn mint(&mut self, src: PointIdx) -> PointIdx {
         let src_val = self.get_unique_val_idx(src);
         let num_unique = self.num_unique_values();
@@ -635,7 +632,7 @@ impl Attribute {
             // Compact the buffer
             self.buffer.retain_indices(&keep_unique_indices);
         } else {
-            // No map — buffer indices correspond directly to point indices
+            // No map; buffer indices correspond directly to point indices
             self.buffer.retain_indices(keep_point_indices);
         }
     }

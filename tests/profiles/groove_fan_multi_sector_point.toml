@@ -1,0 +1,31 @@
+# Multi-sector points, minimal form: in groove_fan.obj the center point's
+# corners lie in two seam-separated sectors of one position fan (see the OBJ
+# header), so a point-keyed `point -> vertex` map is a function only after
+# `sort_mesh` splits the point. Without the split the encoded value stream
+# desynchronizes from the seam-derived vertices the decoder reconstructs and
+# the normals corrupt: normal SSIM is ~0.958 broken vs ~0.993 correct, and the
+# 0.98 gate separates them.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "groove_fan.obj"
+output = "o.drc"
+
+[[operations]]
+op = "DracoDecode"
+input = "o.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "groove_fan.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "Ssim", min = 0.95, color_by = "Geometry" },
+    { method = "Ssim", min = 0.98, color_by = "Normal" },
+]

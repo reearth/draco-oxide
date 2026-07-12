@@ -1,0 +1,30 @@
+# Verifies the per-attribute quantization override end-to-end: encode the bunny
+# with an explicit 14-bit position quantization (up from the default 11),
+# decode it with Google Draco's reference decoder, and confirm the surface
+# round-trips. Proves the new `[attributes.Position] quantization = { bits = N }`
+# knob produces a wire-valid stream the reference decoder accepts, and that the
+# finer grid keeps the geometric error tight.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "bunny.obj"
+output = "oxide.drc"
+cfg = { attributes = { Position = { quantization = { bits = 14 } } } }
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "bunny.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.0001 },
+]
