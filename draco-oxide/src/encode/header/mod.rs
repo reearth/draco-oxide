@@ -1,5 +1,4 @@
 use draco_oxide_core::bit_coder::ByteWriter;
-use draco_oxide_core::codec::header::EncoderMethod;
 
 #[remain::sorted]
 #[derive(thiserror::Error, Debug)]
@@ -40,12 +39,12 @@ where
     let id = cfg.geometry_type.get_id();
     writer.write_u8(id);
 
-    // Write the encoding method
-    // Currently, we only support the edgebreaker method
-    EncoderMethod::Edgebreaker.write_to(writer);
+    // Write the encoding method (edgebreaker or sequential), driven by the
+    // selected connectivity config.
+    cfg.connectivity.encoder_method().write_to(writer);
 
     // Write the connectivity encoder config
-    if cfg.metdata {
+    if cfg.metadata {
         writer.write_u16(METADATA_FLAG_MASK);
     } else {
         writer.write_u16(0);

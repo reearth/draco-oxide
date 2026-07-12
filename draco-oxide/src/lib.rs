@@ -5,6 +5,41 @@
 /// between encoder and decoder (`core::codec`). Reachable as `draco_oxide::core`.
 pub use draco_oxide_core as core;
 
+// Re-export the core data-model types a caller needs to drive the encoder, so
+// depending on `draco-oxide` alone is enough — no separate `draco-oxide-core`
+// import just to name a `Mesh`, build one, or reach `Config::default()`. The full
+// surface remains available under `draco_oxide::core`.
+
+/// The geometry container consumed by [`encode`](encode::encode), and the builder
+/// used to assemble one.
+///
+/// Everything needed to drive the encoder is reachable from `draco_oxide` alone:
+///
+/// ```
+/// use draco_oxide::{
+///     Attribute, AttributeDomain, AttributeType, ComponentDataType, ConfigType, Mesh,
+///     MeshBuilder, NdVector,
+/// };
+/// use draco_oxide::encode::Config;
+///
+/// let _builder = MeshBuilder::new();
+/// let _cfg = <Config as ConfigType>::default();
+/// let _ty = AttributeType::Position;
+/// let _dom = AttributeDomain::Position;
+/// let _ct = ComponentDataType::F32;
+/// fn _drives(_m: Mesh, _a: Attribute, _v: NdVector<3, f32>) {}
+/// ```
+pub use draco_oxide_core::mesh::{builder::MeshBuilder, Mesh};
+
+/// The attribute data model: a vertex attribute and the enums describing it.
+pub use draco_oxide_core::attribute::{
+    Attribute, AttributeDomain, AttributeId, AttributeType, ComponentDataType,
+};
+
+/// Numeric primitive for attribute values, and the trait exposing `default()` on
+/// the encoder configs.
+pub use draco_oxide_core::types::{ConfigType, NdVector};
+
 /// Contains the interface between `Mesh` object and 3D geometry files
 /// such as obj and gltf.
 pub mod io;

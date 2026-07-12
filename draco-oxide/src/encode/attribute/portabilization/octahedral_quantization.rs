@@ -37,12 +37,16 @@ where
             "Octahedral quantization can only be applied to normal attributes."
         );
 
+        // Normals are bits-only (octahedral error is angular, not coordinate);
+        // `resolve` never consults the range here.
+        let quantization_bits = cfg.quantization.resolve(0.0);
+
         // encode the quantization bits.
-        writer.write_u8(cfg.quantization_bits);
+        writer.write_u8(quantization_bits);
 
         Self {
             att,
-            quantization_bits: cfg.quantization_bits,
+            quantization_bits,
             _marker: std::marker::PhantomData,
         }
     }

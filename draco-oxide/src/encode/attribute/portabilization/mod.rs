@@ -112,14 +112,14 @@ impl PortabilizationType {
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     pub type_: PortabilizationType,
-    pub quantization_bits: u8,
+    pub quantization: Quantization,
 }
 
 impl ConfigType for Config {
     fn default() -> Self {
         Config {
             type_: PortabilizationType::QuantizationCoordinateWise,
-            quantization_bits: 11,
+            quantization: Quantization::Bits(11),
         }
     }
 }
@@ -129,17 +129,77 @@ impl Config {
         match ty {
             AttributeType::Normal => Config {
                 type_: PortabilizationType::OctahedralQuantization,
-                quantization_bits: 8,
+                quantization: Quantization::Bits(8),
             },
             AttributeType::TextureCoordinate => Config {
                 type_: PortabilizationType::QuantizationCoordinateWise,
-                quantization_bits: 10,
+                quantization: Quantization::Bits(10),
             },
             AttributeType::Custom => Config {
                 type_: PortabilizationType::ToBits,
-                quantization_bits: 11, // default quantization bits (not used for ToBits)
+                quantization: Quantization::Bits(11), // not used for ToBits
             },
             _ => Self::default(),
         }
     }
+}
+
+/// How the quantization resolution (number of bits) for an attribute is
+/// determined. All variants ultimately resolve to a bit count in `1..=30`
+/// (Draco's cap) via [`Quantization::resolve`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Quantization {
+    /// Explicit number of quantization bits.
+    Bits(u8),
+    /// Derive the bit count from a maximum tolerated quantization error,
+    /// measured against the attribute's *observed* value range (the largest
+    /// per-axis extent scanned from the data).
+    MaxError(f32),
+    /// Derive the bit count from a maximum tolerated error against a
+    /// *caller-supplied* domain, making the resolution independent of any single
+    /// mesh's extent. `range` is the largest per-axis span of the bounding box
+    /// (see [`Quantization::from_bounding_box`]).
+    Bounded { range: f32, max_error: f32 },
+}
+
+impl Default for Quantization {
+    fn default() -> Self {
+        Quantization::Bits(11)
+    }
+}
+
+impl Quantization {
+    /// Builds a [`Quantization::Bounded`] from an explicit axis-aligned bounding
+    /// box; the largest per-axis span sets the resolution.
+    pub fn from_bounding_box(min: &[f32], max: &[f32], max_error: f32) -> Self {
+        let range = min
+            .iter()
+            .zip(max.iter())
+            .map(|(lo, hi)| hi - lo)
+            .fold(0.0_f32, f32::max);
+        Quantization::Bounded { range, max_error }
+    }
+
+    /// Resolves this spec to a concrete number of quantization bits, clamped to
+    /// `1..=30`. `observed_range` is the largest per-axis extent of the data,
+    /// used only by [`Quantization::MaxError`]; other variants ignore it.
+    pub fn resolve(self, observed_range: f32) -> u8 {
+        let bits = match self {
+            Quantization::Bits(n) => n,
+            Quantization::MaxError(max_error) => bits_for_error(observed_range, max_error),
+            Quantization::Bounded { range, max_error } => bits_for_error(range, max_error),
+        };
+        bits.clamp(1, 30)
+    }
+}
+
+/// Smallest bit count whose quantization step over `range` does not exceed
+/// `max_error`. The decoder dequantizes with step `range / (2^bits - 1)`, so we
+/// need `2^bits >= range / max_error + 1`.
+fn bits_for_error(range: f32, max_error: f32) -> u8 {
+    if range <= 0.0 || max_error <= 0.0 {
+        return 1;
+    }
+    let bits = (range / max_error + 1.0).log2().ceil();
+    bits.clamp(1.0, 30.0) as u8
 }

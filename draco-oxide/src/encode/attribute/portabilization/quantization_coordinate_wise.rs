@@ -56,16 +56,19 @@ where
             }
         }
 
+        // Resolve the quantization resolution against the observed data range.
+        let quantization_bits = cfg.quantization.resolve(delta_max);
+
         // write metadata
         min_values.write_to(writer);
         delta_max.write_to(writer);
-        writer.write_u8(cfg.quantization_bits);
+        writer.write_u8(quantization_bits);
 
         Self {
             att,
             range_size: delta_max,
             min_values,
-            quantization_bits: cfg.quantization_bits,
+            quantization_bits,
             _phantom: std::marker::PhantomData,
         }
     }

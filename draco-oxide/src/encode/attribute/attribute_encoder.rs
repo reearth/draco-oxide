@@ -68,7 +68,7 @@ impl GroupConfig {
                 },
                 prediction_transform: prediction_transform::Config {
                     ty: prediction_transform::PredictionTransformType::WrappedDifference,
-                    portabilization: portabilization::Config::default(),
+                    portabilization: portabilization::Config::default_for(att_ty),
                 },
             },
             AttributeType::Normal => Self {
@@ -79,7 +79,7 @@ impl GroupConfig {
                 },
                 prediction_transform: prediction_transform::Config {
                     ty: prediction_transform::PredictionTransformType::OctahedralOrthogonal,
-                    portabilization: portabilization::Config::default(),
+                    portabilization: portabilization::Config::default_for(att_ty),
                 },
             },
             AttributeType::TextureCoordinate => Self {
@@ -91,7 +91,7 @@ impl GroupConfig {
                 },
                 prediction_transform: prediction_transform::Config {
                     ty: prediction_transform::PredictionTransformType::WrappedDifference,
-                    portabilization: portabilization::Config::default(),
+                    portabilization: portabilization::Config::default_for(att_ty),
                 },
             },
             AttributeType::Custom => Self {
@@ -141,7 +141,7 @@ pub enum EncodingMode {
     Full,
     /// Emit an all-zero correction stream and neutral prediction metadata, so the
     /// decoder reconstructs exactly what it predicts. The input attribute's values
-    /// are never read, and only its seams matter. Currently only meaningful for 
+    /// are never read, and only its seams matter. Currently only meaningful for
     /// normals under
     /// [`MeshNormalPrediction`](draco_oxide_core::codec::attribute::prediction_scheme::mesh_normal_prediction),
     /// where it makes normal compression effectively zero-CPU.
@@ -185,10 +185,27 @@ impl Config {
             mode: EncodingMode::ZeroCorrection,
         }
     }
+
+    /// Overrides the prediction scheme of the (single) encoding group.
+    pub fn set_prediction_scheme(&mut self, ty: prediction_scheme::PredictionSchemeType) {
+        self.group_cfgs[0].prediction_scheme.ty = ty;
+    }
+
+    /// Overrides the prediction transform of the (single) encoding group.
+    pub fn set_prediction_transform(&mut self, ty: prediction_transform::PredictionTransformType) {
+        self.group_cfgs[0].prediction_transform.ty = ty;
+    }
+
+    /// Overrides the quantization resolution of the (single) encoding group.
+    pub fn set_quantization(&mut self, quantization: portabilization::Quantization) {
+        self.group_cfgs[0]
+            .prediction_transform
+            .portabilization
+            .quantization = quantization;
+    }
 }
 
 pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, 'ds, W> {
-    #[allow(unused)]
     cfg: Config,
     writer: &'writer mut W,
     parents: &'encoder [&'parents Attribute],
@@ -262,7 +279,7 @@ where
 
         let por_cfg = portabilization::Config::default_for(AttributeType::Normal);
         let mut port_info_buffer: Vec<u8> = Vec::new();
-        port_info_buffer.write_u8(por_cfg.quantization_bits);
+        port_info_buffer.write_u8(por_cfg.quantization.resolve(0.0));
 
         let mut transform_info_buffer: Vec<u8> = Vec::new();
         let transform = PredictionTransform::<N>::new(self.cfg.group_cfgs[0].prediction_transform);
@@ -372,8 +389,10 @@ where
         NdVector<N, i32>: Vector<N, Component = i32>,
         NdVector<N, f32>: Vector<N, Component = f32> + Portable,
     {
-        let por_cfg =
-            portabilization::Config::default_for(self.ads.att_data().get_attribute_type());
+        // Use the (possibly overridden) portabilization config from the encoding
+        // group; `GroupConfig::default_for` seeds it with the per-type default, so
+        // an unconfigured attribute reproduces `default_for(ty)`.
+        let por_cfg = self.cfg.group_cfgs[0].prediction_transform.portabilization;
 
         let mut att = Attribute::new(
             Vec::<Data>::new(),

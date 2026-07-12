@@ -1,6 +1,9 @@
-use anyhow::Result;
-use clap::Parser;
-use draco_oxide::core::types::ConfigType;
+use anyhow::{Context, Result};
+use clap::{Parser, ValueEnum};
+use draco_oxide::encode::{
+    Config, ConnectivityConfig, EdgebreakerConfig, NormalEncoding, Quantization, SequentialConfig,
+};
+use draco_oxide::{AttributeType, ConfigType};
 use std::path::Path;
 
 #[derive(Parser)]
@@ -18,6 +21,39 @@ struct Cli {
     /// Transcode mode for glTF/GLB files (compress with Draco)
     #[arg(long)]
     transcode: bool,
+
+    /// Path to a TOML encoder-config file (see `encode::Config`). Provides the
+    /// full configuration surface; any flags below override values from it.
+    #[arg(long, value_name = "FILE")]
+    config: Option<String>,
+
+    /// Override position quantization bits (1..=30).
+    #[arg(long, value_name = "BITS")]
+    position_bits: Option<u8>,
+
+    /// Override how normals are compressed.
+    #[arg(long, value_enum, value_name = "MODE")]
+    normal: Option<NormalArg>,
+
+    /// Override the connectivity compression method.
+    #[arg(long, value_enum, value_name = "METHOD")]
+    connectivity: Option<ConnectivityArg>,
+
+    /// Enable metadata encoding.
+    #[arg(long)]
+    metadata: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum NormalArg {
+    Quantized,
+    PredictedOnly,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ConnectivityArg {
+    Edgebreaker,
+    Sequential,
 }
 
 fn main() -> Result<()> {
@@ -26,11 +62,68 @@ fn main() -> Result<()> {
     if cli.transcode {
         transcode_gltf(&cli.input, &cli.output)
     } else {
-        convert_obj_to_drc(&cli.input, &cli.output)
+        convert_obj_to_drc(&cli)
     }
 }
 
-fn convert_obj_to_drc(input_path: &str, output_path: &str) -> Result<()> {
+/// Builds the encoder config: start from `--config <file>` (or the default),
+/// then layer any explicitly-provided flags on top (flags win over the file).
+fn build_config(cli: &Cli) -> Result<Config> {
+    let mut config = match &cli.config {
+        Some(path) => {
+            let text = std::fs::read_to_string(path)
+                .with_context(|| format!("Failed to read config file: {path}"))?;
+            toml::from_str::<Config>(&text)
+                .with_context(|| format!("Failed to parse TOML config: {path}"))?
+        }
+        None => <Config as ConfigType>::default(),
+    };
+
+    if let Some(bits) = cli.position_bits {
+        // Read-modify-write so we don't clobber other Position knobs from the file.
+        let mut ac = config.attribute_config(AttributeType::Position);
+        ac.quantization = Some(Quantization::Bits(bits));
+        config = config.with_attribute(AttributeType::Position, ac);
+    }
+
+    if let Some(mode) = cli.normal {
+        let mut ac = config.attribute_config(AttributeType::Normal);
+        ac.normal_encoding = Some(match mode {
+            NormalArg::Quantized => NormalEncoding::Quantized,
+            NormalArg::PredictedOnly => NormalEncoding::PredictedOnly,
+        });
+        config = config.with_attribute(AttributeType::Normal, ac);
+    }
+
+    if let Some(method) = cli.connectivity {
+        let already_edgebreaker =
+            matches!(config.connectivity(), ConnectivityConfig::Edgebreaker(_));
+        config = match method {
+            // Keep any file-provided edgebreaker sub-config if already selected.
+            ConnectivityArg::Edgebreaker if already_edgebreaker => config,
+            ConnectivityArg::Edgebreaker => {
+                config.with_edgebreaker(<EdgebreakerConfig as ConfigType>::default())
+            }
+            ConnectivityArg::Sequential => {
+                config.with_sequential(<SequentialConfig as ConfigType>::default())
+            }
+        };
+    }
+
+    if cli.metadata {
+        config = config.with_metadata(true);
+    }
+
+    // Surface config problems with a clear message before encoding.
+    config.validate().context("Invalid encoder configuration")?;
+
+    Ok(config)
+}
+
+fn convert_obj_to_drc(cli: &Cli) -> Result<()> {
+    let input_path = &cli.input;
+    let output_path = &cli.output;
+
     // Check input file extension
     let input_ext = Path::new(input_path)
         .extension()
@@ -55,8 +148,8 @@ fn convert_obj_to_drc(input_path: &str, output_path: &str) -> Result<()> {
     let mesh = draco_oxide::io::obj::load_obj(input_path)
         .map_err(|e| anyhow::anyhow!("Failed to load OBJ file: {:?}", e))?;
 
-    // Configure compression settings
-    let config = draco_oxide::encode::Config::default();
+    // Configure compression settings from --config file and/or flags.
+    let config = build_config(cli)?;
 
     // Encode the mesh to a buffer
     let mut buffer = Vec::new();

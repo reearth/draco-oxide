@@ -90,7 +90,7 @@ pub(crate) trait PredictionTransformImpl<const N: usize> {
         NdVector<N, i32>: Vector<N, Component = i32>;
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PredictionTransformType {
     NoTransform,
     Difference,
@@ -133,7 +133,6 @@ impl PredictionTransformType {
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     pub ty: PredictionTransformType,
-    #[allow(unused)]
     pub portabilization: super::portabilization::Config,
 }
 

@@ -18,8 +18,6 @@ use crate::eval;
 pub fn encode_connectivity<'faces, W>(
     adss: &mut [AttributeDS<'faces>],
     writer: &mut W,
-    #[allow(unused)]
-    // This parameter is unused in the current implementation, as we only support default configuration.
     cfg: &super::Config,
 ) -> Result<Vec<CornerIdx>, Err>
 where
@@ -28,7 +26,7 @@ where
     #[cfg(feature = "evaluation")]
     eval::scope_begin("connectivity info", writer);
 
-    let result = encode_connectivity_datatype_unpacked(adss, writer, Config::default());
+    let result = encode_connectivity_datatype_unpacked(adss, writer, cfg.connectivity.clone());
 
     #[cfg(feature = "evaluation")]
     eval::scope_end(writer);
@@ -128,5 +126,17 @@ pub enum Config {
 impl ConfigType for Config {
     fn default() -> Self {
         Self::Edgebreaker(edgebreaker::Config::default())
+    }
+}
+
+impl Config {
+    /// The wire-level connectivity method this config selects, as written into
+    /// the Draco header and used to branch attribute sequencing.
+    pub fn encoder_method(&self) -> draco_oxide_core::codec::header::EncoderMethod {
+        use draco_oxide_core::codec::header::EncoderMethod;
+        match self {
+            Config::Edgebreaker(_) => EncoderMethod::Edgebreaker,
+            Config::Sequential(_) => EncoderMethod::Sequential,
+        }
     }
 }
