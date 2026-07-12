@@ -64,7 +64,7 @@ impl AttributeBuffer {
         unsafe { self.get_unchecked::<Data, N>(idx) }
     }
 
-    /// # Safety:
+    /// # Safety
     /// Two checks are ignored in this function:
     /// (1) 'std::mem::size_of::<Data>()==component.size() * num_components', and
     /// (2) idx < self.len
@@ -158,6 +158,12 @@ impl AttributeBuffer {
         self.len
     }
 
+    #[inline(always)]
+    /// Returns true if the buffer holds no values.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     #[inline]
     /// Returns a slice of all the values in the buffer casted to the static type `Data`.
     /// # Safety
@@ -192,6 +198,12 @@ impl AttributeBuffer {
         std::slice::from_raw_parts_mut(self.as_ptr() as *mut Data, self.len)
     }
 
+    /// Consumes the buffer and reinterprets its allocation as a `Vec<Data>`.
+    /// # Safety
+    /// The buffer's allocation must be compatible with a `Vec<Data>`, i.e. it
+    /// must have been allocated by the global allocator with a capacity (in
+    /// bytes) equal to `self.len * size_of::<Data>()`. The `Data` type and
+    /// component count are validated at runtime by this function.
     #[allow(unused)]
     pub unsafe fn into_vec<Data, const N: usize>(self) -> Vec<Data>
     where
@@ -213,6 +225,13 @@ impl AttributeBuffer {
         self.into_vec_unchecked()
     }
 
+    /// Consumes the buffer and reinterprets its allocation as a `Vec<Data>`
+    /// without validating the element type.
+    /// # Safety
+    /// In addition to the allocation-compatibility requirement of
+    /// [`into_vec`](Self::into_vec), the caller must ensure that `Data` matches
+    /// the buffer's component type and that `N` equals its component count;
+    /// these are only checked under `safety_assert`.
     pub unsafe fn into_vec_unchecked<Data, const N: usize>(self) -> Vec<Data>
     where
         Data: Vector<N>,
@@ -247,8 +266,8 @@ impl AttributeBuffer {
         }
     }
 
-    /// #Safety
-    /// This function assumes that the permutation is welll-defined in the sense that
+    /// # Safety
+    /// This function assumes that the permutation is well-defined in the sense that
     /// (1) it has the same length as the buffer,
     /// (2) its elements are distinct.
     pub unsafe fn permute_unchecked(&mut self, permutation: &[usize]) {
@@ -332,8 +351,7 @@ impl AttributeBuffer {
     /// `keep_indices` must be sorted in ascending order and contain valid indices < self.len.
     pub fn retain_indices(&mut self, keep_indices: &[usize]) {
         let elem_size = self.num_components * self.component_type.size();
-        let mut write_pos = 0;
-        for &idx in keep_indices {
+        for (write_pos, &idx) in keep_indices.iter().enumerate() {
             safety_assert!(
                 idx < self.len,
                 "retain_indices: index {} out of bounds (len {})",
@@ -347,7 +365,6 @@ impl AttributeBuffer {
                     ptr::copy_nonoverlapping(src, dst, elem_size);
                 }
             }
-            write_pos += 1;
         }
         self.len = keep_indices.len();
         self.last = unsafe { self.as_ptr().add(self.len * elem_size) };
@@ -432,7 +449,7 @@ impl std::fmt::Debug for AttributeBuffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let data = match self.component_type {
             ComponentDataType::Invalid => {
-                return format!("Invalid component type").fmt(f);
+                return "Invalid component type".to_string().fmt(f);
             }
             ComponentDataType::U8 => match self.num_components {
                 1 => format!("{:?}", unsafe { self.as_slice::<[u8; 1]>() }),
@@ -653,6 +670,13 @@ impl MaybeInitAttributeBuffer {
     #[allow(unused)]
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    /// Returns true if the buffer holds no values.
+    #[inline(always)]
+    #[allow(unused)]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     /// Returns the component type of the attribute.

@@ -32,7 +32,7 @@ impl<'parents, 'reader, R> AttributeDecoder<'parents, 'reader, R>
         let att_type = AttributeType::from_id(reader.read_u8()? as usize);
         let len = reader.read_u64()? as usize;
         let component_type = ComponentDataType::from_id(reader.read_u8()? as usize)
-            .map_err(|_| Err::ComponentUnwrapErr)?;
+            .ok_or(Err::ComponentUnwrapErr)?;
         let num_components = reader.read_u8()? as usize;
         let num_parents = reader.read_u8()? as usize;
         let mut parents = Vec::with_capacity(num_parents);

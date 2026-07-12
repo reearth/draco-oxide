@@ -192,7 +192,7 @@ mod tests {
             [11, 12, 15],
         ];
 
-        let num_vertices = torus1.iter().flat_map(|face| face).max().unwrap() + 1;
+        let num_vertices = torus1.iter().flatten().max().unwrap() + 1;
         // create permutation for the vertices
         let p = (0..num_vertices)
             .map(|i| (i * (num_vertices - 1)) % num_vertices)

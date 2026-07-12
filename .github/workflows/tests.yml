@@ -15,7 +15,7 @@ jobs:
 
   warnings:
     runs-on: ubuntu-latest
-    # Deny compiler warnings (rustc only — clippy is intentionally not run yet).
+    # Deny compiler warnings (rustc only; clippy lints run in the `clippy` job).
     env:
       RUSTFLAGS: "-D warnings"
     steps:
@@ -33,6 +33,22 @@ jobs:
 
       - name: check (evaluation feature)
         run: cargo check -p draco-oxide --features evaluation --all-targets
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      # Same scope and two-pass structure as the `warnings` job. `-D warnings`
+      # is passed to clippy-driver so any clippy lint fails the build.
+      - name: clippy (default features)
+        run: cargo clippy --workspace --exclude cli --exclude analyzer --all-targets -- -D warnings
+
+      - name: clippy (evaluation feature)
+        run: cargo clippy -p draco-oxide --features evaluation --all-targets -- -D warnings
 
   tests:
     runs-on: ubuntu-latest

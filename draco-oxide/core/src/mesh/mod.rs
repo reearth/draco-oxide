@@ -18,6 +18,12 @@ pub struct Mesh {
     name: String,
 }
 
+impl Default for Mesh {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Mesh {
     pub fn get_attributes(&self) -> &[Attribute] {
         &self.attributes
@@ -41,7 +47,7 @@ impl Mesh {
             .collect::<Vec<_>>();
 
         unsafe {
-            let out = out.iter().map(|i| *i).collect::<Vec<_>>();
+            let out = out.to_vec();
             std::mem::transmute::<Vec<*mut Attribute>, Vec<&mut Attribute>>(out)
         }
     }

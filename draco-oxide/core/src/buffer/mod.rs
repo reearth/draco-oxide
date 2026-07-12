@@ -32,6 +32,12 @@ pub struct Buffer<Order: OrderConfig = MsbFirst> {
     _phantom: std::marker::PhantomData<Order>,
 }
 
+impl<Order: OrderConfig> Default for Buffer<Order> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[allow(dead_code)]
 impl<Order: OrderConfig> Buffer<Order> {
     /// constructs an empty buffer
@@ -57,6 +63,11 @@ impl<Order: OrderConfig> Buffer<Order> {
     /// returns the number of bits stored in the buffer.
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    /// returns true if the buffer stores no bits.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     /// returns the data as a slice of u8.
@@ -107,7 +118,7 @@ impl RawBuffer {
     unsafe fn expand(&mut self, new_cap: usize) {
         safety_assert!(new_cap < usize::MAX, "'new_cap' is too large");
         let new_data = alloc::realloc(
-            self.data.as_ptr() as *mut u8,
+            self.data.as_ptr(),
             alloc::Layout::array::<u8>(self.cap).unwrap(),
             new_cap,
         );

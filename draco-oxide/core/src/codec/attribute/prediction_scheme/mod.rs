@@ -360,6 +360,12 @@ impl ConfigType for Config {
 
 pub struct NoPrediction {}
 
+impl Default for NoPrediction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NoPrediction {
     pub fn new() -> Self {
         Self {}

@@ -29,13 +29,7 @@ pub fn merge_indices(
     let mut iters = set_of_subseqs
         .into_iter()
         .map(|v| v.into_iter())
-        .filter_map(|mut it| {
-            if let Some(r) = it.next() {
-                Some((r, it))
-            } else {
-                None
-            }
-        })
+        .filter_map(|mut it| it.next().map(|r| (r, it)))
         .collect::<Vec<_>>();
 
     if iters.len() < set_of_subseqs_len {
@@ -111,30 +105,6 @@ fn connect_subsequence(seq: &mut Vec<std::ops::Range<usize>>) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_splice_disjoint_indices() {
-        let set_of_subseqs = vec![vec![0..2], vec![4..6], vec![2..4, 7..9]];
-        let result = splice_disjoint_indices(set_of_subseqs);
-        assert_eq!(result, vec![0..6, 7..9]);
-    }
-
-    #[test]
-    fn test_merge_indices() {
-        let set_of_subseqs = vec![
-            vec![0..1, 1..2, 3..5, 8..10],
-            vec![1..3, 4..6, 8..9],
-            vec![1..4, 7..9],
-            vec![0..79],
-        ];
-        let result = merge_indices(set_of_subseqs);
-        assert_eq!(result, vec![1..2, 8..9]);
-    }
-}
-
 #[allow(dead_code)] // Remove this when attribute encoder supports multiple groups.
 pub fn splice_disjoint_indeces(
     set_of_indeces: Vec<Vec<std::ops::Range<usize>>>,
@@ -163,4 +133,28 @@ where
         *vec.get_mut(i) = to_positive_i32(*vec.get(i));
     }
     vec
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_splice_disjoint_indices() {
+        let set_of_subseqs = vec![vec![0..2], vec![4..6], vec![2..4, 7..9]];
+        let result = splice_disjoint_indices(set_of_subseqs);
+        assert_eq!(result, vec![0..6, 7..9]);
+    }
+
+    #[test]
+    fn test_merge_indices() {
+        let set_of_subseqs = vec![
+            vec![0..1, 1..2, 3..5, 8..10],
+            vec![1..3, 4..6, 8..9],
+            vec![1..4, 7..9],
+            vec![0..79],
+        ];
+        let result = merge_indices(set_of_subseqs);
+        assert_eq!(result, vec![1..2, 8..9]);
+    }
 }

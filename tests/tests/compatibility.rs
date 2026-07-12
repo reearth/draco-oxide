@@ -16,7 +16,7 @@ fn en() {
 
     // `tests/outputs/` is gitignored, so it may not exist on a fresh checkout.
     std::fs::create_dir_all("outputs").unwrap();
-    let mut file = std::fs::File::create(&format!("outputs/{}.drc", FILE_NAME)).unwrap();
+    let mut file = std::fs::File::create(format!("outputs/{}.drc", FILE_NAME)).unwrap();
 
     file.write_all(&writer).unwrap();
 }

@@ -95,7 +95,7 @@ where
 }
 
 /// Data is transformed back from the octahedron space.
-/// # Safety:
+/// # Safety
 /// 'Data' must be three dimensional.
 #[allow(unused)]
 pub unsafe fn octahedral_inverse_transform<Data, const N: usize>(v: NdVector<2, f32>) -> Data

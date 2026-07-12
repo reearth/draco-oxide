@@ -318,7 +318,7 @@ mod tests {
     fn test_clear() {
         // Test that clear() works
         scope_begin::<Vec<u8>>("test", &mut vec![]);
-        assert!(!take_events().is_empty() || true); // Events were added
+        assert!(!take_events().is_empty()); // Events were added
         clear();
         assert!(take_events().is_empty());
     }

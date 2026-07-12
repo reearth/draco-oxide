@@ -103,6 +103,9 @@ mod sequence {
     use draco_oxide_core::codec::attribute::sequence::Traverser;
     use draco_oxide_core::types::ConfigType;
 
+    /// One captured traversal step: (attr_idx, len, fnv1a_digest).
+    type AttrDigest = (usize, usize, u64);
+
     #[test]
     fn test_traverser() {
         let mesh = load_obj("../tests/data/tetrahedron.obj").unwrap();
@@ -183,7 +186,7 @@ mod sequence {
     /// case the handle-detection scan-and-remove blocks exist to handle.
     #[test]
     fn oracle_compute_sequence() {
-        let cases: &[(&str, &[(usize, usize, u64)])] = &[
+        let cases: &[(&str, &[AttrDigest])] = &[
             ("../tests/data/tetrahedron.obj", EXPECT_TETRAHEDRON),
             ("../tests/data/sphere.obj", EXPECT_SPHERE),
             (
@@ -210,21 +213,21 @@ mod sequence {
     }
 
     // Captured from the pre-optimization implementation. Format: (attr_idx, len, fnv1a_digest).
-    const EXPECT_TETRAHEDRON: &[(usize, usize, u64)] = &[
+    const EXPECT_TETRAHEDRON: &[AttrDigest] = &[
         (0, 4, 18054049684469353541),
         (1, 4, 18054049684469353541),
         (2, 6, 3159456026337658052),
     ];
-    const EXPECT_SPHERE: &[(usize, usize, u64)] = &[
+    const EXPECT_SPHERE: &[AttrDigest] = &[
         (0, 114, 17737425019064467876),
         (1, 114, 17737425019064467876),
     ];
-    const EXPECT_PUNCTURED_SPHERE: &[(usize, usize, u64)] = &[
+    const EXPECT_PUNCTURED_SPHERE: &[AttrDigest] = &[
         (0, 114, 17132826066695074116),
         (1, 114, 17132826066695074116),
     ];
-    const EXPECT_TORUS: &[(usize, usize, u64)] = &[(0, 2051, 930682351741064974)];
-    const EXPECT_BUNNY: &[(usize, usize, u64)] = &[
+    const EXPECT_TORUS: &[AttrDigest] = &[(0, 2051, 930682351741064974)];
+    const EXPECT_BUNNY: &[AttrDigest] = &[
         (0, 34834, 3080192193140594432),
         (1, 34834, 3080192193140594432),
     ];

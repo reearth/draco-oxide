@@ -40,7 +40,7 @@ fn find_draco_decoder() -> Option<PathBuf> {
 }
 
 fn encode_predicted_only(name: &str) -> Vec<u8> {
-    let mesh = load_obj(&format!("data/{name}.obj")).expect("load_obj");
+    let mesh = load_obj(format!("data/{name}.obj")).expect("load_obj");
     let mut buf = Vec::new();
     encode(
         mesh,
@@ -52,7 +52,7 @@ fn encode_predicted_only(name: &str) -> Vec<u8> {
 }
 
 fn encode_default(name: &str) -> Vec<u8> {
-    let mesh = load_obj(&format!("data/{name}.obj")).expect("load_obj");
+    let mesh = load_obj(format!("data/{name}.obj")).expect("load_obj");
     let mut buf = Vec::new();
     encode(mesh, &mut buf, encode::Config::default()).expect("encode (default)");
     buf

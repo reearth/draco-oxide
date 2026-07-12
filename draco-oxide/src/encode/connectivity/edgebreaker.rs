@@ -250,7 +250,7 @@ where
                         self.traversal.record_symbol(
                             Symbol::C,
                             &self.visited_faces,
-                            &self.pos_corner_table,
+                            self.pos_corner_table,
                         );
                         c = self.posds.corner_table().get_right_corner(c).unwrap(); // unwrap is safe here; we checked that the right edge is not on a boundary, and this implies that the right face exists.
                         continue;
@@ -280,7 +280,7 @@ where
                         self.traversal.record_symbol(
                             Symbol::E,
                             &self.visited_faces,
-                            &self.pos_corner_table,
+                            self.pos_corner_table,
                         );
                         self.corner_traversal_stack.pop();
                         // End of a branch of the traversal.
@@ -290,7 +290,7 @@ where
                         self.traversal.record_symbol(
                             Symbol::R,
                             &self.visited_faces,
-                            &self.pos_corner_table,
+                            self.pos_corner_table,
                         );
                         c = maybe_left_c.unwrap(); // unwrap is safe here; we checked that the left face is not visited, which implies that the left face exist.
                     }
@@ -306,14 +306,14 @@ where
                     self.traversal.record_symbol(
                         Symbol::L,
                         &self.visited_faces,
-                        &self.pos_corner_table,
+                        self.pos_corner_table,
                     );
                     c = maybe_right_c.unwrap(); // unwrap is safe here; we checked that the right face is not visited, which implies that the right face exist.
                 } else {
                     self.traversal.record_symbol(
                         Symbol::S,
                         &self.visited_faces,
-                        &self.pos_corner_table,
+                        self.pos_corner_table,
                     );
                     self.num_split_symbols += 1;
                     if let Some(hole_idx) = self.vertex_hole_id[v] {
@@ -521,7 +521,7 @@ where
         self.encode_topology_splits(writer)?;
         // encode the edgebreaker symbols.
         self.traversal
-            .encode(writer, &self.adss, &self.pos_corner_table, &self.gds)?;
+            .encode(writer, self.adss, self.pos_corner_table, self.gds)?;
 
         self.init_face_connectivity_corners.reverse();
         self.init_face_connectivity_corners

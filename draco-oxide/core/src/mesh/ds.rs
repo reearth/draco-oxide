@@ -77,7 +77,7 @@ impl<'a> AttributeDS<'a> {
     }
 
     pub fn global_ds(&self) -> &DS {
-        &self.global_ds
+        self.global_ds
     }
 
     pub fn vertex_idx(&self, corner: CornerIdx) -> VertexIdx {
@@ -184,7 +184,7 @@ impl CornerTable {
     }
 }
 
-impl<'mesh> GenericCornerTable for CornerTable {
+impl GenericCornerTable for CornerTable {
     #[inline]
     fn opposite(&self, corner: CornerIdx) -> CornerIdx {
         self.0[corner]

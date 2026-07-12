@@ -241,6 +241,12 @@ impl Attribute {
         }
     }
 
+    /// Returns true if the attribute has no values.
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     #[inline(always)]
     pub fn num_unique_values(&self) -> usize {
         self.buffer.len()
@@ -316,7 +322,7 @@ impl Attribute {
     }
 
     /// returns the data values as a slice of values casted to the given type.
-    /// # Safety:
+    /// # Safety
     /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
     #[inline]
     pub unsafe fn unique_vals_as_slice_unchecked<Data>(&self) -> &[Data] {
@@ -325,7 +331,7 @@ impl Attribute {
     }
 
     /// returns the data values as a mutable slice of values casted to the given type.
-    /// # Safety:
+    /// # Safety
     /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
     #[inline]
     pub unsafe fn unique_vals_as_slice_unchecked_mut<Data>(&mut self) -> &mut [Data] {
@@ -701,21 +707,21 @@ impl ComponentDataType {
         writer.write_u8(self.get_id());
     }
 
-    /// returns the data type from the given id.
+    /// returns the data type from the given id, or `None` if the id is unknown.
     #[inline]
-    pub fn from_id(id: usize) -> Result<Self, ()> {
+    pub fn from_id(id: usize) -> Option<Self> {
         match id {
-            1 => Ok(ComponentDataType::I8),
-            2 => Ok(ComponentDataType::U8),
-            3 => Ok(ComponentDataType::I16),
-            4 => Ok(ComponentDataType::U16),
-            5 => Ok(ComponentDataType::I32),
-            6 => Ok(ComponentDataType::U32),
-            7 => Ok(ComponentDataType::I64),
-            8 => Ok(ComponentDataType::U64),
-            9 => Ok(ComponentDataType::F32),
-            10 => Ok(ComponentDataType::F64),
-            _ => Err(()),
+            1 => Some(ComponentDataType::I8),
+            2 => Some(ComponentDataType::U8),
+            3 => Some(ComponentDataType::I16),
+            4 => Some(ComponentDataType::U16),
+            5 => Some(ComponentDataType::I32),
+            6 => Some(ComponentDataType::U32),
+            7 => Some(ComponentDataType::I64),
+            8 => Some(ComponentDataType::U64),
+            9 => Some(ComponentDataType::F32),
+            10 => Some(ComponentDataType::F64),
+            _ => None,
         }
     }
 
@@ -723,7 +729,7 @@ impl ComponentDataType {
     #[inline]
     pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
         let id = reader.read_u8()?;
-        Self::from_id(id as usize).map_err(|_| Err::InvalidDataTypeId(id))
+        Self::from_id(id as usize).ok_or(Err::InvalidDataTypeId(id))
     }
 }
 
@@ -902,7 +908,7 @@ mod tests {
             att.point_to_att_val_map
                 .unwrap()
                 .into_iter()
-                .map(|v| usize::from(v))
+                .map(usize::from)
                 .collect::<Vec<_>>(),
             vec![0, 1, 2, 0, 1, 3],
         )

@@ -400,7 +400,7 @@ where
             AttributeDomain::Position,
             Vec::new(),
         );
-        std::mem::swap(&mut att, &mut self.ads.att_data_mut());
+        std::mem::swap(&mut att, self.ads.att_data_mut());
         let mut port_info_buffer = Vec::new();
         let portabilization: portabilization::Portabilization<Data, N> =
             portabilization::Portabilization::new(att, por_cfg, &mut port_info_buffer);

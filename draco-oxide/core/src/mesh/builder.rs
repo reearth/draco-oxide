@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::usize;
 
 use thiserror::Error;
 
@@ -25,6 +24,12 @@ pub struct MeshBuilder {
     pub attributes: Vec<Attribute>,
     faces: Vec<[usize; 3]>,
     current_id: usize,
+}
+
+impl Default for MeshBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MeshBuilder {
@@ -153,8 +158,8 @@ impl MeshBuilder {
     /// Removes unused vertices from the attributes.
     /// This is done by checking the connectivity (faces) and removing any vertices that are not referenced.
     fn remove_unused_vertices(
-        attributes: &mut Vec<Attribute>,
-        faces: &mut Vec<[PointIdx; 3]>,
+        attributes: &mut [Attribute],
+        faces: &mut [[PointIdx; 3]],
     ) -> Result<(), Err> {
         if faces.is_empty() || attributes.is_empty() {
             return Ok(());
