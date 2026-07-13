@@ -649,11 +649,8 @@ impl GltfTranscoder {
         draco_id += 1;
 
         // Add normal attribute
-        if geometry.normals.is_some() {
-            let normals: Vec<NdVector<3, f32>> = geometry
-                .normals
-                .as_ref()
-                .unwrap()
+        if let Some(normals) = geometry.normals.as_ref() {
+            let normals: Vec<NdVector<3, f32>> = normals
                 .iter()
                 .map(|n| NdVector::from(*n))
                 .collect();
@@ -695,11 +692,8 @@ impl GltfTranscoder {
         }
 
         // Add tangents
-        if geometry.tangents.is_some() {
-            let tangents: Vec<NdVector<4, f32>> = geometry
-                .tangents
-                .as_ref()
-                .unwrap()
+        if let Some(tangents) = geometry.tangents.as_ref() {
+            let tangents: Vec<NdVector<4, f32>> = tangents
                 .iter()
                 .map(|t| NdVector::from(*t))
                 .collect();

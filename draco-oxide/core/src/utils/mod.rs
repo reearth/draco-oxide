@@ -11,7 +11,7 @@ pub fn splice_disjoint_indices(
 ) -> Vec<std::ops::Range<usize>> {
     let mut spliced = set_of_subseqs.into_iter().flatten().collect::<Vec<_>>();
 
-    spliced.sort_by(|a, b| a.start.cmp(&b.start));
+    spliced.sort_by_key(|r| r.start);
 
     connect_subsequence(&mut spliced);
     spliced
@@ -111,7 +111,7 @@ pub fn splice_disjoint_indeces(
 ) -> Vec<std::ops::Range<usize>> {
     let mut spliced = set_of_indeces.into_iter().flatten().collect::<Vec<_>>();
 
-    spliced.sort_by(|a, b| a.start.cmp(&b.start));
+    spliced.sort_by_key(|r| r.start);
 
     // ToDo: connect the adjacent ranges
     spliced

@@ -73,7 +73,7 @@ where
 
         // compute the wrapped difference
         let mut out = Vec::with_capacity(self.origs.len());
-        for (orig, mut pred) in self.origs.into_iter().zip(self.preds.into_iter()) {
+        for (orig, mut pred) in self.origs.into_iter().zip(self.preds) {
             let mut corr = NdVector::zero();
             for i in 0..N {
                 // clamp the prediction values

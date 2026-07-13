@@ -807,11 +807,11 @@ impl<'pos_ds> Traversal for ValenceTraversal<'pos_ds> {
             }
         }
 
-        if self.prev_symbol.is_some() {
+        if let Some(prev_symbol) = self.prev_symbol {
             let clamped_valence = active_valence.clamp(MIN_VALENCE, MAX_VALENCE);
 
             let context = clamped_valence - MIN_VALENCE;
-            self.context_symbols[context].push(self.prev_symbol.unwrap());
+            self.context_symbols[context].push(prev_symbol);
         }
 
         self.prev_symbol = Some(symbol);
