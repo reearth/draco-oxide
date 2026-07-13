@@ -650,10 +650,8 @@ impl GltfTranscoder {
 
         // Add normal attribute
         if let Some(normals) = geometry.normals.as_ref() {
-            let normals: Vec<NdVector<3, f32>> = normals
-                .iter()
-                .map(|n| NdVector::from(*n))
-                .collect();
+            let normals: Vec<NdVector<3, f32>> =
+                normals.iter().map(|n| NdVector::from(*n)).collect();
             builder.add_attribute(
                 normals,
                 AttributeType::Normal,
@@ -693,10 +691,8 @@ impl GltfTranscoder {
 
         // Add tangents
         if let Some(tangents) = geometry.tangents.as_ref() {
-            let tangents: Vec<NdVector<4, f32>> = tangents
-                .iter()
-                .map(|t| NdVector::from(*t))
-                .collect();
+            let tangents: Vec<NdVector<4, f32>> =
+                tangents.iter().map(|t| NdVector::from(*t)).collect();
             builder.add_attribute(
                 tangents,
                 AttributeType::Tangent,
