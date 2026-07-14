@@ -13,10 +13,7 @@ readme = "../README.md"
 
 [dependencies]
 draco-oxide-core.workspace = true
-# draco-oxide-decoder is not published to crates.io yet, so it cannot be a
-# dependency of the published `draco-oxide` crate. Re-enable the optional dep
-# (and the `decoder` feature below) once the decoder crate is published.
-# draco-oxide-decoder = { workspace = true, optional = true }
+draco-oxide-decoder = { workspace = true, optional = true }
 enum_dispatch = "0.3.13"
 remain = "0.2.15"
 serde = { version = "1.0", features = ["derive"] }
@@ -27,16 +24,19 @@ gltf = { version = "1.4", features = ["extensions", "guess_mime_type", "image", 
 image = { version = "0.25", features = ["webp"] }
 
 [features]
-default = ["safety_assertions"]
-# decoder = ["dep:draco-oxide-decoder"]  # re-enable once the decoder is published
+default = ["decoder", "safety_assertions"]
+# Re-exports the decoder crate as `draco_oxide::decode`. Disable with
+# `--no-default-features` for an encoder-only build.
+decoder = ["dep:draco-oxide-decoder"]
 evaluation = []
 # Forwards into core so debug output is enabled across every crate, not just here.
-# (Re-add "draco-oxide-decoder?/debug_format" once the decoder dep returns.)
-debug_format = ["draco-oxide-core/debug_format"]
+debug_format = ["draco-oxide-core/debug_format", "draco-oxide-decoder?/debug_format"]
 # Gates the safety-assertion checks. On by default and combined with
 # `debug_assertions`, so the checks run in debug builds only and never in release;
 # a failing assertion is always a bug, never a runtime check. Disable with
 # `--no-default-features` to drop them from debug builds too. Forwarded into core
-# so the checks in core fire too. (Re-add "draco-oxide-decoder?/safety_assertions"
-# once the decoder dep returns.)
-safety_assertions = ["draco-oxide-core/safety_assertions"]
+# and the decoder so their checks fire too.
+safety_assertions = [
+    "draco-oxide-core/safety_assertions",
+    "draco-oxide-decoder?/safety_assertions",
+]

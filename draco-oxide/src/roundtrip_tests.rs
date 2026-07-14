@@ -233,106 +233,47 @@ mod sequence {
     ];
 }
 
-// These round-trip tests need `draco-oxide-decoder`, which is not published to
-// crates.io yet and so is not a dependency of `draco-oxide`. Restore this module
-// (and the `decoder` feature gate) once the decoder crate is published.
-/*
+// Full symbol-coding round trip: the encoder's `encode_symbols` writer against the
+// decoder's `decode_symbols` reader. Only DirectCoded is covered; LengthCoded
+// decode lands with Google interop (milestone B).
 #[cfg(feature = "decoder")]
 mod symbol_coding {
     use crate::encode::entropy::symbol_coding;
     use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
-    use draco_oxide_decoder::decode::entropy::symbol_coding::{decode_symbols, Err};
+    use draco_oxide_decoder::entropy::decode_symbols;
+    use draco_oxide_decoder::Err;
 
-    #[test]
-    fn test_encode_decode_symbols() -> Result<(), Err> {
-        let len = 100;
-        let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
+    fn round_trip(num_values: usize, num_components: usize) -> Result<(), Err> {
+        let symbols = (0..num_values * num_components)
+            .map(|x| ((x * x * x) % 23) as u64)
+            .collect::<Vec<_>>();
         let mut buffer = Vec::new();
         symbol_coding::encode_symbols(
             symbols.clone(),
-            1,
-            SymbolEncodingMethod::LengthCoded,
-            &mut buffer,
-        )
-        .unwrap();
-        let mut reader = buffer.into_iter();
-        let decoded_symbols = decode_symbols(len as usize, 1, &mut reader)?;
-        assert_eq!(
-            reader.next(),
-            None,
-            "Reader should be empty after decoding all symbols"
-        );
-        assert_eq!(decoded_symbols, symbols);
-        Ok(())
-    }
-
-    #[test]
-    fn test_encode_decode_symbols_multi_components() -> Result<(), Err> {
-        let len = 300;
-        let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
-        let mut buffer = Vec::new();
-        symbol_coding::encode_symbols(
-            symbols.clone(),
-            3,
-            SymbolEncodingMethod::LengthCoded,
-            &mut buffer,
-        )
-        .unwrap();
-        let mut reader = buffer.into_iter();
-        let decoded_symbols = decode_symbols(len as usize, 3, &mut reader)?;
-        assert_eq!(
-            reader.next(),
-            None,
-            "Reader should be empty after decoding all symbols"
-        );
-        assert_eq!(decoded_symbols, symbols);
-        Ok(())
-    }
-
-    #[test]
-    fn test_encode_decode_symbols_direct_coded() -> Result<(), Err> {
-        let len = 100;
-        let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
-        let mut buffer = Vec::new();
-        symbol_coding::encode_symbols(
-            symbols.clone(),
-            1,
+            num_components,
             SymbolEncodingMethod::DirectCoded,
             &mut buffer,
         )
         .unwrap();
+
         let mut reader = buffer.into_iter();
-        let decoded_symbols = decode_symbols(len as usize, 1, &mut reader)?;
+        let decoded = decode_symbols(&mut reader, num_values, num_components)?;
         assert_eq!(
             reader.next(),
             None,
-            "Reader should be empty after decoding all symbols"
+            "reader should be empty after decoding all symbols"
         );
-        assert_eq!(decoded_symbols, symbols);
+        assert_eq!(decoded, symbols);
         Ok(())
     }
 
     #[test]
-    fn test_encode_decode_symbols_direct_coded_multi_components() -> Result<(), Err> {
-        let len = 300;
-        let symbols = (0..len).map(|x| (x * x * x) % 23).collect::<Vec<_>>();
-        let mut buffer = Vec::new();
-        symbol_coding::encode_symbols(
-            symbols.clone(),
-            3,
-            SymbolEncodingMethod::DirectCoded,
-            &mut buffer,
-        )
-        .unwrap();
-        let mut reader = buffer.into_iter();
-        let decoded_symbols = decode_symbols(len as usize, 3, &mut reader)?;
-        assert_eq!(
-            reader.next(),
-            None,
-            "Reader should be empty after decoding all symbols"
-        );
-        assert_eq!(decoded_symbols, symbols);
-        Ok(())
+    fn direct_coded_single_component() -> Result<(), Err> {
+        round_trip(100, 1)
+    }
+
+    #[test]
+    fn direct_coded_multi_component() -> Result<(), Err> {
+        round_trip(100, 3)
     }
 }
-*/
