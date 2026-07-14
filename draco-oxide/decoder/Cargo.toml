@@ -16,7 +16,15 @@ remain = "0.2.15"
 enum_dispatch = "0.3.13"
 
 [features]
-default = ["safety_assertions"]
+default = ["dequantize", "safety_assertions"]
+# Phase-3 reconstruction: dequantize integer attributes to their original format
+# and octahedral values to unit normals, exposing the full `decode()` entry point.
+# Disable with `--no-default-features` for the portable/GPU tier, where only
+# `decode_portable()` (integer attributes + dequantization params) is compiled.
+dequantize = []
+# SIMD attribute kernels. Currently wasm32 simd128 when available, scalar fallback
+# elsewhere. Additive: never changes decode semantics, only performance.
+simd = []
 # Enables debug output from the core macros used in `decode/`. Forwarded to
 # core because the `#[cfg(feature = "debug_format")]` in those macros resolves
 # in this crate, not in core.
