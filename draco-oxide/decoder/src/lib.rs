@@ -16,7 +16,7 @@ use draco_oxide_core::mesh::Mesh;
 
 mod attribute;
 mod connectivity;
-mod entropy;
+pub mod entropy;
 mod header;
 mod metadata;
 #[cfg(feature = "simd")]
@@ -27,6 +27,14 @@ mod simd;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Err {
+    /// A shared entropy-coding error (frequency table, symbol method, etc.).
+    #[error("entropy error: {0}")]
+    Entropy(#[from] draco_oxide_core::codec::entropy::Err),
+
+    /// A symbol bit-length byte outside the valid 1..=18 range.
+    #[error("invalid symbol bit length: {0}")]
+    InvalidBitLength(u8),
+
     /// A byte reader ran out of data or otherwise failed.
     #[error("reader error: {0}")]
     Reader(#[from] ReaderErr),
