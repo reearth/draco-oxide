@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["draco-oxide", "draco-oxide/core", "draco-oxide/decoder", "cli", "analyzer", "tests"]
+members = ["draco-oxide", "draco-oxide/core", "draco-oxide/decoder", "cli", "analyzer", "tests", "bench"]
 
 # Shared metadata for the version-locked draco-oxide library crates
 # (draco-oxide, draco-oxide-core, draco-oxide-decoder). Bump `version` in one

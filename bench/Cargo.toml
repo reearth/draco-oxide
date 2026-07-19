@@ -1,0 +1,11 @@
+[package]
+name = "bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+draco-oxide = { path = "../draco-oxide" }
+
+[build-dependencies]
+cc = "1"
