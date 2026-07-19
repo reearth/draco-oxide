@@ -210,8 +210,7 @@ where
         // 'diagonal' is the vertex opposite to 'i', and 'a' and 'b' are the other points
         // so that 'a', 'i', 'b', and 'diagonal' form a parallelogram.
         let [a, b, diagonal] = {
-            let opp = self.ads.corner_table().opposite(c);
-            if opp.is_some() {
+            if let Some(opp) = self.ads.corner_table().opposite(c) {
                 let opp_v = self.ads.vertex_idx(opp);
                 let next_v = self.ads.vertex_idx(c.next());
                 let prev_v = self.ads.vertex_idx(c.previous());

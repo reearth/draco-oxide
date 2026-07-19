@@ -114,14 +114,10 @@ impl<'a> AttributeDS<'a> {
         let start = self.left_most_corner(vertex);
         let mut c = start;
         let mut count = 2;
-        loop {
-            let next_c = self.corner_table.swing_right(c);
-            if next_c.is_none() {
-                // Reached the open (right) boundary of the fan.
-                break;
-            }
+        // Swing right until the open (right) boundary of the fan, or all the
+        // way around a closed (interior) fan.
+        while let Some(next_c) = self.corner_table.swing_right(c) {
             if next_c == start {
-                // Swung all the way around a closed (interior) fan.
                 count -= 1;
                 break;
             }
@@ -141,53 +137,54 @@ impl<'a> AttributeDS<'a> {
 }
 
 pub trait GenericCornerTable {
-    fn opposite(&self, corner: CornerIdx) -> CornerIdx;
+    fn opposite(&self, corner: CornerIdx) -> Option<CornerIdx>;
 
-    fn swing_right(&self, corner: CornerIdx) -> CornerIdx {
-        self.opposite(corner.previous()).previous()
+    fn swing_right(&self, corner: CornerIdx) -> Option<CornerIdx> {
+        self.opposite(corner.previous()).map(CornerIdx::previous)
     }
 
-    fn swing_left(&self, corner: CornerIdx) -> CornerIdx {
-        self.opposite(corner.next()).next()
+    fn swing_left(&self, corner: CornerIdx) -> Option<CornerIdx> {
+        self.opposite(corner.next()).map(CornerIdx::next)
     }
 
     fn get_left_corner(&self, corner: CornerIdx) -> Option<CornerIdx> {
-        let c = self.opposite(corner.previous());
-        if c.is_none() {
-            None
-        } else {
-            Some(c)
-        }
+        self.opposite(corner.previous())
     }
 
     fn get_right_corner(&self, corner: CornerIdx) -> Option<CornerIdx> {
-        let c = self.opposite(corner.next());
-        if c.is_none() {
-            None
-        } else {
-            Some(c)
-        }
+        self.opposite(corner.next())
     }
 }
 
+/// Per-corner opposite corners, stored compactly: a boundary edge is kept as an
+/// internal sentinel and surfaces as `None` through [`GenericCornerTable`].
 #[derive(Debug, Clone)]
 pub struct CornerTable(VecCornerIdx<CornerIdx>);
 
 impl CornerTable {
+    const NO_OPPOSITE: usize = usize::MAX;
+
     #[inline]
     pub fn first_corner(face_idx: FaceIdx) -> CornerIdx {
         CornerIdx::from(usize::from(face_idx) * 3)
     }
 
-    pub fn from_raw_data(opposite_corners: VecCornerIdx<CornerIdx>) -> Self {
-        Self(opposite_corners)
+    pub fn from_opposites(opposite_corners: Vec<Option<CornerIdx>>) -> Self {
+        Self(
+            opposite_corners
+                .into_iter()
+                .map(|opp| opp.unwrap_or(CornerIdx::from(Self::NO_OPPOSITE)))
+                .collect::<Vec<_>>()
+                .into(),
+        )
     }
 }
 
 impl GenericCornerTable for CornerTable {
     #[inline]
-    fn opposite(&self, corner: CornerIdx) -> CornerIdx {
-        self.0[corner]
+    fn opposite(&self, corner: CornerIdx) -> Option<CornerIdx> {
+        let opp = self.0[corner];
+        (usize::from(opp) != Self::NO_OPPOSITE).then_some(opp)
     }
 }
 
@@ -198,9 +195,10 @@ pub struct AttributeCornerTable<'pos_ct> {
 }
 
 impl<'pos_ct> GenericCornerTable for AttributeCornerTable<'pos_ct> {
-    fn opposite(&self, c: CornerIdx) -> CornerIdx {
+    #[inline]
+    fn opposite(&self, c: CornerIdx) -> Option<CornerIdx> {
         if self.is_corner_opposite_to_seam_edge(c) {
-            CornerIdx::none()
+            None
         } else {
             self.pos_corner_table.opposite(c)
         }

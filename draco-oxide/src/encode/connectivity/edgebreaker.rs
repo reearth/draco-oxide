@@ -191,10 +191,8 @@ where
 
     fn process_boundary(&mut self, start_corner: CornerIdx, encode_first_vertex: bool) -> usize {
         let mut corner = start_corner.previous();
-        let mut opp = self.pos_corner_table.opposite(corner);
-        while opp.is_some() {
+        while let Some(opp) = self.pos_corner_table.opposite(corner) {
             corner = opp.next();
-            opp = self.pos_corner_table.opposite(corner);
         } // 'corner' now faces the hole
 
         let start_v = self.posds.vertex_idx(start_corner);
@@ -211,10 +209,8 @@ where
             self.visited_vertices[curr_v] = true;
             num_encoded_hole_verts += 1;
             corner = corner.next();
-            let mut opp = self.pos_corner_table.opposite(corner);
-            while opp.is_some() {
+            while let Some(opp) = self.pos_corner_table.opposite(corner) {
                 corner = opp.next();
-                opp = self.pos_corner_table.opposite(corner);
             }
             curr_v = self.posds.vertex_idx(corner.previous());
         }
@@ -408,10 +404,8 @@ where
             }
             if self.vertex_hole_id[self.posds.vertex_idx(corner_index)].is_some() {
                 // The corner is on a boundary.
-                let mut maybe_right_corner = corner_index;
-                while maybe_right_corner.is_some() {
-                    corner_index = maybe_right_corner;
-                    maybe_right_corner = self.posds.corner_table().swing_right(maybe_right_corner);
+                while let Some(right_corner) = self.posds.corner_table().swing_right(corner_index) {
+                    corner_index = right_corner;
                 }
                 let start_corner = corner_index.previous();
                 return (false, start_corner);
@@ -503,7 +497,7 @@ where
 
                 self.init_face_connectivity_corners
                     .push(corner_index.next());
-                let corner_opp = self.pos_corner_table.opposite(corner_index.next());
+                let corner_opp = self.pos_corner_table.opposite(corner_index.next()).unwrap(); // the face is interior, so every edge has an opposite corner
                 self.edgebreaker_from(corner_opp)?;
             } else {
                 // if the face is on the boundary, then we start from the boundary.
@@ -654,8 +648,7 @@ impl Traversal for DefaultTraversal {
             let f_idx = c.face_idx();
             visited_faces[usize::from(f_idx)] = true;
             for corner in &corners {
-                let opp_corner = pos_corner_table.opposite(*corner);
-                if opp_corner.is_some() {
+                if let Some(opp_corner) = pos_corner_table.opposite(*corner) {
                     let opp_face = opp_corner.face_idx();
                     if visited_faces[usize::from(opp_face)] {
                         // if the opposite face is already visited, then we do not need to record the attribute seam.
@@ -763,8 +756,7 @@ impl<'pos_ds> Traversal for ValenceTraversal<'pos_ds> {
 
                 let mut num_left_faces = 0;
                 let mut maybe_act_c = corner_table.opposite(prev);
-                while maybe_act_c.is_some() {
-                    let act_c = maybe_act_c;
+                while let Some(act_c) = maybe_act_c {
                     if visited_faces[act_c.face_idx()] {
                         break;
                     }
@@ -777,8 +769,7 @@ impl<'pos_ds> Traversal for ValenceTraversal<'pos_ds> {
                 let mut num_right_faces = 0;
 
                 maybe_act_c = corner_table.opposite(next);
-                while maybe_act_c.is_some() {
-                    let act_c = maybe_act_c;
+                while let Some(act_c) = maybe_act_c {
                     if visited_faces[act_c.face_idx()] {
                         break;
                     }

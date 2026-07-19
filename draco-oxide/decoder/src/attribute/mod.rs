@@ -19,7 +19,7 @@ use draco_oxide_core::bit_coder::ByteReader;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::attribute::Portable;
-use draco_oxide_core::mesh::ds::{AttributeCornerTable, AttributeDS, GenericCornerTable, DS};
+use draco_oxide_core::mesh::ds::{AttributeCornerTable, AttributeDS, DS};
 use draco_oxide_core::types::{
     AttributeValueIdx, CornerIdx, NdVector, PointIdx, VecCornerIdx, VecPointIdx, Vector, VertexIdx,
 };
@@ -115,15 +115,13 @@ pub(crate) fn decode_attributes<R: ByteReader>(
     let num_corners = conn.num_faces * 3;
 
     // Per-attribute seam edges, in attribute order. The position attribute
-    // carries no encoded seams; its only seams are the boundary edges.
-    let boundary_seams: Vec<bool> = (0..num_corners)
-        .map(|c| conn.corner_table.opposite(CornerIdx::from(c)).is_none())
-        .collect();
+    // carries no encoded seams; boundary edges (its only seams) are already
+    // seams for every attribute through the corner table itself.
     let mut seams: Vec<Vec<bool>> = Vec::with_capacity(num_atts);
     let mut seam_idx = 0;
     for desc in &descriptors {
         if desc.att_type == AttributeType::Position {
-            seams.push(boundary_seams.clone());
+            seams.push(vec![false; num_corners]);
         } else {
             let s = conn
                 .attribute_seams
@@ -141,9 +139,20 @@ pub(crate) fn decode_attributes<R: ByteReader>(
         ));
     }
 
-    // The decoder-side point space and the faces over it.
-    let corner_to_point =
-        points::assign_points(&conn.corner_table, num_corners, &conn.attribute_seams);
+    // One fan walk yields every attribute's vertex map plus, from the union of
+    // all seams, the decoder-side point space (the finest common refinement).
+    let mut union_seams = vec![false; num_corners];
+    for seam in &seams {
+        for (u, &s) in union_seams.iter_mut().zip(seam.iter()) {
+            *u |= s;
+        }
+    }
+    let mut seam_sets: Vec<&[bool]> = seams.iter().map(|s| s.as_slice()).collect();
+    seam_sets.push(&union_seams);
+    let mut fans = points::fan_vertices(&conn.corner_table, &seam_sets, num_corners);
+    let union_fan = fans.pop().expect("fan_vertices returns one output per set");
+
+    let corner_to_point = points::assign_points(&union_fan);
     let faces: Vec<[PointIdx; 3]> = (0..conn.num_faces)
         .map(|f| {
             [
@@ -158,7 +167,7 @@ pub(crate) fn decode_attributes<R: ByteReader>(
 
     let mut attributes: Vec<Attribute> = Vec::with_capacity(num_atts);
     let mut transforms: Vec<AttributeTransform> = Vec::with_capacity(num_atts);
-    for (desc, seam) in descriptors.iter().zip(seams) {
+    for ((desc, seam), fan) in descriptors.iter().zip(seams).zip(fans) {
         let act = AttributeCornerTable::new(&conn.corner_table, VecCornerIdx::from(seam));
         let placeholder = Attribute::new_empty(
             AttributeId::new(desc.uid as usize),
@@ -167,7 +176,7 @@ pub(crate) fn decode_attributes<R: ByteReader>(
             ComponentDataType::I32,
             desc.portable_num_components(),
         );
-        let ads = sequence::build_ads(&ds, &conn.corner_table, act, placeholder);
+        let ads = sequence::build_ads(&ds, act, fan, placeholder);
         let seq = Traverser::new(&ads, seeds.clone()).compute_seqeunce();
 
         let parent = attributes

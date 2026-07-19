@@ -955,9 +955,8 @@ mod attribute_seams {
             let start_c = CornerIdx::from(start);
             // Walk to the left-most corner of this fan.
             let mut c = start_c;
-            loop {
-                let l = act.swing_left(c);
-                if l.is_none() || l == start_c {
+            while let Some(l) = act.swing_left(c) {
+                if l == start_c {
                     break;
                 }
                 c = l;
@@ -966,11 +965,10 @@ mod attribute_seams {
             let fan_start = c;
             loop {
                 visited[usize::from(c)] = true;
-                let r = act.swing_right(c);
-                if r.is_none() || r == fan_start {
-                    break;
+                match act.swing_right(c) {
+                    Some(r) if r != fan_start => c = r,
+                    _ => break,
                 }
-                c = r;
             }
         }
         count

@@ -15,8 +15,8 @@ const INVALID_VERTEX: usize = usize::MAX;
 /// The reconstructed connectivity: opposite/vertex corner maps and the derived data
 /// the attribute stages need.
 pub struct Reconstruction {
-    /// Per-corner opposite corner (`CornerIdx::none()` on boundaries).
-    pub opposite: Vec<CornerIdx>,
+    /// Per-corner opposite corner (`None` on boundaries).
+    pub opposite: Vec<Option<CornerIdx>>,
     /// Per-corner position vertex.
     pub corner_to_vertex: Vec<VertexIdx>,
     /// Number of position vertices after isolated-vertex compaction.
@@ -29,39 +29,29 @@ pub struct Reconstruction {
 
 /// Mutable corner-table state used during reconstruction.
 struct CornerTableBuilder {
-    opposite: Vec<CornerIdx>,
+    opposite: Vec<Option<CornerIdx>>,
     corner_to_vertex: Vec<VertexIdx>,
-    /// Left-most corner per vertex (`CornerIdx::none()` when isolated).
-    vertex_corners: Vec<CornerIdx>,
+    /// Left-most corner per vertex (`None` when isolated).
+    vertex_corners: Vec<Option<CornerIdx>>,
 }
 
 impl CornerTableBuilder {
     fn new(num_faces: usize) -> Self {
         let num_corners = num_faces * 3;
         Self {
-            opposite: vec![CornerIdx::none(); num_corners],
+            opposite: vec![None; num_corners],
             corner_to_vertex: vec![VertexIdx::from(INVALID_VERTEX); num_corners],
             vertex_corners: Vec::new(),
         }
     }
 
-    fn opposite(&self, c: CornerIdx) -> CornerIdx {
-        if c.is_none() {
-            c
-        } else {
-            self.opposite[usize::from(c)]
-        }
-    }
-
-    fn set_opposite_corner(&mut self, c: CornerIdx, opp: CornerIdx) {
-        if c.is_some() {
-            self.opposite[usize::from(c)] = opp;
-        }
+    fn opposite(&self, c: CornerIdx) -> Option<CornerIdx> {
+        self.opposite[usize::from(c)]
     }
 
     fn set_opposite_corners(&mut self, a: CornerIdx, b: CornerIdx) {
-        self.set_opposite_corner(a, b);
-        self.set_opposite_corner(b, a);
+        self.opposite[usize::from(a)] = Some(b);
+        self.opposite[usize::from(b)] = Some(a);
     }
 
     fn vertex(&self, c: CornerIdx) -> VertexIdx {
@@ -74,7 +64,7 @@ impl CornerTableBuilder {
 
     fn add_new_vertex(&mut self) -> VertexIdx {
         let v = self.vertex_corners.len();
-        self.vertex_corners.push(CornerIdx::none());
+        self.vertex_corners.push(None);
         VertexIdx::from(v)
     }
 
@@ -82,26 +72,26 @@ impl CornerTableBuilder {
         self.vertex_corners.len()
     }
 
-    fn left_most_corner(&self, v: VertexIdx) -> CornerIdx {
+    fn left_most_corner(&self, v: VertexIdx) -> Option<CornerIdx> {
         self.vertex_corners[usize::from(v)]
     }
 
     fn set_left_most_corner(&mut self, v: VertexIdx, c: CornerIdx) {
         if usize::from(v) != INVALID_VERTEX {
-            self.vertex_corners[usize::from(v)] = c;
+            self.vertex_corners[usize::from(v)] = Some(c);
         }
     }
 
     fn make_vertex_isolated(&mut self, v: VertexIdx) {
-        self.vertex_corners[usize::from(v)] = CornerIdx::none();
+        self.vertex_corners[usize::from(v)] = None;
     }
 
-    fn swing_left(&self, c: CornerIdx) -> CornerIdx {
-        self.opposite(c.next()).next()
+    fn swing_left(&self, c: CornerIdx) -> Option<CornerIdx> {
+        self.opposite(c.next()).map(CornerIdx::next)
     }
 
-    fn swing_right(&self, c: CornerIdx) -> CornerIdx {
-        self.opposite(c.previous()).previous()
+    fn swing_right(&self, c: CornerIdx) -> Option<CornerIdx> {
+        self.opposite(c.previous()).map(CornerIdx::previous)
     }
 }
 
@@ -163,7 +153,7 @@ pub fn reconstruct(
             Symbol::C => {
                 let corner_a = *active_corner_stack.last().ok_or_else(malformed)?;
                 let vertex_x = ct.vertex(corner_a.next());
-                let corner_b = ct.left_most_corner(vertex_x).next();
+                let corner_b = ct.left_most_corner(vertex_x).ok_or_else(malformed)?.next();
                 if corner_a == corner_b {
                     return Err(malformed());
                 }
@@ -231,13 +221,14 @@ pub fn reconstruct(
                 ct.set_left_most_corner(vert_b_prev, c2);
                 let corner_n = corner_b.next();
                 let vertex_n = ct.vertex(corner_n);
-                ct.set_left_most_corner(vertex_p, ct.left_most_corner(vertex_n));
+                let vertex_n_corner = ct.left_most_corner(vertex_n).ok_or_else(malformed)?;
+                ct.set_left_most_corner(vertex_p, vertex_n_corner);
                 let first_corner = corner_n;
-                let mut cn = corner_n;
-                while cn.is_some() {
-                    ct.map_corner_to_vertex(cn, vertex_p);
-                    cn = ct.swing_left(cn);
-                    if cn == first_corner {
+                let mut cn = Some(corner_n);
+                while let Some(c) = cn {
+                    ct.map_corner_to_vertex(c, vertex_p);
+                    cn = ct.swing_left(c);
+                    if cn == Some(first_corner) {
                         return Err(malformed());
                     }
                 }
@@ -291,9 +282,9 @@ pub fn reconstruct(
             }
             let corner_a = corner;
             let vert_n = ct.vertex(corner_a.next());
-            let corner_b = ct.left_most_corner(vert_n).next();
+            let corner_b = ct.left_most_corner(vert_n).ok_or_else(malformed)?.next();
             let vert_x = ct.vertex(corner_b.next());
-            let corner_c = ct.left_most_corner(vert_x).next();
+            let corner_c = ct.left_most_corner(vert_x).ok_or_else(malformed)?.next();
             if corner == corner_b || corner == corner_c || corner_b == corner_c {
                 return Err(malformed());
             }
@@ -345,7 +336,7 @@ pub fn reconstruct(
             for c in corners_around(&ct, src) {
                 ct.map_corner_to_vertex(c, invalid_vert);
             }
-            let lmc = ct.left_most_corner(src);
+            let lmc = ct.left_most_corner(src).unwrap(); // the loop above stopped at a non-isolated vertex
             ct.set_left_most_corner(invalid_vert, lmc);
             ct.make_vertex_isolated(src);
             is_vert_hole[usize::from(invalid_vert)] = is_vert_hole[src_vert];
@@ -365,13 +356,15 @@ pub fn reconstruct(
 
 /// Corners incident to `v`, walked clockwise from the left-most corner.
 fn corners_around(ct: &CornerTableBuilder, v: VertexIdx) -> Vec<CornerIdx> {
-    let start = ct.left_most_corner(v);
     let mut out = Vec::new();
-    let mut c = start;
-    while c.is_some() {
-        out.push(c);
-        c = ct.swing_right(c);
-        if c == start {
+    let Some(start) = ct.left_most_corner(v) else {
+        return out;
+    };
+    let mut c = Some(start);
+    while let Some(cur) = c {
+        out.push(cur);
+        c = ct.swing_right(cur);
+        if c == Some(start) {
             break;
         }
     }

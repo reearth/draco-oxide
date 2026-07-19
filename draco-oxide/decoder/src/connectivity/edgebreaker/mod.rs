@@ -9,7 +9,7 @@ use super::Connectivity;
 use crate::Err;
 use draco_oxide_core::bit_coder::ByteReader;
 use draco_oxide_core::mesh::ds::CornerTable;
-use draco_oxide_core::types::{CornerIdx, VecCornerIdx};
+use draco_oxide_core::types::CornerIdx;
 use draco_oxide_core::utils::bit_coder::leb128_read;
 
 use reconstruct::reconstruct;
@@ -55,7 +55,7 @@ pub fn decode<R: ByteReader>(reader: &mut R) -> Result<Connectivity, Err> {
     );
 
     Ok(Connectivity {
-        corner_table: CornerTable::from_raw_data(VecCornerIdx::from(recon.opposite)),
+        corner_table: CornerTable::from_opposites(recon.opposite),
         corner_to_vertex: recon.corner_to_vertex,
         num_vertices: recon.num_vertices,
         num_faces,
@@ -73,7 +73,7 @@ pub fn decode<R: ByteReader>(reader: &mut R) -> Result<Connectivity, Err> {
 /// seam bit per attribute, processed once from its lower-id face. Both corners of a
 /// seam edge are marked, matching `AddSeamEdge`.
 fn decode_attribute_seams(
-    opposite: &[CornerIdx],
+    opposite: &[Option<CornerIdx>],
     num_faces: usize,
     num_attribute_data: usize,
     traversal: &mut TraversalDecoder,
@@ -86,8 +86,7 @@ fn decode_attribute_seams(
 
     let mark = |seam: &mut [bool], c: CornerIdx| {
         seam[usize::from(c)] = true;
-        let opp = opposite[usize::from(c)];
-        if opp.is_some() {
+        if let Some(opp) = opposite[usize::from(c)] {
             seam[usize::from(opp)] = true;
         }
     };
@@ -95,14 +94,13 @@ fn decode_attribute_seams(
     for f in 0..num_faces {
         let corner = CornerIdx::from(3 * f);
         for c in [corner, corner.next(), corner.previous()] {
-            let opp = opposite[usize::from(c)];
-            if opp.is_none() {
+            let Some(opp) = opposite[usize::from(c)] else {
                 // Boundary edge: an automatic seam for every attribute, no bit.
                 for seam in is_seam.iter_mut() {
                     mark(seam, c);
                 }
                 continue;
-            }
+            };
             // Each shared edge is decoded once, from its lower-id face.
             if usize::from(opp.face_idx()) < f {
                 continue;
