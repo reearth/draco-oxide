@@ -1,12 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="594" viewBox="0 0 760 594" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12">
-<rect width="760" height="594" fill="#fcfcfb"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="462" viewBox="0 0 760 462" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12">
+<rect width="760" height="462" fill="#fcfcfb"/>
 <text x="16" y="24" font-size="15" font-weight="600" fill="#1a1a19">Compression ratio</text>
 <text x="16" y="42" fill="#5f5e56">raw geometry bytes / compressed bytes — higher is better</text>
 <rect x="588.0" y="16" width="10" height="10" rx="2" fill="#2a78d6"/>
 <text x="602.0" y="25" fill="#1a1a19">draco-oxide</text>
 <rect x="687.0" y="16" width="10" height="10" rx="2" fill="#008300"/>
 <text x="701.0" y="25" fill="#1a1a19">Draco</text>
-<line x1="178" y1="58.0" x2="178" y2="580.0" stroke="#d9d8d0" stroke-width="1"/>
+<line x1="178" y1="58.0" x2="178" y2="448.0" stroke="#d9d8d0" stroke-width="1"/>
 <text x="170.0" y="83.0" text-anchor="end" fill="#1a1a19">bunny</text>
 <path d="M178.0 64.0 h354.5 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-354.5 Z" fill="#2a78d6"/>
 <text x="542.5" y="75.0" fill="#5f5e56">21.2</text>
@@ -32,39 +32,24 @@
 <text x="258.0" y="251.0" fill="#5f5e56">4.37</text>
 <path d="M178.0 256.0 h133.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-133.3 Z" fill="#008300"/>
 <text x="321.3" y="267.0" fill="#5f5e56">8.10</text>
-<text x="170.0" y="303.0" text-anchor="end" fill="#1a1a19">mobius</text>
-<path d="M178.0 284.0 h33.7 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-33.7 Z" fill="#2a78d6"/>
-<text x="221.7" y="295.0" fill="#5f5e56">2.23</text>
-<path d="M178.0 300.0 h114.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-114.2 Z" fill="#008300"/>
-<text x="302.2" y="311.0" fill="#5f5e56">6.97</text>
-<text x="170.0" y="347.0" text-anchor="end" fill="#1a1a19">cube_flat</text>
-<path d="M178.0 328.0 h40.4 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-40.4 Z" fill="#2a78d6"/>
-<text x="228.4" y="339.0" fill="#5f5e56">2.62</text>
-<path d="M178.0 344.0 h40.4 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-40.4 Z" fill="#008300"/>
-<text x="228.4" y="355.0" fill="#5f5e56">2.62</text>
-<text x="170.0" y="391.0" text-anchor="end" fill="#1a1a19">cube_flat_random_normals</text>
-<path d="M178.0 372.0 h26.0 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-26.0 Z" fill="#2a78d6"/>
-<text x="214.0" y="383.0" fill="#5f5e56">1.77</text>
-<path d="M178.0 388.0 h25.4 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-25.4 Z" fill="#008300"/>
-<text x="213.4" y="399.0" fill="#5f5e56">1.73</text>
-<text x="170.0" y="435.0" text-anchor="end" fill="#1a1a19">cube_quads</text>
-<path d="M178.0 416.0 h27.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-27.2 Z" fill="#2a78d6"/>
-<text x="215.2" y="427.0" fill="#5f5e56">1.84</text>
-<path d="M178.0 432.0 h27.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-27.2 Z" fill="#008300"/>
-<text x="215.2" y="443.0" fill="#5f5e56">1.84</text>
-<text x="170.0" y="479.0" text-anchor="end" fill="#1a1a19">open_box</text>
-<path d="M178.0 460.0 h35.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-35.3 Z" fill="#2a78d6"/>
-<text x="223.3" y="471.0" fill="#5f5e56">2.32</text>
-<path d="M178.0 476.0 h32.0 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-32.0 Z" fill="#008300"/>
-<text x="220.0" y="487.0" fill="#5f5e56">2.12</text>
-<text x="170.0" y="523.0" text-anchor="end" fill="#1a1a19">tetrahedron</text>
-<path d="M178.0 504.0 h1.9 a1.9 1.9 0 0 1 1.9 1.9 v10.2 a1.9 1.9 0 0 1 -1.9 1.9 h-1.9 Z" fill="#2a78d6"/>
-<text x="187.8" y="515.0" fill="#5f5e56">0.23</text>
-<path d="M178.0 520.0 h13.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-13.3 Z" fill="#008300"/>
-<text x="201.3" y="531.0" fill="#5f5e56">1.02</text>
-<text x="170.0" y="567.0" text-anchor="end" fill="#1a1a19">groove_fan</text>
-<path d="M178.0 548.0 h0.5 a0.5 0.5 0 0 1 0.5 0.5 v13.0 a0.5 0.5 0 0 1 -0.5 0.5 h-0.5 Z" fill="#2a78d6"/>
-<text x="185.0" y="559.0" fill="#5f5e56">0.06</text>
-<path d="M178.0 564.0 h10.5 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-10.5 Z" fill="#008300"/>
-<text x="198.5" y="575.0" fill="#5f5e56">0.86</text>
+<text x="170.0" y="303.0" text-anchor="end" fill="#1a1a19">cube_quads</text>
+<path d="M178.0 284.0 h27.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-27.2 Z" fill="#2a78d6"/>
+<text x="215.2" y="295.0" fill="#5f5e56">1.84</text>
+<path d="M178.0 300.0 h27.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-27.2 Z" fill="#008300"/>
+<text x="215.2" y="311.0" fill="#5f5e56">1.84</text>
+<text x="170.0" y="347.0" text-anchor="end" fill="#1a1a19">open_box</text>
+<path d="M178.0 328.0 h35.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-35.3 Z" fill="#2a78d6"/>
+<text x="223.3" y="339.0" fill="#5f5e56">2.32</text>
+<path d="M178.0 344.0 h32.0 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-32.0 Z" fill="#008300"/>
+<text x="220.0" y="355.0" fill="#5f5e56">2.12</text>
+<text x="170.0" y="391.0" text-anchor="end" fill="#1a1a19">tetrahedron</text>
+<path d="M178.0 372.0 h1.9 a1.9 1.9 0 0 1 1.9 1.9 v10.2 a1.9 1.9 0 0 1 -1.9 1.9 h-1.9 Z" fill="#2a78d6"/>
+<text x="187.8" y="383.0" fill="#5f5e56">0.23</text>
+<path d="M178.0 388.0 h13.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-13.3 Z" fill="#008300"/>
+<text x="201.3" y="399.0" fill="#5f5e56">1.02</text>
+<text x="170.0" y="435.0" text-anchor="end" fill="#1a1a19">groove_fan</text>
+<path d="M178.0 416.0 h0.5 a0.5 0.5 0 0 1 0.5 0.5 v13.0 a0.5 0.5 0 0 1 -0.5 0.5 h-0.5 Z" fill="#2a78d6"/>
+<text x="185.0" y="427.0" fill="#5f5e56">0.06</text>
+<path d="M178.0 432.0 h10.5 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-10.5 Z" fill="#008300"/>
+<text x="198.5" y="443.0" fill="#5f5e56">0.86</text>
 </svg>

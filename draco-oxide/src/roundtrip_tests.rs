@@ -865,14 +865,17 @@ mod portable_attributes {
     };
     use crate::encode::{encode, Config};
     use crate::io::obj::load_obj;
+    use draco_oxide_core::bit_coder::SliceReader;
     use draco_oxide_core::types::ConfigType;
     use draco_oxide_decoder::decode_portable;
 
+    // Decodes through `SliceReader` (the `dequantized` module covers the owned
+    // iterator reader), so both reader types stay exercised.
     fn assert_portable_roundtrip(path: &str) {
         let mesh = load_obj(path).unwrap();
         let mut buffer = Vec::new();
         encode(mesh, &mut buffer, Config::default()).unwrap();
-        let portable = decode_portable(buffer.into_iter()).unwrap();
+        let portable = decode_portable(SliceReader::new(&buffer)).unwrap();
 
         let decoded = canonicalize(decoded_corner_tuples(&portable.mesh));
         let expected = canonicalize(expected_corner_tuples(path));

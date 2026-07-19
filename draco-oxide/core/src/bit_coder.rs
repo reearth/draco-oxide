@@ -1,5 +1,5 @@
 use crate::safety_assert;
-use std::{iter::Rev, vec};
+use std::{iter, iter::Rev, slice, vec};
 
 use super::buffer::{MsbFirst, OrderConfig};
 
@@ -285,6 +285,52 @@ impl ByteReader for vec::IntoIter<u8> {
         let rev = vec.into_iter().rev();
         *self = rest.into_iter();
         Ok(rev)
+    }
+}
+
+/// A zero-copy [`ByteReader`] over a borrowed byte slice. Sub-stream reverse
+/// readers borrow directly from the slice, so no part of the buffer is ever
+/// copied while reading.
+pub struct SliceReader<'a> {
+    data: &'a [u8],
+}
+
+impl<'a> SliceReader<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data }
+    }
+
+    fn take(&mut self, n: usize) -> Result<&'a [u8], ReaderErr> {
+        if n > self.data.len() {
+            return Err(ReaderErr::NotEnoughData);
+        }
+        let (head, rest) = self.data.split_at(n);
+        self.data = rest;
+        Ok(head)
+    }
+}
+
+impl<'a> ByteReader for SliceReader<'a> {
+    fn read_u8(&mut self) -> Result<u8, ReaderErr> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn read_u16(&mut self) -> Result<u16, ReaderErr> {
+        Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
+    }
+
+    fn read_u32(&mut self) -> Result<u32, ReaderErr> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+
+    fn read_u64(&mut self) -> Result<u64, ReaderErr> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+    }
+
+    type Rev = Rev<iter::Copied<slice::Iter<'a, u8>>>;
+
+    fn spown_reverse_reader_at(&mut self, offset: usize) -> Result<Self::Rev, ReaderErr> {
+        Ok(self.take(offset)?.iter().copied().rev())
     }
 }
 

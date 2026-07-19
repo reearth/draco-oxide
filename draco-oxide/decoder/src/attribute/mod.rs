@@ -21,7 +21,8 @@ use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::attribute::Portable;
 use draco_oxide_core::mesh::ds::{AttributeCornerTable, AttributeDS, DS};
 use draco_oxide_core::types::{
-    AttributeValueIdx, CornerIdx, NdVector, PointIdx, VecCornerIdx, VecPointIdx, Vector, VertexIdx,
+    AttributeValueIdx, CornerIdx, NdVector, PointIdx, VecCornerIdx, VecPointIdx, VecVertexIdx,
+    Vector, VertexIdx,
 };
 
 use inverse_transform::InverseTransform;
@@ -139,20 +140,11 @@ pub(crate) fn decode_attributes<R: ByteReader>(
         ));
     }
 
-    // One fan walk yields every attribute's vertex map plus, from the union of
-    // all seams, the decoder-side point space (the finest common refinement).
-    let mut union_seams = vec![false; num_corners];
-    for seam in &seams {
-        for (u, &s) in union_seams.iter_mut().zip(seam.iter()) {
-            *u |= s;
-        }
-    }
-    let mut seam_sets: Vec<&[bool]> = seams.iter().map(|s| s.as_slice()).collect();
-    seam_sets.push(&union_seams);
-    let mut fans = points::fan_vertices(&conn.corner_table, &seam_sets, num_corners);
-    let union_fan = fans.pop().expect("fan_vertices returns one output per set");
+    // One fan walk yields the decoder-side point space (the finest common
+    // refinement of all seams) and every attribute's point-to-vertex map.
+    let seam_sets: Vec<&[bool]> = seams.iter().map(|s| s.as_slice()).collect();
+    let (corner_to_point, fans) = points::fan_vertices(&conn.corner_table, &seam_sets, num_corners);
 
-    let corner_to_point = points::assign_points(&union_fan);
     let faces: Vec<[PointIdx; 3]> = (0..conn.num_faces)
         .map(|f| {
             [
@@ -176,7 +168,13 @@ pub(crate) fn decode_attributes<R: ByteReader>(
             ComponentDataType::I32,
             desc.portable_num_components(),
         );
-        let ads = sequence::build_ads(&ds, act, fan, placeholder);
+        let ads = AttributeDS::new(
+            &ds,
+            act,
+            VecVertexIdx::from(fan.vertex_to_left_most_corner),
+            VecPointIdx::from(fan.point_to_vertex),
+            placeholder,
+        );
         let seq = Traverser::new(&ads, seeds.clone()).compute_seqeunce();
 
         let parent = attributes

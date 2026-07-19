@@ -109,6 +109,11 @@ fn run() {
     let assets_dir = bench_dir.join("assets");
     std::fs::create_dir_all(&assets_dir).expect("create bench/assets");
 
+    // Excluded: pathological_* are timeout regression fixtures, not
+    // representative inputs; mobius is not encoded correctly by Draco (a
+    // non-orientable comparison would be meaningless); the cube_flat variants
+    // are too small to time meaningfully.
+    let excluded = ["mobius", "cube_flat", "cube_flat_random_normals"];
     let mut objs: Vec<PathBuf> = std::fs::read_dir(&data_dir)
         .expect("read tests/data")
         .filter_map(|e| {
@@ -116,10 +121,8 @@ fn run() {
             if p.extension()? != "obj" {
                 return None;
             }
-            // The pathological_* meshes are timeout regression fixtures, not
-            // representative inputs.
             let stem = p.file_stem()?.to_string_lossy().into_owned();
-            (!stem.starts_with("pathological")).then_some(p)
+            (!stem.starts_with("pathological") && !excluded.contains(&stem.as_str())).then_some(p)
         })
         .collect();
     objs.sort();
@@ -206,8 +209,8 @@ fn bench_oxide(mesh: &Mesh) -> CodecResult {
     });
 
     let decode_ms = time_median_ms(|| {
-        let buf = buffer.clone();
-        draco_oxide::decode::decode(buf.into_iter()).expect("draco-oxide decode");
+        let reader = draco_oxide::core::bit_coder::SliceReader::new(&buffer);
+        draco_oxide::decode::decode(reader).expect("draco-oxide decode");
     });
 
     CodecResult {
