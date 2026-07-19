@@ -3,6 +3,8 @@
 
 mod edgebreaker;
 
+pub(crate) use edgebreaker::points;
+
 use crate::Err;
 use draco_oxide_core::bit_coder::ByteReader;
 use draco_oxide_core::codec::header::EncoderMethod;

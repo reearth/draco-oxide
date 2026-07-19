@@ -8,9 +8,6 @@
 //! gated behind the default `dequantize` feature, additionally applies those
 //! transforms and returns a [`Mesh`] with original-format (float) attributes.
 //!
-//! Both entry points currently return [`Err::Unimplemented`]; the implementation
-//! is landing milestone by milestone (see `DECODER_PLAN`).
-
 use draco_oxide_core::bit_coder::{ByteReader, ReaderErr};
 use draco_oxide_core::mesh::Mesh;
 
@@ -27,6 +24,10 @@ mod simd;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Err {
+    /// An attribute framing field failed to parse.
+    #[error("attribute framing error: {0}")]
+    Attribute(#[from] draco_oxide_core::attribute::Err),
+
     /// A shared entropy-coding error (frequency table, symbol method, etc.).
     #[error("entropy error: {0}")]
     Entropy(#[from] draco_oxide_core::codec::entropy::Err),
@@ -38,6 +39,10 @@ pub enum Err {
     /// The stream header is malformed (bad magic or field).
     #[error("invalid header: {0}")]
     InvalidHeader(&'static str),
+
+    /// The attribute section is inconsistent (bad descriptor or payload).
+    #[error("malformed attribute section: {0}")]
+    MalformedAttribute(&'static str),
 
     /// The connectivity stream is inconsistent (bad symbol/split data).
     #[error("malformed connectivity: {0}")]
@@ -89,8 +94,21 @@ pub enum AttributeTransform {
 
 /// Decode a draco stream into a [`PortableMesh`] with quantized-integer
 /// attributes. Always available, on every target.
-pub fn decode_portable<R: ByteReader>(_reader: R) -> Result<PortableMesh, Err> {
-    Err(Err::Unimplemented)
+pub fn decode_portable<R: ByteReader>(mut reader: R) -> Result<PortableMesh, Err> {
+    let header = header::decode_header(&mut reader)?;
+    if header.metadata {
+        metadata::decode_metadata(&mut reader)?;
+    }
+    let conn = connectivity::decode_connectivity(&mut reader, header.encoder_method)?;
+    let decoded = attribute::decode_attributes(&mut reader, &conn)?;
+
+    let mut mesh = Mesh::new();
+    mesh.faces = decoded.faces;
+    mesh.attributes = decoded.attributes;
+    Ok(PortableMesh {
+        mesh,
+        transforms: decoded.transforms,
+    })
 }
 
 /// Decode a draco stream into a [`Mesh`] with original-format (float) attributes.
@@ -98,6 +116,16 @@ pub fn decode_portable<R: ByteReader>(_reader: R) -> Result<PortableMesh, Err> {
 /// Equivalent to [`decode_portable`] followed by applying each
 /// [`AttributeTransform`].
 #[cfg(feature = "dequantize")]
-pub fn decode<R: ByteReader>(_reader: R) -> Result<Mesh, Err> {
-    Err(Err::Unimplemented)
+pub fn decode<R: ByteReader>(reader: R) -> Result<Mesh, Err> {
+    let PortableMesh {
+        mut mesh,
+        transforms,
+    } = decode_portable(reader)?;
+    let attributes = std::mem::take(&mut mesh.attributes);
+    mesh.attributes = attributes
+        .into_iter()
+        .zip(&transforms)
+        .map(|(att, transform)| attribute::dequantize::dequantize_attribute(att, transform))
+        .collect::<Result<_, _>>()?;
+    Ok(mesh)
 }

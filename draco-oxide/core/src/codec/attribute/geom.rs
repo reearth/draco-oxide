@@ -129,16 +129,56 @@ where
     out
 }
 
-pub fn into_faithful_oct_quantization(vec: NdVector<2, i32>) -> NdVector<2, i32> {
-    let max = 255;
+/// The octahedron inside-out flip on centered quantized coordinates, matching
+/// the reference implementation's `OctahedronToolBox::InvertDiamond` exactly.
+/// It is an involution on the valid range `[-center, center]^2`, which the
+/// decoder relies on to undo the encoder-side flip.
+pub fn invert_diamond(v: &mut NdVector<2, i32>, center: i32) {
+    let s = *v.get(0);
+    let t = *v.get(1);
+    let (sign_s, sign_t) = if s >= 0 && t >= 0 {
+        (1, 1)
+    } else if s <= 0 && t <= 0 {
+        (-1, -1)
+    } else {
+        (if s > 0 { 1 } else { -1 }, if t > 0 { 1 } else { -1 })
+    };
+
+    let corner_s = sign_s * center;
+    let corner_t = sign_t * center;
+    let mut us = 2 * s - corner_s;
+    let mut ut = 2 * t - corner_t;
+    if sign_s * sign_t >= 0 {
+        let tmp = us;
+        us = -ut;
+        ut = -tmp;
+    } else {
+        std::mem::swap(&mut us, &mut ut);
+    }
+    // `us`/`ut` are even here (2x minus an odd corner, negated/swapped, plus the
+    // odd corner back), so the halving is exact.
+    *v.get_mut(0) = (us + corner_s) / 2;
+    *v.get_mut(1) = (ut + corner_t) / 2;
+}
+
+/// Maps octahedron-square boundary duplicates to one canonical representative
+/// per normal. The quantized range is `[0, max]` with `max = 2 * (2^(bits-1) - 1)`
+/// (254 for 8 bits); the four square corners all encode the -x pole and
+/// canonicalize to `(max, max)`, the only corner representation that survives
+/// the octahedral prediction transform round trip unchanged.
+pub fn into_faithful_oct_quantization(
+    vec: NdVector<2, i32>,
+    quantization_bits: u8,
+) -> NdVector<2, i32> {
+    let max = 2 * ((1 << (quantization_bits - 1)) - 1);
     let half = max / 2;
     let u = *vec.get(0);
     let v = *vec.get(1);
     let mut x = u;
     let mut y = v;
-    if (u == 255 || u == 0) && v == 0 || (u == 0 && v == 255) {
-        return NdVector::<2, i32>::from([255, 255]);
-    } else if u == 0 && v > 127 {
+    if ((u == max || u == 0) && v == 0) || (u == 0 && v == max) {
+        return NdVector::<2, i32>::from([max, max]);
+    } else if u == 0 && v > half {
         y = half - (v - half)
     } else if u == max && v < half {
         y = half + (half - v);

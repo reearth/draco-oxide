@@ -66,7 +66,7 @@ where
         for i in 0..2 {
             *out.get_mut(i) = *quantized.get(i) as i32;
         }
-        into_faithful_oct_quantization(out)
+        into_faithful_oct_quantization(out, self.quantization_bits)
     }
 }
 

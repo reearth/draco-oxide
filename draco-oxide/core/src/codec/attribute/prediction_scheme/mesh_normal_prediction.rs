@@ -83,12 +83,24 @@ where
             for i in 0..2 {
                 *out.get_mut(i) = (*quantized.get(i)) as i32;
             }
-            let quant_out = into_faithful_oct_quantization(out);
+            let quant_out = into_faithful_oct_quantization(out, 8); // TODO: Stop hardcoding the quantization bits.
             let mut out = NdVector::<N, i32>::zero();
             *out.get_mut(0) = *quant_out.get(0);
             *out.get_mut(1) = *quant_out.get(1);
             out
         }
+    }
+}
+
+impl<'parents, const N: usize> MeshNormalPrediction<'parents, N>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    /// The geometry-derived prediction for the vertex at corner `c`, without the
+    /// sign flip. The decoder pairs this with the decoded flip bit to reproduce
+    /// the value `predict` returned on the encoder side.
+    pub fn predicted_value(&self, c: CornerIdx) -> NdVector<N, i32> {
+        self.predicted[usize::from(self.ads.vertex_idx(c))]
     }
 }
 

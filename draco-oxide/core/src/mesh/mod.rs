@@ -155,6 +155,24 @@ where
         );
     }
 
+    // Faces reference points; resolve them to unique-value indices so the value
+    // slices below can be indexed directly (the point-to-value map need not be
+    // the identity).
+    let resolve = |att: &Attribute, faces: &[[PointIdx; 3]]| -> Vec<[usize; 3]> {
+        faces
+            .iter()
+            .map(|f| {
+                [
+                    usize::from(att.get_unique_val_idx(f[0])),
+                    usize::from(att.get_unique_val_idx(f[1])),
+                    usize::from(att.get_unique_val_idx(f[2])),
+                ]
+            })
+            .collect()
+    };
+    let self_face_vals = resolve(self_pos_att, self_faces);
+    let other_face_vals = resolve(other_pos_att, other_faces);
+
     // Safety: upheld
     let self_pos_att = self_pos_att.unique_vals_as_slice_unchecked::<NdVector<3, F>>();
     // Satety: Just checked
@@ -162,11 +180,11 @@ where
 
     let mut sum_of_squared_dist = F::zero();
     for pos in self_pos_att.iter() {
-        let min_dist = min_dist_point_to_faces(*pos, other_faces, other_pos_att);
+        let min_dist = min_dist_point_to_faces(*pos, &other_face_vals, other_pos_att);
         sum_of_squared_dist += min_dist * min_dist;
     }
     for pos in other_pos_att.iter() {
-        let min_dist = min_dist_point_to_faces(*pos, self_faces, self_pos_att);
+        let min_dist = min_dist_point_to_faces(*pos, &self_face_vals, self_pos_att);
         sum_of_squared_dist += min_dist * min_dist;
     }
 
@@ -175,17 +193,17 @@ where
 
 fn min_dist_point_to_faces<F>(
     p: NdVector<3, F>,
-    faces: &[[PointIdx; 3]],
+    face_vals: &[[usize; 3]],
     pos_att: &[NdVector<3, F>],
 ) -> F
 where
     F: Float,
 {
     let mut min_dist = F::MAX_VALUE;
-    for face in faces {
-        let v0 = pos_att[usize::from(face[0])];
-        let v1 = pos_att[usize::from(face[1])];
-        let v2 = pos_att[usize::from(face[2])];
+    for face in face_vals {
+        let v0 = pos_att[face[0]];
+        let v1 = pos_att[face[1]];
+        let v2 = pos_att[face[2]];
         let dist = point_to_face_distance_3d(p, [v0, v1, v2]);
         if dist < min_dist {
             min_dist = dist;

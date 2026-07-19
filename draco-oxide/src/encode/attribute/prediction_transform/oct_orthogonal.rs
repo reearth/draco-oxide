@@ -1,5 +1,6 @@
 use super::PredictionTransformImpl;
 use draco_oxide_core::bit_coder::ByteWriter;
+use draco_oxide_core::codec::attribute::geom::invert_diamond;
 use draco_oxide_core::types::{NdVector, Vector};
 
 pub struct OctahedronOrthogonalTransform<const N: usize> {
@@ -33,14 +34,14 @@ impl<const N: usize> PredictionTransformImpl<N> for OctahedronOrthogonalTransfor
         if pred.get(0).abs() + pred.get(1).abs() > one {
             // we need to flip the z-axis.
             // In the octahedron representation, this means that we need to flip inside out.
-            let pred0 = *pred.get(0);
-            let quadrant_sign = -(pred.get(0) * pred.get(1)).signum();
-            *pred.get_mut(0) = quadrant_sign * pred.get(1) + pred.get(0).signum() * one;
-            *pred.get_mut(1) = quadrant_sign * pred0 + pred.get(1).signum() * one;
-            let orig0 = *orig.get(0);
-            let quadrant_sign = -(orig.get(0) * orig.get(1)).signum();
-            *orig.get_mut(0) = quadrant_sign * orig.get(1) + orig.get(0).signum() * one;
-            *orig.get_mut(1) = quadrant_sign * orig0 + orig.get(1).signum() * one;
+            let mut p = NdVector::<2, i32>::from([*pred.get(0), *pred.get(1)]);
+            invert_diamond(&mut p, one);
+            *pred.get_mut(0) = *p.get(0);
+            *pred.get_mut(1) = *p.get(1);
+            let mut o = NdVector::<2, i32>::from([*orig.get(0), *orig.get(1)]);
+            invert_diamond(&mut o, one);
+            *orig.get_mut(0) = *o.get(0);
+            *orig.get_mut(1) = *o.get(1);
         }
 
         // Now rotate the sphere around the z-axis so that the x and y coordinates of pred are both negative.
