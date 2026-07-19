@@ -15,9 +15,9 @@ use draco_oxide_core::bit_coder::{ByteReader, ReaderErr};
 use draco_oxide_core::mesh::Mesh;
 
 mod attribute;
-mod connectivity;
+pub mod connectivity;
 pub mod entropy;
-mod header;
+pub mod header;
 mod metadata;
 #[cfg(feature = "simd")]
 mod simd;
@@ -35,6 +35,14 @@ pub enum Err {
     #[error("invalid symbol bit length: {0}")]
     InvalidBitLength(u8),
 
+    /// The stream header is malformed (bad magic or field).
+    #[error("invalid header: {0}")]
+    InvalidHeader(&'static str),
+
+    /// The connectivity stream is inconsistent (bad symbol/split data).
+    #[error("malformed connectivity: {0}")]
+    MalformedConnectivity(&'static str),
+
     /// A byte reader ran out of data or otherwise failed.
     #[error("reader error: {0}")]
     Reader(#[from] ReaderErr),
@@ -42,6 +50,10 @@ pub enum Err {
     /// The requested decode path is not implemented yet.
     #[error("decoder functionality not yet implemented")]
     Unimplemented,
+
+    /// The bitstream version is not supported (only 2.2 for now).
+    #[error("unsupported bitstream version: {0}.{1}")]
+    UnsupportedVersion(u8, u8),
 }
 
 /// A decoded mesh whose attributes are still in their portable, quantized-integer

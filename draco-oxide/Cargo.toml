@@ -23,6 +23,11 @@ tobj = "4.0.3"
 gltf = { version = "1.4", features = ["extensions", "guess_mime_type", "image", "import"] }
 image = { version = "0.25", features = ["webp"] }
 
+[dev-dependencies]
+# Round-trip tests use core's Laplacian connectivity check (`codec::connectivity::eq`),
+# gated behind core's `test-util` feature. Dev-only; stripped on publish.
+draco-oxide-core = { workspace = true, features = ["test-util"] }
+
 [features]
 default = ["decoder", "safety_assertions"]
 # Re-exports the decoder crate as `draco_oxide::decode`. Disable with
