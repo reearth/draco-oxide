@@ -1,6 +1,6 @@
 use crate::bit_coder::ByteWriter;
 use crate::codec::entropy::{
-    rans_build_tables, RansSymbol, DEFAULT_RABS_PRECISION, DEFAULT_RANS_PRECISION, L_RANS_BASE,
+    rans_symbol_table, RansSymbol, DEFAULT_RABS_PRECISION, DEFAULT_RANS_PRECISION, L_RANS_BASE,
 };
 use crate::safety_assert;
 use crate::utils::bit_coder::leb128_write;
@@ -21,7 +21,7 @@ impl<const RANS_PRECISION: usize> RansCoder<RANS_PRECISION> {
     pub fn new(freq_counts: Vec<usize>, l_rans_base: Option<usize>) -> Result<Self, Err> {
         let l_rans_base = l_rans_base.unwrap_or((1 << RANS_PRECISION) << 2);
 
-        let (_slot_table, rans_symbols) = rans_build_tables::<RANS_PRECISION>(&freq_counts)?;
+        let rans_symbols = rans_symbol_table::<RANS_PRECISION>(&freq_counts)?;
 
         let writer: Vec<u8> = Vec::new();
         Ok(RansCoder {
@@ -38,14 +38,14 @@ impl<const RANS_PRECISION: usize> RansCoder<RANS_PRECISION> {
         }
 
         let symbol = &self.rans_symbols[idx];
-        let freq_count = symbol.freq_count;
+        let freq_count = symbol.freq_count as usize;
         while self.state >= ((self.l_rans_base >> RANS_PRECISION) * freq_count) << 8 {
             self.writer.write_u8((self.state & 0xFF) as u8);
             self.state >>= 8;
         }
         self.state = ((self.state / freq_count) << RANS_PRECISION)
             + self.state % freq_count
-            + symbol.freq_cumulative;
+            + symbol.freq_cumulative as usize;
         Ok(())
     }
 

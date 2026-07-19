@@ -37,31 +37,31 @@ impl SymbolEncodingMethod {
     }
 }
 
+/// One alphabet entry of a rANS distribution. The fields fit in `u32` because
+/// frequencies sum to `2^RANS_PRECISION` and the precision never exceeds 20.
 pub struct RansSymbol {
-    pub freq_count: usize,
-    pub freq_cumulative: usize,
+    pub freq_count: u32,
+    pub freq_cumulative: u32,
 }
 
-pub fn rans_build_tables<const RANS_PRECISION: usize>(
+/// Builds the cumulative-frequency table over the alphabet. The frequencies
+/// must sum to exactly `2^RANS_PRECISION`.
+pub fn rans_symbol_table<const RANS_PRECISION: usize>(
     freq_counts: &[usize],
-) -> Result<(Vec<usize>, Vec<RansSymbol>), Err> {
-    let mut slot_table = Vec::with_capacity(1 << RANS_PRECISION);
+) -> Result<Vec<RansSymbol>, Err> {
     let mut rans_syms = Vec::with_capacity(freq_counts.len());
 
-    let mut freq_cumulative = 0;
-    for (i, freq_count) in freq_counts.iter().enumerate() {
-        let symbol = RansSymbol {
-            freq_count: *freq_count,
-            freq_cumulative,
-        };
-        rans_syms.push(symbol);
-        let tmp = freq_cumulative;
+    let mut freq_cumulative: usize = 0;
+    for freq_count in freq_counts {
+        // The casts are lossless for every table that passes the final sum
+        // check, since all partial sums are then bounded by 2^RANS_PRECISION.
+        rans_syms.push(RansSymbol {
+            freq_count: *freq_count as u32,
+            freq_cumulative: freq_cumulative as u32,
+        });
         freq_cumulative = freq_cumulative
             .checked_add(*freq_count)
-            .ok_or(Err::InvalidFreqCount)?; // cumulative frequency count is not inclusive, so this operation is done after creating the symbol
-        for _ in tmp..freq_cumulative {
-            slot_table.push(i);
-        }
+            .ok_or(Err::InvalidFreqCount)?;
     }
 
     if freq_cumulative != 1 << RANS_PRECISION {
@@ -71,7 +71,24 @@ pub fn rans_build_tables<const RANS_PRECISION: usize>(
         ));
     }
 
-    Ok((slot_table, rans_syms))
+    Ok(rans_syms)
+}
+
+/// Builds the slot-to-symbol lookup table: entry `r` is the symbol whose
+/// cumulative range contains `r`. The input must come from
+/// [`rans_symbol_table`], so the ranges tile `0..2^RANS_PRECISION`.
+pub fn rans_slot_table(rans_symbols: &[RansSymbol]) -> Vec<u32> {
+    let total = rans_symbols
+        .last()
+        .map(|s| (s.freq_cumulative + s.freq_count) as usize)
+        .unwrap_or(0);
+    let mut slot_table = vec![0u32; total];
+    for (i, sym) in rans_symbols.iter().enumerate() {
+        let start = sym.freq_cumulative as usize;
+        let end = start + sym.freq_count as usize;
+        slot_table[start..end].fill(i as u32);
+    }
+    slot_table
 }
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]

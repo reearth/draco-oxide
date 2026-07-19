@@ -50,7 +50,7 @@ fn decode_direct<R: ByteReader, const RANS_PRECISION: usize>(
     reader: &mut R,
     num_symbols: usize,
 ) -> Result<Vec<u64>, Err> {
-    let mut decoder = RansSymbolDecoder::<R::Rev, RANS_PRECISION>::new(reader)?;
+    let mut decoder = RansSymbolDecoder::<R::Rev, RANS_PRECISION>::new(reader, num_symbols)?;
     let mut out = Vec::with_capacity(num_symbols);
     for _ in 0..num_symbols {
         out.push(decoder.decode() as u64);

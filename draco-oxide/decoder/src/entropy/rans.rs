@@ -8,7 +8,7 @@
 
 use crate::Err;
 use draco_oxide_core::bit_coder::{ByteReader, ReverseByteReader};
-use draco_oxide_core::codec::entropy::{rans_build_tables, RansSymbol};
+use draco_oxide_core::codec::entropy::{rans_slot_table, rans_symbol_table, RansSymbol};
 use draco_oxide_core::utils::bit_coder::leb128_read;
 
 /// Reads the final rANS/rabs state from the tail of the reversed buffer. The most
@@ -39,10 +39,14 @@ fn read_state_init<Rev: ReverseByteReader>(rev: &mut Rev, l_base: usize) -> Resu
 
 /// Non-binary rANS decoder over a fixed symbol distribution. `RANS_PRECISION` is the
 /// log2 of the total frequency count and must match the value the encoder used.
+///
+/// The slot-to-symbol lookup is either a `2^RANS_PRECISION`-entry table (O(1) per
+/// symbol, but the build cost dominates short streams) or a binary search over the
+/// cumulative frequencies; the caller picks via `use_lut`.
 pub struct RansDecoder<Rev: ReverseByteReader, const RANS_PRECISION: usize> {
     rev: Rev,
     state: usize,
-    slot_table: Vec<usize>,
+    slot_table: Option<Vec<u32>>,
     rans_symbols: Vec<RansSymbol>,
 }
 
@@ -51,13 +55,10 @@ impl<Rev: ReverseByteReader, const RANS_PRECISION: usize> RansDecoder<Rev, RANS_
     const L_RANS_BASE: usize = (1 << RANS_PRECISION) << 2;
 
     /// Initializes the decoder from the reversed buffer and a symbol distribution
-    /// (as produced by [`rans_build_tables`]).
-    pub fn new(
-        mut rev: Rev,
-        slot_table: Vec<usize>,
-        rans_symbols: Vec<RansSymbol>,
-    ) -> Result<Self, Err> {
+    /// (as produced by [`rans_symbol_table`]).
+    pub fn new(mut rev: Rev, rans_symbols: Vec<RansSymbol>, use_lut: bool) -> Result<Self, Err> {
         let state = read_state_init(&mut rev, Self::L_RANS_BASE)?;
+        let slot_table = use_lut.then(|| rans_slot_table(&rans_symbols));
         Ok(RansDecoder {
             rev,
             state,
@@ -76,9 +77,19 @@ impl<Rev: ReverseByteReader, const RANS_PRECISION: usize> RansDecoder<Rev, RANS_
         }
         let quo = self.state >> RANS_PRECISION;
         let rem = self.state & (Self::RANS_PRECISION_VALUE - 1);
-        let symbol = self.slot_table[rem];
+        let symbol = match &self.slot_table {
+            Some(table) => table[rem] as usize,
+            // The last symbol whose cumulative start is <= rem. Ties from
+            // zero-frequency symbols resolve to the last of the group, which is
+            // the one whose range actually contains rem.
+            None => {
+                self.rans_symbols
+                    .partition_point(|s| s.freq_cumulative as usize <= rem)
+                    - 1
+            }
+        };
         let sym = &self.rans_symbols[symbol];
-        self.state = quo * sym.freq_count + rem - sym.freq_cumulative;
+        self.state = quo * sym.freq_count as usize + rem - sym.freq_cumulative as usize;
         symbol
     }
 }
@@ -135,8 +146,13 @@ pub struct RansSymbolDecoder<Rev: ReverseByteReader, const RANS_PRECISION: usize
 
 impl<Rev: ReverseByteReader, const RANS_PRECISION: usize> RansSymbolDecoder<Rev, RANS_PRECISION> {
     /// Parses the frequency table and rANS payload from `reader`, leaving `reader`
-    /// positioned immediately after the payload.
-    pub fn new<R: ByteReader<Rev = Rev>>(reader: &mut R) -> Result<Self, Err> {
+    /// positioned immediately after the payload. `num_symbols_to_decode` sizes the
+    /// lookup strategy: long streams amortize the `2^RANS_PRECISION`-entry slot
+    /// table, short ones decode faster with a binary search per symbol.
+    pub fn new<R: ByteReader<Rev = Rev>>(
+        reader: &mut R,
+        num_symbols_to_decode: usize,
+    ) -> Result<Self, Err> {
         let num_symbols = leb128_read(reader)? as usize;
         let mut freq_counts = vec![0usize; num_symbols];
 
@@ -161,11 +177,12 @@ impl<Rev: ReverseByteReader, const RANS_PRECISION: usize> RansSymbolDecoder<Rev,
             i += 1;
         }
 
-        let (slot_table, rans_symbols) = rans_build_tables::<RANS_PRECISION>(&freq_counts)?;
+        let rans_symbols = rans_symbol_table::<RANS_PRECISION>(&freq_counts)?;
+        let use_lut = num_symbols_to_decode >= (1 << RANS_PRECISION) >> 6;
 
         let payload_len = leb128_read(reader)? as usize;
         let rev = reader.spown_reverse_reader_at(payload_len)?;
-        let decoder = RansDecoder::new(rev, slot_table, rans_symbols)?;
+        let decoder = RansDecoder::new(rev, rans_symbols, use_lut)?;
         Ok(RansSymbolDecoder { decoder })
     }
 
@@ -193,7 +210,8 @@ mod tests {
     #[test]
     fn rans_decoder_matches_rans_coder() {
         // A distribution that already sums to 2^12, so `RansCoder` and
-        // `rans_build_tables` see identical frequencies.
+        // `rans_symbol_table` see identical frequencies. Both lookup
+        // strategies must decode identically.
         let freq = vec![1000usize, 2000, 1096];
         assert_eq!(freq.iter().sum::<usize>(), 1 << 12);
         let symbols = vec![0usize, 1, 1, 2, 0, 1, 2, 2, 1, 0, 2, 1, 0, 0, 1];
@@ -204,14 +222,16 @@ mod tests {
         }
         let buffer = enc.flush().unwrap();
 
-        let (slot_table, rans_symbols) = rans_build_tables::<12>(&freq).unwrap();
-        let len = buffer.len();
-        let mut bytes = buffer.into_iter();
-        let rev = bytes.spown_reverse_reader_at(len).unwrap();
-        let mut dec = RansDecoder::<_, 12>::new(rev, slot_table, rans_symbols).unwrap();
+        for use_lut in [true, false] {
+            let rans_symbols = rans_symbol_table::<12>(&freq).unwrap();
+            let len = buffer.len();
+            let mut bytes = buffer.clone().into_iter();
+            let rev = bytes.spown_reverse_reader_at(len).unwrap();
+            let mut dec = RansDecoder::<_, 12>::new(rev, rans_symbols, use_lut).unwrap();
 
-        let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.read()).collect();
-        assert_eq!(decoded, symbols);
+            let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.read()).collect();
+            assert_eq!(decoded, symbols);
+        }
     }
 
     #[test]
@@ -227,7 +247,7 @@ mod tests {
         enc.flush().unwrap();
 
         let mut reader = buf.into_iter();
-        let mut dec = RansSymbolDecoder::<_, 12>::new(&mut reader).unwrap();
+        let mut dec = RansSymbolDecoder::<_, 12>::new(&mut reader, symbols.len()).unwrap();
         let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
         assert_eq!(decoded, symbols);
     }
@@ -246,7 +266,7 @@ mod tests {
         enc.flush().unwrap();
 
         let mut reader = buf.into_iter();
-        let mut dec = RansSymbolDecoder::<_, 12>::new(&mut reader).unwrap();
+        let mut dec = RansSymbolDecoder::<_, 12>::new(&mut reader, symbols.len()).unwrap();
         let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
         assert_eq!(decoded, symbols);
     }
@@ -271,7 +291,7 @@ mod tests {
         enc.flush().unwrap();
 
         let mut reader = buf.into_iter();
-        let mut dec = RansSymbolDecoder::<_, 20>::new(&mut reader).unwrap();
+        let mut dec = RansSymbolDecoder::<_, 20>::new(&mut reader, symbols.len()).unwrap();
         let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
         assert_eq!(decoded, symbols);
     }
@@ -290,7 +310,7 @@ mod tests {
         enc.flush().unwrap();
 
         let mut reader = buf.into_iter();
-        let mut dec = RansSymbolDecoder::<_, 12>::new(&mut reader).unwrap();
+        let mut dec = RansSymbolDecoder::<_, 12>::new(&mut reader, symbols.len()).unwrap();
         let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
         assert_eq!(decoded, symbols);
     }
