@@ -79,7 +79,7 @@ fn build_single_attribute_ds<'a>(
     // Safety contract: a point-keyed map is a function only if every point's
     // corners lie in a single seam-separated sector. `sort_mesh` establishes
     // this invariant; the `safety_assert`s below enforce it.
-    let mut point_to_vertex_map = vec![VertexIdx::from(usize::MAX); num_points];
+    let mut point_to_vertex_map = vec![VertexIdx::INVALID; num_points];
     let mut vertex_to_left_most_corner: Vec<CornerIdx> = Vec::new();
     let mut visited = vec![false; num_corners];
 
@@ -109,8 +109,7 @@ fn build_single_attribute_ds<'a>(
         vertex_to_left_most_corner.push(first_c);
         let p = usize::from(ds.point_idx(first_c));
         safety_assert!(
-            point_to_vertex_map[p] == VertexIdx::from(usize::MAX)
-                || point_to_vertex_map[p] == cur_vert_id,
+            point_to_vertex_map[p] == VertexIdx::INVALID || point_to_vertex_map[p] == cur_vert_id,
             "point {} spans multiple attribute sectors; sort_mesh must have split it",
             p
         );
@@ -129,7 +128,7 @@ fn build_single_attribute_ds<'a>(
             }
             let p = usize::from(ds.point_idx(curr));
             safety_assert!(
-                point_to_vertex_map[p] == VertexIdx::from(usize::MAX)
+                point_to_vertex_map[p] == VertexIdx::INVALID
                     || point_to_vertex_map[p] == cur_vert_id,
                 "point {} spans multiple attribute sectors; sort_mesh must have split it",
                 p

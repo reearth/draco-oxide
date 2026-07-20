@@ -99,7 +99,7 @@ pub(crate) fn fan_vertices(
 /// points coincide with position vertices, and all attributes share the same
 /// vertex numbering.
 fn fan_vertices_seamless(pos_ct: &CornerTable, num_corners: usize) -> (Vec<PointIdx>, FanVertices) {
-    let mut corner_to_point = vec![PointIdx::from(usize::MAX); num_corners];
+    let mut corner_to_point = vec![PointIdx::INVALID; num_corners];
     let mut out = FanVertices::new();
     let mut visited = vec![false; num_corners];
 
@@ -154,7 +154,7 @@ fn fan_vertices_one_seamed(
     seams: &[bool],
     num_corners: usize,
 ) -> (Vec<PointIdx>, FanVertices, FanVertices) {
-    let mut corner_to_point = vec![PointIdx::from(usize::MAX); num_corners];
+    let mut corner_to_point = vec![PointIdx::INVALID; num_corners];
     let mut seamless = FanVertices::new();
     let mut seamed = FanVertices::new();
     let mut num_points = 0usize;
@@ -226,7 +226,7 @@ fn fan_vertices_general(
 ) -> (VecCornerIdx<PointIdx>, Vec<FanVertices>) {
     let num_outputs = seam_sets.len();
     let mut outputs: Vec<FanVertices> = (0..num_outputs).map(|_| FanVertices::new()).collect();
-    let mut corner_to_point = vec![PointIdx::from(usize::MAX); num_corners];
+    let mut corner_to_point = vec![PointIdx::INVALID; num_corners];
     let mut num_points = 0usize;
 
     let mut visited = vec![false; num_corners];
@@ -304,8 +304,7 @@ fn fan_vertices_general(
             corner_to_point[usize::from(fan[idx])] = PointIdx::from(cur_pt);
         }
         for out in outputs.iter_mut() {
-            out.point_to_vertex
-                .resize(num_points, VertexIdx::from(usize::MAX));
+            out.point_to_vertex.resize(num_points, VertexIdx::INVALID);
         }
 
         // Attribute passes: number this attribute's sectors from its own start

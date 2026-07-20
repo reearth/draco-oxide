@@ -154,6 +154,36 @@ pub trait GenericCornerTable {
     fn get_right_corner(&self, corner: CornerIdx) -> Option<CornerIdx> {
         self.opposite(corner.next())
     }
+
+    /// Same as [`Self::swing_right`], but takes the corner's face index.
+    /// `face` must equal `corner.face_idx()`.
+    fn swing_right_with_face_idx(&self, corner: CornerIdx, face: FaceIdx) -> Option<CornerIdx> {
+        self.opposite(corner.previous_with_face_idx(face))
+            .map(CornerIdx::previous)
+    }
+
+    /// Same as [`Self::swing_left`], but takes the corner's face index.
+    /// `face` must equal `corner.face_idx()`.
+    fn swing_left_with_face_idx(&self, corner: CornerIdx, face: FaceIdx) -> Option<CornerIdx> {
+        self.opposite(corner.next_with_face_idx(face))
+            .map(CornerIdx::next)
+    }
+
+    /// Same as [`Self::get_left_corner`], but takes the corner's face index.
+    /// `face` must equal `corner.face_idx()`.
+    fn get_left_corner_with_face_idx(&self, corner: CornerIdx, face: FaceIdx) -> Option<CornerIdx> {
+        self.opposite(corner.previous_with_face_idx(face))
+    }
+
+    /// Same as [`Self::get_right_corner`], but takes the corner's face index.
+    /// `face` must equal `corner.face_idx()`.
+    fn get_right_corner_with_face_idx(
+        &self,
+        corner: CornerIdx,
+        face: FaceIdx,
+    ) -> Option<CornerIdx> {
+        self.opposite(corner.next_with_face_idx(face))
+    }
 }
 
 /// Per-corner opposite corners, stored compactly: a boundary edge is kept as an
@@ -162,8 +192,6 @@ pub trait GenericCornerTable {
 pub struct CornerTable(VecCornerIdx<CornerIdx>);
 
 impl CornerTable {
-    const NO_OPPOSITE: usize = usize::MAX;
-
     #[inline]
     pub fn first_corner(face_idx: FaceIdx) -> CornerIdx {
         CornerIdx::from(usize::from(face_idx) * 3)
@@ -173,7 +201,7 @@ impl CornerTable {
         Self(
             opposite_corners
                 .into_iter()
-                .map(|opp| opp.unwrap_or(CornerIdx::from(Self::NO_OPPOSITE)))
+                .map(|opp| opp.unwrap_or(CornerIdx::INVALID))
                 .collect::<Vec<_>>()
                 .into(),
         )
@@ -184,7 +212,7 @@ impl GenericCornerTable for CornerTable {
     #[inline]
     fn opposite(&self, corner: CornerIdx) -> Option<CornerIdx> {
         let opp = self.0[corner];
-        (usize::from(opp) != Self::NO_OPPOSITE).then_some(opp)
+        (opp != CornerIdx::INVALID).then_some(opp)
     }
 }
 

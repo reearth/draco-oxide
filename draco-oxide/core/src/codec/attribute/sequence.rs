@@ -1,11 +1,11 @@
 use crate::mesh::ds::{AttributeDS, GenericCornerTable};
-use crate::types::{CornerIdx, VertexIdx};
+use crate::types::{CornerIdx, VecFaceIdx, VecVertexIdx, VertexIdx};
 
 #[derive(Debug, Clone)]
 pub struct Traverser<'a> {
     ads: &'a AttributeDS<'a>,
-    visited_vertices: Vec<bool>,
-    visited_faces: Vec<bool>,
+    visited_vertices: VecVertexIdx<bool>,
+    visited_faces: VecFaceIdx<bool>,
     corner_traversal_stack: Vec<CornerIdx>,
     out: Vec<CornerIdx>,
 }
@@ -19,23 +19,25 @@ impl<'a> Traverser<'a> {
     pub fn new(ads: &'a AttributeDS, corners_of_edgebreaker_traversal: Vec<CornerIdx>) -> Self {
         let num_faces = ads.global_ds().num_faces();
         Self {
-            visited_vertices: vec![false; ads.num_vertices()],
-            visited_faces: vec![false; num_faces],
+            visited_vertices: vec![false; ads.num_vertices()].into(),
+            visited_faces: vec![false; num_faces].into(),
             ads,
             corner_traversal_stack: corners_of_edgebreaker_traversal, // The last encoded connected component gets decoded first
             out: Vec::with_capacity(num_faces * 3),
         }
     }
 
-    pub fn is_vertex_visited(&self, v: VertexIdx) -> bool {
-        self.visited_vertices[usize::from(v)]
+    #[inline]
+    fn is_vertex_visited(&self, v: VertexIdx) -> bool {
+        unsafe { *self.visited_vertices.get_unchecked(v) }
     }
 
+    #[inline]
     pub fn visit(&mut self, v: VertexIdx, c: CornerIdx) {
-        if !self.visited_vertices[usize::from(v)] {
+        if !self.is_vertex_visited(v) {
             self.out.push(c);
         }
-        self.visited_vertices[usize::from(v)] = true;
+        unsafe { *self.visited_vertices.get_unchecked_mut(v) = true; }
     }
 
     pub fn compute_seqeunce(mut self) -> Vec<CornerIdx> {
@@ -43,13 +45,14 @@ impl<'a> Traverser<'a> {
             // If the face has not yet been visited, then the
             // other vertices of the face are not visited yet either. If this is the case, then
             // we need to store them in self.next_outputs_stack so that they will get processed first.
-            let v = self.ads.vertex_idx(curr_corner);
-            if self.visited_faces[usize::from(curr_corner.face_idx())] {
+            let face_idx = curr_corner.face_idx();
+            if unsafe { *self.visited_faces.get_unchecked(face_idx) } {
                 continue;
             }
-            let next_c = curr_corner.next();
+            let v = self.ads.vertex_idx(curr_corner);
+            let next_c = curr_corner.next_with_face_idx(face_idx);
             let next_v = self.ads.vertex_idx(next_c);
-            let prev_c = curr_corner.previous();
+            let prev_c = curr_corner.previous_with_face_idx(face_idx);
             let prev_v = self.ads.vertex_idx(prev_c);
             if !self.is_vertex_visited(next_v) || !self.is_vertex_visited(prev_v) {
                 // We need to return the next corner first, then the previous corner, and finally the current corner.
@@ -61,8 +64,7 @@ impl<'a> Traverser<'a> {
             }
 
             // Coming here means that we are visiting a new face.
-            let face_idx = curr_corner.face_idx();
-            self.visited_faces[usize::from(face_idx)] = true;
+            unsafe { *self.visited_faces.get_unchecked_mut(face_idx) = true; }
             // Once a face is marked visited it is never unmarked, and the pop
             // loop above skips any corner whose face is already visited. So stale
             // corners of this face still left on the stack (the handle case) are
@@ -75,7 +77,7 @@ impl<'a> Traverser<'a> {
                     self.corner_traversal_stack.push(
                         self.ads
                             .corner_table()
-                            .get_right_corner(curr_corner)
+                            .get_right_corner_with_face_idx(curr_corner, face_idx)
                             .unwrap(), // It is guaranteed to exist because the current corner is unvisited and not on a boundary
                     );
                     continue;
@@ -84,14 +86,20 @@ impl<'a> Traverser<'a> {
 
             self.visit(v, curr_corner);
 
-            let right_corner = self.ads.corner_table().get_right_corner(curr_corner);
-            let left_corner = self.ads.corner_table().get_left_corner(curr_corner);
+            let right_corner = self
+                .ads
+                .corner_table()
+                .get_right_corner_with_face_idx(curr_corner, face_idx);
+            let left_corner = self
+                .ads
+                .corner_table()
+                .get_left_corner_with_face_idx(curr_corner, face_idx);
             let right_face = right_corner.map(|c| c.face_idx());
             let left_face = left_corner.map(|c| c.face_idx());
 
-            if right_face.is_some() && self.visited_faces[usize::from(right_face.unwrap())] {
+            if right_face.is_some() && unsafe { *self.visited_faces.get_unchecked(right_face.unwrap()) } {
                 // Right face has been visited
-                if left_face.is_some() && self.visited_faces[usize::from(left_face.unwrap())] {
+                if left_face.is_some() && unsafe { *self.visited_faces.get_unchecked(left_face.unwrap()) } {
                     // Both neighboring faces are visited, we can continue traversing. No update to the stack.
                 } else {
                     // Left face is unvisited or does not exist.
@@ -102,7 +110,7 @@ impl<'a> Traverser<'a> {
                 }
             } else {
                 // Right face is unvisited or does not exist.
-                if left_face.is_some() && self.visited_faces[usize::from(left_face.unwrap())] {
+                if left_face.is_some() && unsafe { *self.visited_faces.get_unchecked(left_face.unwrap()) } {
                     // Left face is visited.
                     // we need to traverse the right face if it exists.
                     if let Some(rc) = right_corner {

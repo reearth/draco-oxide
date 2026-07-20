@@ -749,7 +749,7 @@ impl<'pos_ds> ValenceTraversal<'pos_ds> {
             pos_ds,
             diff_corner_to_vertex_map: BTreeMap::new(),
             context_symbols,
-            last_corner: CornerIdx::from(usize::MAX), // This will be set to a valid corner index in `new_corner_reached` before the first call to record symbol.
+            last_corner: CornerIdx::INVALID, // This will be set to a valid corner index in `new_corner_reached` before the first call to record symbol.
             prev_symbol: None,
             interior_cfg: Vec::new(),
             num_symbols: 0,

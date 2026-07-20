@@ -6,17 +6,17 @@ use core::fmt;
 use std::{cmp, mem, ops};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct AttributeValueIdx(usize);
+pub struct AttributeValueIdx(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CornerIdx(usize);
+pub struct CornerIdx(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct EdgeIdx(usize);
+pub struct EdgeIdx(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FaceIdx(usize);
+pub struct FaceIdx(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PointIdx(usize);
+pub struct PointIdx(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct VertexIdx(usize);
+pub struct VertexIdx(u32);
 
 macro_rules! idx_op_impl {
     ($($trait_:ident, $method:ident, $op:tt, $t:ty);*) => {
@@ -140,6 +140,14 @@ macro_rules! vec_with_new_idx {
                     pub fn swap(&mut self, idx1: $Idx, idx2: $Idx) {
                         self.inner.swap(usize::from(idx1), usize::from(idx2));
                     }
+
+                    pub unsafe fn get_unchecked(&self, idx: $Idx) -> &T {
+                        self.inner.get_unchecked(usize::from(idx))
+                    }
+
+                    pub unsafe fn get_unchecked_mut(&mut self, idx: $Idx) -> &mut T {
+                        self.inner.get_unchecked_mut(usize::from(idx))
+                    }
                 }
 
                 impl<T> ::std::ops::Index<$Idx> for [<Vec $Idx:camel>]<T> {
@@ -193,15 +201,21 @@ vec_with_new_idx!(
 macro_rules! idx_impl {
     ($($t:ty),*) => {
         $(
+            impl $t {
+                /// Sentinel for an absent entry in index tables.
+                pub const INVALID: $t = Self(u32::MAX);
+            }
+
             impl From<usize> for $t {
                 fn from(idx: usize) -> Self {
-                    Self(idx)
+                    debug_assert!(idx <= u32::MAX as usize);
+                    Self(idx as u32)
                 }
             }
 
             impl From<$t> for usize {
                 fn from(idx: $t) -> Self {
-                    idx.0
+                    idx.0 as usize
                 }
             }
         )*
@@ -219,27 +233,51 @@ idx_impl! {
 
 impl CornerIdx {
     pub fn previous(self) -> CornerIdx {
-        let corner = usize::from(self);
+        let corner = self.0;
         let out = if corner % 3 == 0 {
             corner + 2
         } else {
             corner - 1
         };
-        CornerIdx::from(out)
+        CornerIdx(out)
     }
 
     pub fn next(self) -> CornerIdx {
-        let corner = usize::from(self);
+        let corner = self.0;
         let out = if corner % 3 == 2 {
             corner - 2
         } else {
             corner + 1
         };
-        CornerIdx::from(out)
+        CornerIdx(out)
     }
 
     pub fn face_idx(self) -> FaceIdx {
-        FaceIdx::from(usize::from(self) / 3)
+        FaceIdx(self.0 / 3)
+    }
+
+    /// Same as [`Self::previous`], but avoids the modulo by taking the corner's
+    /// face index. `face` must equal `self.face_idx()`.
+    pub fn previous_with_face_idx(self, face: FaceIdx) -> CornerIdx {
+        debug_assert_eq!(self.face_idx(), face);
+        let corner = self.0;
+        let base = face.0 * 3;
+        let out = if corner == base {
+            corner + 2
+        } else {
+            corner - 1
+        };
+        CornerIdx(out)
+    }
+
+    /// Same as [`Self::next`], but avoids the modulo by taking the corner's
+    /// face index. `face` must equal `self.face_idx()`.
+    pub fn next_with_face_idx(self, face: FaceIdx) -> CornerIdx {
+        debug_assert_eq!(self.face_idx(), face);
+        let corner = self.0;
+        let base = face.0 * 3;
+        let out = if corner == base + 2 { base } else { corner + 1 };
+        CornerIdx(out)
     }
 }
 

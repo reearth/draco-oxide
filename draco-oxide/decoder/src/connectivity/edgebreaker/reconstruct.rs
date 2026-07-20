@@ -10,8 +10,6 @@ use crate::Err;
 use draco_oxide_core::codec::connectivity::edgebreaker::symbol_encoder::Symbol;
 use draco_oxide_core::types::{CornerIdx, VertexIdx};
 
-const INVALID_VERTEX: usize = usize::MAX;
-
 /// The reconstructed connectivity: opposite/vertex corner maps and the derived data
 /// the attribute stages need.
 pub struct Reconstruction {
@@ -40,7 +38,7 @@ impl CornerTableBuilder {
         let num_corners = num_faces * 3;
         Self {
             opposite: vec![None; num_corners],
-            corner_to_vertex: vec![VertexIdx::from(INVALID_VERTEX); num_corners],
+            corner_to_vertex: vec![VertexIdx::INVALID; num_corners],
             vertex_corners: Vec::new(),
         }
     }
@@ -77,7 +75,7 @@ impl CornerTableBuilder {
     }
 
     fn set_left_most_corner(&mut self, v: VertexIdx, c: CornerIdx) {
-        if usize::from(v) != INVALID_VERTEX {
+        if v != VertexIdx::INVALID {
             self.vertex_corners[usize::from(v)] = Some(c);
         }
     }
