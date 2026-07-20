@@ -37,7 +37,9 @@ impl<'a> Traverser<'a> {
         if !self.is_vertex_visited(v) {
             self.out.push(c);
         }
-        unsafe { *self.visited_vertices.get_unchecked_mut(v) = true; }
+        unsafe {
+            *self.visited_vertices.get_unchecked_mut(v) = true;
+        }
     }
 
     pub fn compute_seqeunce(mut self) -> Vec<CornerIdx> {
@@ -64,7 +66,9 @@ impl<'a> Traverser<'a> {
             }
 
             // Coming here means that we are visiting a new face.
-            unsafe { *self.visited_faces.get_unchecked_mut(face_idx) = true; }
+            unsafe {
+                *self.visited_faces.get_unchecked_mut(face_idx) = true;
+            }
             // Once a face is marked visited it is never unmarked, and the pop
             // loop above skips any corner whose face is already visited. So stale
             // corners of this face still left on the stack (the handle case) are
@@ -97,9 +101,13 @@ impl<'a> Traverser<'a> {
             let right_face = right_corner.map(|c| c.face_idx());
             let left_face = left_corner.map(|c| c.face_idx());
 
-            if right_face.is_some() && unsafe { *self.visited_faces.get_unchecked(right_face.unwrap()) } {
+            if right_face.is_some()
+                && unsafe { *self.visited_faces.get_unchecked(right_face.unwrap()) }
+            {
                 // Right face has been visited
-                if left_face.is_some() && unsafe { *self.visited_faces.get_unchecked(left_face.unwrap()) } {
+                if left_face.is_some()
+                    && unsafe { *self.visited_faces.get_unchecked(left_face.unwrap()) }
+                {
                     // Both neighboring faces are visited, we can continue traversing. No update to the stack.
                 } else {
                     // Left face is unvisited or does not exist.
@@ -110,7 +118,9 @@ impl<'a> Traverser<'a> {
                 }
             } else {
                 // Right face is unvisited or does not exist.
-                if left_face.is_some() && unsafe { *self.visited_faces.get_unchecked(left_face.unwrap()) } {
+                if left_face.is_some()
+                    && unsafe { *self.visited_faces.get_unchecked(left_face.unwrap()) }
+                {
                     // Left face is visited.
                     // we need to traverse the right face if it exists.
                     if let Some(rc) = right_corner {

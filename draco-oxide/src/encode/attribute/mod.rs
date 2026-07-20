@@ -10,9 +10,10 @@ use crate::eval;
 
 use std::collections::HashMap;
 
-use draco_oxide_core::attribute::{Attribute, AttributeType};
+use draco_oxide_core::attribute::{Attribute, AttributeDomain, AttributeType};
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
+use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::connectivity::edgebreaker::TraversalType;
 use draco_oxide_core::mesh::ds::AttributeDS;
 use draco_oxide_core::types::{ConfigType, CornerIdx};
@@ -43,8 +44,17 @@ where
         {
             // encode decoder id
             writer.write_u8((i as u8).wrapping_sub(1));
-            // encode attribute type
-            att.att_data().get_domain().write_to(writer);
+            // Element type: a corner attribute without interior seams shares the
+            // position connectivity, so it is written as a vertex attribute,
+            // matching Google's encoder.
+            let domain = att.att_data().get_domain();
+            let wire_domain =
+                if domain == AttributeDomain::Corner && !att.corner_table().has_interior_seams() {
+                    AttributeDomain::Position
+                } else {
+                    domain
+                };
+            wire_domain.write_to(writer);
             // write traversal method for attribute encoding/decoding sequencer. We currently only support depth-first traversal.
             TraversalType::DepthFirst.write_to(writer);
         }
@@ -70,6 +80,11 @@ where
 
     // `adss` is built one-per-attribute and in the same order as `atts`, so each attribute is
     // paired with its own attribute data structure here.
+    //
+    // Attributes without interior seams share the position connectivity, so
+    // their traversal sequences are identical; the walk runs once and is
+    // reused for all of them.
+    let mut shared_sequence: Option<Vec<CornerIdx>> = None;
     for ads in adss {
         #[cfg(feature = "evaluation")]
         eval::scope_begin("attribute", writer);
@@ -80,6 +95,16 @@ where
             .map(|id| port_atts.iter().find(|att| att.get_id() == *id).unwrap())
             .collect::<Vec<_>>();
 
+        let sequence = if ads.corner_table().has_interior_seams() {
+            None
+        } else {
+            if shared_sequence.is_none() {
+                shared_sequence =
+                    Some(Traverser::new(&ads, corners_of_edgebreaker.clone()).compute_seqeunce());
+            }
+            shared_sequence.clone()
+        };
+
         let ty = ads.att_data().get_attribute_type();
         let len = ads.att_data().len();
         let encoder = attribute_encoder::AttributeEncoder::new(
@@ -88,6 +113,7 @@ where
             &corners_of_edgebreaker,
             writer,
             cfg.attribute.encoder_config_for(ty, len),
+            sequence,
         );
 
         let port_att = encoder.encode::<true, false>()?;

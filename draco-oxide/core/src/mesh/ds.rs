@@ -248,6 +248,16 @@ impl<'pos_ct> AttributeCornerTable<'pos_ct> {
         self.is_edge_on_seam[corner]
     }
 
+    /// True if any interior (non-boundary) edge is a seam, i.e. this
+    /// attribute's connectivity differs from the position connectivity.
+    /// Boundary edges are always seams and do not count.
+    pub fn has_interior_seams(&self) -> bool {
+        (0..self.is_edge_on_seam.len()).any(|c| {
+            let c = CornerIdx::from(c);
+            self.is_edge_on_seam[c] && self.pos_corner_table.opposite(c).is_some()
+        })
+    }
+
     pub fn pos_corner_table(&self) -> &CornerTable {
         self.pos_corner_table
     }

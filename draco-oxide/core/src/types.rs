@@ -141,10 +141,14 @@ macro_rules! vec_with_new_idx {
                         self.inner.swap(usize::from(idx1), usize::from(idx2));
                     }
 
+                    /// # Safety
+                    /// `idx` must be less than `self.len()`.
                     pub unsafe fn get_unchecked(&self, idx: $Idx) -> &T {
                         self.inner.get_unchecked(usize::from(idx))
                     }
 
+                    /// # Safety
+                    /// `idx` must be less than `self.len()`.
                     pub unsafe fn get_unchecked_mut(&mut self, idx: $Idx) -> &mut T {
                         self.inner.get_unchecked_mut(usize::from(idx))
                     }

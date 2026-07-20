@@ -59,10 +59,16 @@ pub(crate) fn fan_vertices(
     seam_sets: &[&[bool]],
     num_corners: usize,
 ) -> (VecCornerIdx<PointIdx>, Vec<FanVertices>) {
+    // Boundary edges are seams for every attribute and never split a fan, so
+    // only interior seams route an attribute off the shared fast paths.
     let mut seamed_indices = seam_sets
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.iter().any(|&b| b))
+        .filter(|(_, s)| {
+            s.iter()
+                .enumerate()
+                .any(|(c, &b)| b && pos_ct.opposite(CornerIdx::from(c)).is_some())
+        })
         .map(|(i, _)| i);
     match (seamed_indices.next(), seamed_indices.next()) {
         (None, _) => {

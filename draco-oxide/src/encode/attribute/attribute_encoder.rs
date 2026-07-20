@@ -212,6 +212,9 @@ pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, 'ds, W> {
     ads: AttributeDS<'ds>,
     /// Corners of the edgebreaker traversal, used to seed this attribute's sequencing.
     corners_of_edgebreaker: &'encoder [CornerIdx],
+    /// Traversal sequence shared by all attributes without interior seams;
+    /// `None` when this attribute has its own connectivity.
+    precomputed_sequence: Option<Vec<CornerIdx>>,
 }
 
 impl<'parents, 'encoder, 'writer, 'ds, W> AttributeEncoder<'parents, 'encoder, 'writer, 'ds, W>
@@ -225,6 +228,7 @@ where
         corners_of_edgebreaker: &'encoder [CornerIdx],
         writer: &'writer mut W,
         cfg: Config,
+        precomputed_sequence: Option<Vec<CornerIdx>>,
     ) -> Self {
         AttributeEncoder {
             cfg,
@@ -232,6 +236,18 @@ where
             parents,
             ads,
             corners_of_edgebreaker,
+            precomputed_sequence,
+        }
+    }
+
+    /// The traversal sequence of this attribute: the shared precomputed one if
+    /// present, otherwise a fresh walk.
+    fn take_sequence(&mut self) -> Vec<CornerIdx> {
+        match self.precomputed_sequence.take() {
+            Some(s) => s,
+            None => {
+                Traverser::new(&self.ads, self.corners_of_edgebreaker.to_vec()).compute_seqeunce()
+            }
         }
     }
 
@@ -270,9 +286,8 @@ where
     /// default normal path writes, so Google Draco (and our decoder) rebuild the
     /// geometry-derived predicted normals. The input normal values are never read;
     /// only the connectivity-derived value count (the traversal length) is used.
-    fn encode_zero_correction_normal(self) -> Result<Attribute, Err> {
-        let sequence =
-            Traverser::new(&self.ads, self.corners_of_edgebreaker.to_vec()).compute_seqeunce();
+    fn encode_zero_correction_normal(mut self) -> Result<Attribute, Err> {
+        let sequence = self.take_sequence();
         let num_values = sequence.len();
 
         const N: usize = 2;
@@ -345,7 +360,7 @@ where
     }
 
     fn encode_typed<const WRITE_NOW: bool, const BOOST: bool, const N: usize, T>(
-        self,
+        mut self,
     ) -> Result<Attribute, Err>
     where
         T: DataValue + Copy,
@@ -355,8 +370,7 @@ where
     {
         if !BOOST {
             if !self.corners_of_edgebreaker.is_empty() {
-                let sequence = Traverser::new(&self.ads, self.corners_of_edgebreaker.to_vec())
-                    .compute_seqeunce();
+                let sequence = self.take_sequence();
                 self.encode_impl_edgebreaker::<WRITE_NOW, _, NdVector<N, T>, N>(
                     sequence.into_iter(),
                 )

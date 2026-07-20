@@ -19,7 +19,7 @@ use draco_oxide_core::bit_coder::ByteReader;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::attribute::Portable;
-use draco_oxide_core::mesh::ds::{AttributeCornerTable, AttributeDS, DS};
+use draco_oxide_core::mesh::ds::{AttributeCornerTable, AttributeDS, GenericCornerTable, DS};
 use draco_oxide_core::types::{
     AttributeValueIdx, CornerIdx, NdVector, PointIdx, VecCornerIdx, VecPointIdx, VecVertexIdx,
     Vector, VertexIdx,
@@ -157,9 +157,18 @@ pub(crate) fn decode_attributes<R: ByteReader>(
     let ds = DS::new(corner_to_point);
     let seeds = sequence::traversal_seeds(conn.num_faces);
 
+    // Attributes without interior seams share the position connectivity, so
+    // their traversal sequences are identical; the walk runs once and is
+    // reused. Boundary edges are seams for every attribute and do not give an
+    // attribute its own connectivity.
+    let mut shared_seq: Option<Vec<CornerIdx>> = None;
     let mut attributes: Vec<Attribute> = Vec::with_capacity(num_atts);
     let mut transforms: Vec<AttributeTransform> = Vec::with_capacity(num_atts);
     for ((desc, seam), fan) in descriptors.iter().zip(seams).zip(fans) {
+        let seamless = !seam
+            .iter()
+            .enumerate()
+            .any(|(c, &b)| b && conn.corner_table.opposite(CornerIdx::from(c)).is_some());
         let act = AttributeCornerTable::new(&conn.corner_table, VecCornerIdx::from(seam));
         let placeholder = Attribute::new_empty(
             AttributeId::new(desc.uid as usize),
@@ -175,16 +184,25 @@ pub(crate) fn decode_attributes<R: ByteReader>(
             VecPointIdx::from(fan.point_to_vertex),
             placeholder,
         );
-        let seq = Traverser::new(&ads, seeds.clone()).compute_seqeunce();
+        let owned_seq;
+        let seq: &[CornerIdx] = if seamless {
+            if shared_seq.is_none() {
+                shared_seq = Some(Traverser::new(&ads, seeds.clone()).compute_seqeunce());
+            }
+            shared_seq.as_deref().unwrap()
+        } else {
+            owned_seq = Traverser::new(&ads, seeds.clone()).compute_seqeunce();
+            &owned_seq
+        };
 
         let parent = attributes
             .iter()
             .find(|a| a.get_attribute_type() == AttributeType::Position);
         let (att, transform) = match desc.portable_num_components() {
-            1 => decode_payload::<R, 1>(reader, &ads, &seq, parent, desc)?,
-            2 => decode_payload::<R, 2>(reader, &ads, &seq, parent, desc)?,
-            3 => decode_payload::<R, 3>(reader, &ads, &seq, parent, desc)?,
-            4 => decode_payload::<R, 4>(reader, &ads, &seq, parent, desc)?,
+            1 => decode_payload::<R, 1>(reader, &ads, seq, parent, desc)?,
+            2 => decode_payload::<R, 2>(reader, &ads, seq, parent, desc)?,
+            3 => decode_payload::<R, 3>(reader, &ads, seq, parent, desc)?,
+            4 => decode_payload::<R, 4>(reader, &ads, seq, parent, desc)?,
             _ => return Err(Err::MalformedAttribute("unsupported number of components")),
         };
         attributes.push(att);
