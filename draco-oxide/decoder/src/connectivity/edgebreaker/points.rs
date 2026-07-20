@@ -10,9 +10,19 @@ use draco_oxide_core::types::{CornerIdx, PointIdx, VecCornerIdx, VertexIdx};
 /// which corners share an attribute value. Point-to-vertex is a function
 /// because points are the finest common refinement of all attributes' sectors,
 /// so every point lies inside exactly one sector of each attribute.
+#[derive(Clone)]
 pub(crate) struct FanVertices {
     pub point_to_vertex: Vec<VertexIdx>,
     pub vertex_to_left_most_corner: Vec<CornerIdx>,
+}
+
+impl FanVertices {
+    fn new() -> Self {
+        Self {
+            point_to_vertex: Vec::new(),
+            vertex_to_left_most_corner: Vec::new(),
+        }
+    }
 }
 
 /// The sector-left-most start index of one closed fan: the first seam reached
@@ -49,13 +59,174 @@ pub(crate) fn fan_vertices(
     seam_sets: &[&[bool]],
     num_corners: usize,
 ) -> (VecCornerIdx<PointIdx>, Vec<FanVertices>) {
+    let mut seamed_indices = seam_sets
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.iter().any(|&b| b))
+        .map(|(i, _)| i);
+    match (seamed_indices.next(), seamed_indices.next()) {
+        (None, _) => {
+            let (corner_to_point, fv) = fan_vertices_seamless(pos_ct, num_corners);
+            (
+                VecCornerIdx::from(corner_to_point),
+                vec![fv; seam_sets.len()],
+            )
+        }
+        (Some(k), None) => {
+            let (corner_to_point, seamless, seamed) =
+                fan_vertices_one_seamed(pos_ct, seam_sets[k], num_corners);
+            let last_seamless = (0..seam_sets.len()).rev().find(|&i| i != k);
+            let mut seamless = Some(seamless);
+            let mut seamed = Some(seamed);
+            let outputs = (0..seam_sets.len())
+                .map(|i| {
+                    if i == k {
+                        seamed.take().unwrap()
+                    } else if Some(i) == last_seamless {
+                        seamless.take().unwrap()
+                    } else {
+                        seamless.clone().unwrap()
+                    }
+                })
+                .collect();
+            (VecCornerIdx::from(corner_to_point), outputs)
+        }
+        _ => fan_vertices_general(pos_ct, seam_sets, num_corners),
+    }
+}
+
+/// Fast path when no attribute carries a seam: every fan is a single sector,
+/// points coincide with position vertices, and all attributes share the same
+/// vertex numbering.
+fn fan_vertices_seamless(
+    pos_ct: &CornerTable,
+    num_corners: usize,
+) -> (Vec<PointIdx>, FanVertices) {
+    let mut corner_to_point = vec![PointIdx::from(usize::MAX); num_corners];
+    let mut out = FanVertices::new();
+    let mut visited = vec![false; num_corners];
+
+    for start in 0..num_corners {
+        if visited[start] {
+            continue;
+        }
+        let start = CornerIdx::from(start);
+
+        let mut pos_left_most = start;
+        let mut closed = false;
+        while let Some(l) = pos_ct.swing_left(pos_left_most) {
+            if l == start {
+                closed = true;
+                break;
+            }
+            pos_left_most = l;
+        }
+
+        let pt = out.vertex_to_left_most_corner.len();
+        corner_to_point[usize::from(pos_left_most)] = PointIdx::from(pt);
+        visited[usize::from(pos_left_most)] = true;
+        let mut prev = pos_left_most;
+        while let Some(curr) = pos_ct.swing_right(prev) {
+            if curr == pos_left_most {
+                break;
+            }
+            corner_to_point[usize::from(curr)] = PointIdx::from(pt);
+            visited[usize::from(curr)] = true;
+            prev = curr;
+        }
+
+        // A closed seamless fan numbers its single sector from the right
+        // neighbor of the position-left-most corner, matching the encoder.
+        let left_most = if closed {
+            pos_ct.swing_right(pos_left_most).unwrap_or(pos_left_most)
+        } else {
+            pos_left_most
+        };
+        out.vertex_to_left_most_corner.push(left_most);
+        out.point_to_vertex.push(VertexIdx::from(pt));
+    }
+
+    (corner_to_point, out)
+}
+
+/// Fast path when exactly one attribute carries seams: the union of all seams
+/// equals that attribute's seams, so points coincide with its vertices, and
+/// every seamless attribute keeps one vertex per fan.
+fn fan_vertices_one_seamed(
+    pos_ct: &CornerTable,
+    seams: &[bool],
+    num_corners: usize,
+) -> (Vec<PointIdx>, FanVertices, FanVertices) {
+    let mut corner_to_point = vec![PointIdx::from(usize::MAX); num_corners];
+    let mut seamless = FanVertices::new();
+    let mut seamed = FanVertices::new();
+    let mut num_points = 0usize;
+
+    let mut visited = vec![false; num_corners];
+    let mut fan: Vec<CornerIdx> = Vec::new();
+
+    for start in 0..num_corners {
+        if visited[start] {
+            continue;
+        }
+        let start = CornerIdx::from(start);
+
+        let mut pos_left_most = start;
+        let mut closed = false;
+        while let Some(l) = pos_ct.swing_left(pos_left_most) {
+            if l == start {
+                closed = true;
+                break;
+            }
+            pos_left_most = l;
+        }
+
+        fan.clear();
+        fan.push(pos_left_most);
+        visited[usize::from(pos_left_most)] = true;
+        let mut prev = pos_left_most;
+        while let Some(curr) = pos_ct.swing_right(prev) {
+            if curr == pos_left_most {
+                break;
+            }
+            fan.push(curr);
+            visited[usize::from(curr)] = true;
+            prev = curr;
+        }
+        let m = fan.len();
+
+        let s = if closed {
+            sector_start(|j| seams[usize::from(fan[j].next())], m)
+        } else {
+            0
+        };
+        let fan_vert = VertexIdx::from(seamless.vertex_to_left_most_corner.len());
+        let seamless_start = if closed && m > 1 { 1 } else { 0 };
+        seamless.vertex_to_left_most_corner.push(fan[seamless_start]);
+
+        // Fused pass: point ids equal the seamed attribute's vertex ids.
+        for jj in 0..m {
+            let idx = (s + jj) % m;
+            if jj == 0 || seams[usize::from(fan[idx].next())] {
+                seamed.vertex_to_left_most_corner.push(fan[idx]);
+                seamed.point_to_vertex.push(VertexIdx::from(num_points));
+                seamless.point_to_vertex.push(fan_vert);
+                num_points += 1;
+            }
+            corner_to_point[usize::from(fan[idx])] = PointIdx::from(num_points - 1);
+        }
+    }
+
+    (corner_to_point, seamless, seamed)
+}
+
+fn fan_vertices_general(
+    pos_ct: &CornerTable,
+    seam_sets: &[&[bool]],
+    num_corners: usize,
+) -> (VecCornerIdx<PointIdx>, Vec<FanVertices>) {
     let num_outputs = seam_sets.len();
-    let mut outputs: Vec<FanVertices> = (0..num_outputs)
-        .map(|_| FanVertices {
-            point_to_vertex: Vec::new(),
-            vertex_to_left_most_corner: Vec::new(),
-        })
-        .collect();
+    let mut outputs: Vec<FanVertices> = (0..num_outputs).map(|_| FanVertices::new()).collect();
     let mut corner_to_point = vec![PointIdx::from(usize::MAX); num_corners];
     let mut num_points = 0usize;
 
