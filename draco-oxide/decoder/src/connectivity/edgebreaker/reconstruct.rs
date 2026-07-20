@@ -139,6 +139,8 @@ pub fn reconstruct(
 
     let malformed = || Err::MalformedConnectivity("invalid edgebreaker symbol stream");
 
+    let valence = traversal.is_valence();
+
     for symbol_id in 0..num_symbols {
         let face = num_faces_built;
         num_faces_built += 1;
@@ -146,7 +148,7 @@ pub fn reconstruct(
         let c1 = CornerIdx::from(3 * face + 1);
         let c2 = CornerIdx::from(3 * face + 2);
 
-        let symbol = traversal.decode_symbol();
+        let symbol = traversal.decode_symbol()?;
         let mut check_topology_split = false;
 
         match symbol {
@@ -221,6 +223,7 @@ pub fn reconstruct(
                 ct.set_left_most_corner(vert_b_prev, c2);
                 let corner_n = corner_b.next();
                 let vertex_n = ct.vertex(corner_n);
+                traversal.merge_vertices(usize::from(vertex_p), usize::from(vertex_n));
                 let vertex_n_corner = ct.left_most_corner(vertex_n).ok_or_else(malformed)?;
                 ct.set_left_most_corner(vertex_p, vertex_n_corner);
                 let first_corner = corner_n;
@@ -254,6 +257,15 @@ pub fn reconstruct(
                 active_corner_stack.push(c0);
                 check_topology_split = true;
             }
+        }
+
+        if valence {
+            let top = *active_corner_stack.last().ok_or_else(malformed)?;
+            traversal.new_active_corner_reached(
+                usize::from(ct.vertex(top)),
+                usize::from(ct.vertex(top.next())),
+                usize::from(ct.vertex(top.previous())),
+            );
         }
 
         if check_topology_split {

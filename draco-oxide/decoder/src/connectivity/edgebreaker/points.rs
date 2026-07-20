@@ -98,10 +98,7 @@ pub(crate) fn fan_vertices(
 /// Fast path when no attribute carries a seam: every fan is a single sector,
 /// points coincide with position vertices, and all attributes share the same
 /// vertex numbering.
-fn fan_vertices_seamless(
-    pos_ct: &CornerTable,
-    num_corners: usize,
-) -> (Vec<PointIdx>, FanVertices) {
+fn fan_vertices_seamless(pos_ct: &CornerTable, num_corners: usize) -> (Vec<PointIdx>, FanVertices) {
     let mut corner_to_point = vec![PointIdx::from(usize::MAX); num_corners];
     let mut out = FanVertices::new();
     let mut visited = vec![false; num_corners];
@@ -202,7 +199,9 @@ fn fan_vertices_one_seamed(
         };
         let fan_vert = VertexIdx::from(seamless.vertex_to_left_most_corner.len());
         let seamless_start = if closed && m > 1 { 1 } else { 0 };
-        seamless.vertex_to_left_most_corner.push(fan[seamless_start]);
+        seamless
+            .vertex_to_left_most_corner
+            .push(fan[seamless_start]);
 
         // Fused pass: point ids equal the seamed attribute's vertex ids.
         for jj in 0..m {

@@ -7,8 +7,9 @@
 //! Google's Draco decoder in the field, so they must stay byte-identical
 //! across these optimizations.
 //!
-//! The fingerprints were captured from the pre-optimization implementation and
-//! confirmed byte-identical on the full 930-tile HighPoly corpus.
+//! The fingerprints are captured from the default configuration (valence
+//! edgebreaker traversal) and verified against Google's Draco decoder by the
+//! `draco_decode` round-trip test.
 
 use draco_oxide::core::types::ConfigType;
 use draco_oxide::{
@@ -60,11 +61,11 @@ fn encode_output_is_byte_stable() {
     }
 }
 
-const EXPECT_TETRA_LEN: usize = 846;
-const EXPECT_TETRA_HASH: u64 = 620833109304232433;
-const EXPECT_SPHERE_LEN: usize = 1962;
-const EXPECT_SPHERE_HASH: u64 = 11855373330842349000;
-const EXPECT_TORUS_LEN: usize = 4181;
-const EXPECT_TORUS_HASH: u64 = 8060327790296598891;
-const EXPECT_BUNNY_LEN: usize = 78931;
-const EXPECT_BUNNY_HASH: u64 = 5027511988744878004;
+const EXPECT_TETRA_LEN: usize = 865;
+const EXPECT_TETRA_HASH: u64 = 7810683086673090654;
+const EXPECT_SPHERE_LEN: usize = 1999;
+const EXPECT_SPHERE_HASH: u64 = 8223480994489536045;
+const EXPECT_TORUS_LEN: usize = 3259;
+const EXPECT_TORUS_HASH: u64 = 837891399272639176;
+const EXPECT_BUNNY_LEN: usize = 67014;
+const EXPECT_BUNNY_HASH: u64 = 16103118261359715806;

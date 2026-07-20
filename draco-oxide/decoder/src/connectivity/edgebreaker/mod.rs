@@ -13,19 +13,22 @@ use draco_oxide_core::types::CornerIdx;
 use draco_oxide_core::utils::bit_coder::leb128_read;
 
 use reconstruct::reconstruct;
-use traversal::{decode_topology_splits, TraversalDecoder};
+use traversal::{decode_topology_splits, TraversalDecoder, TraversalKind};
 
-/// The standard edgebreaker traversal type id.
+/// The edgebreaker traversal type ids on the wire.
 const TRAVERSAL_STANDARD: u8 = 0;
+const TRAVERSAL_VALENCE: u8 = 2;
 
 /// Decodes edgebreaker connectivity from `reader`, positioned just after the header
 /// (and metadata). Leaves the reader at the start of the attribute section.
 pub fn decode<R: ByteReader>(reader: &mut R) -> Result<Connectivity, Err> {
     let traversal_type = reader.read_u8()?;
-    if traversal_type != TRAVERSAL_STANDARD {
-        // Valence/predictive traversal decode arrives with Google interop.
-        return Err(Err::Unimplemented);
-    }
+    let kind = match traversal_type {
+        TRAVERSAL_STANDARD => TraversalKind::Standard,
+        TRAVERSAL_VALENCE => TraversalKind::Valence,
+        // Predictive traversal decode arrives with Google interop.
+        _ => return Err(Err::Unimplemented),
+    };
 
     let num_encoded_vertices = leb128_read(reader)? as usize;
     let num_faces = leb128_read(reader)? as usize;
@@ -35,7 +38,13 @@ pub fn decode<R: ByteReader>(reader: &mut R) -> Result<Connectivity, Err> {
 
     let splits = decode_topology_splits(reader)?;
 
-    let mut traversal = TraversalDecoder::start(reader, num_attribute_data)?;
+    let mut traversal = TraversalDecoder::start(
+        reader,
+        kind,
+        num_attribute_data,
+        num_encoded_vertices + num_encoded_split_symbols,
+        num_faces,
+    )?;
 
     let recon = reconstruct(
         &mut traversal,

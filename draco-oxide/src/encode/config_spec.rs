@@ -85,9 +85,9 @@ struct EdgebreakerSpec {
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 enum TraversalName {
-    #[default]
     Standard,
     Predictive,
+    #[default]
     Valence,
 }
 
