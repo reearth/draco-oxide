@@ -1,7 +1,11 @@
-# Geometric round-trip test: encode the Stanford bunny with draco-oxide, decode
-# it with Google Draco's reference decoder, then measure how far the decoded
-# surface drifted from the original with the area-weighted symmetric surface-L2
-# (RMS) metric (`L2Norm`).
+# Geometric round-trip test: encode the Stanford bunny with draco-oxide, then
+# decode the same stream twice — once with Google Draco's reference decoder and
+# once with draco-oxide's own decoder — and measure how far each decoded surface
+# drifted from the original with the area-weighted symmetric surface-L2 (RMS)
+# metric (`L2Norm`).
+#
+# The two decoders are also compared against each other, which gates draco-oxide's
+# decoder against the reference on the same bitstream.
 
 [[operations]]
 op = "DracoOxideEncode"
@@ -24,4 +28,30 @@ input1 = "bunny.obj"
 input2 = "decoded.obj"
 methods = [
     { method = "L2Norm", max = 0.0001 },
+]
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "oxide.drc"
+output = "decoded_oxide.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded_oxide.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "bunny.obj"
+input2 = "decoded_oxide.obj"
+methods = [
+    { method = "L2Norm", max = 0.0001 },
+]
+
+[[operations]]
+op = "Comparison"
+input1 = "decoded.obj"
+input2 = "decoded_oxide.obj"
+methods = [
+    { method = "L2Norm", max = 0.00001 },
 ]
