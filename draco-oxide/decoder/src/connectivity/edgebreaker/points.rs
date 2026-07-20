@@ -103,10 +103,15 @@ fn sector_start(is_seam: impl Fn(usize) -> bool, m: usize) -> usize {
 /// [`FanVertices`].
 ///
 /// Each fan's corners are reached once through the corner table (see
-/// [`collect_fan`]); the point assignment and every attribute's vertex
+/// [`for_each_fan`]); the point assignment and every attribute's vertex
 /// numbering are then derived from the buffered sequence with plain array
 /// reads, reproducing the per-attribute walk order exactly: sectors are
 /// numbered from the sector-left-most corner rightward.
+///
+/// Points and vertices are numbered in fan-visit order, which is not ascending
+/// corner order. Numbering is internal to the decode: values are placed by
+/// traversal rank, and the traversal is driven by corner adjacency, so any
+/// consistent numbering yields the same geometry.
 pub(crate) fn fan_vertices(
     pos_ct: &CornerTable,
     seam_sets: &[&[bool]],
@@ -151,53 +156,98 @@ pub(crate) fn fan_vertices(
     }
 }
 
-/// Collects the position fan containing `start` into `fan`, in right-sweep
-/// order from the position-left-most corner, marking each of its corners
-/// visited. Returns whether the fan is closed.
+/// Precomputed fan navigation: where a right swing lands from each corner, and
+/// the entry point of every open fan.
 ///
-/// Every corner is reached once: the walk runs left from `start` to the fan's
-/// left end, then right from `start` over the remainder. A closed fan is fully
-/// covered by the left walk alone.
-fn collect_fan(
-    pos_ct: &CornerTable,
-    start: CornerIdx,
-    visited: &mut VecCornerIdx<bool>,
-    fan: &mut Vec<CornerIdx>,
-) -> bool {
-    fan.clear();
-    // SAFETY: every corner marked here is `start` or comes from the corner
-    // table, so it is less than `visited.len()`.
-    let mut visit = |c: CornerIdx| unsafe { *visited.get_unchecked_mut(c) = true };
+/// Both come from one sequential scan of `opposite`. Because
+/// `swing_right(c) = opposite(c.previous()).map(previous)`, the load of
+/// `opposite(c)` supplies `swing_right(c.next())`, and where that load is
+/// `None` the edge is a boundary: `c.previous()` is then the left-most corner
+/// of its fan and `c.next()` the right-most.
+///
+/// Resolving the swings up front keeps the `%3` in `next`/`previous` off the
+/// walk's dependent load chain, where each step would otherwise wait on the
+/// previous one.
+struct FanNav {
+    swing_right: VecCornerIdx<CornerIdx>,
+    open_fan_seeds: Vec<CornerIdx>,
+}
 
-    fan.push(start);
-    visit(start);
-
-    let mut closed = false;
-    let mut prev = start;
-    while let Some(l) = pos_ct.swing_left(prev) {
-        if l == start {
-            closed = true;
-            break;
+impl FanNav {
+    fn new(pos_ct: &CornerTable, num_corners: usize) -> Self {
+        let mut swing_right = UninitCornerMap::new(num_corners);
+        let mut open_fan_seeds = Vec::new();
+        for c in 0..num_corners {
+            let c = CornerIdx::from(c);
+            let target = c.next();
+            match pos_ct.opposite(c) {
+                // SAFETY: `next` is a permutation of the corners, so `target`
+                // is in range and each slot is written exactly once.
+                Some(o) => unsafe { swing_right.set(target, o.previous()) },
+                None => {
+                    unsafe { swing_right.set(target, CornerIdx::INVALID) };
+                    open_fan_seeds.push(c.previous());
+                }
+            }
         }
-        fan.push(l);
-        visit(l);
-        prev = l;
-    }
-
-    // The left walk yields [start, l1, .., lk]; fan order is that reversed,
-    // followed by the corners right of `start`.
-    fan.reverse();
-
-    if !closed {
-        let mut prev = start;
-        while let Some(r) = pos_ct.swing_right(prev) {
-            fan.push(r);
-            visit(r);
-            prev = r;
+        Self {
+            // SAFETY: `next` covers every corner, so every slot was written.
+            swing_right: unsafe { swing_right.assume_init() },
+            open_fan_seeds,
         }
     }
 
-    closed
+    #[inline]
+    fn swing_right(&self, c: CornerIdx) -> CornerIdx {
+        // SAFETY: `c` is a corner of the table, so it is less than the length.
+        unsafe { *self.swing_right.get_unchecked(c) }
+    }
+}
+
+/// Calls `f` once per position fan with the fan's corners in right-sweep order
+/// from its position-left-most corner, and whether the fan is closed.
+///
+/// Open fans come first, entered directly at the left-most corner recorded by
+/// [`FanNav`], so no walk ever swings left. Every remaining corner then belongs
+/// to a closed fan, where a right swing always lands and the sweep ends by
+/// returning to where it began.
+fn for_each_fan(nav: &FanNav, num_corners: usize, mut f: impl FnMut(&[CornerIdx], bool)) {
+    let mut visited: VecCornerIdx<bool> = vec![false; num_corners].into();
+    let mut fan: Vec<CornerIdx> = Vec::new();
+    // SAFETY: every corner swept comes from the corner table, so it is less
+    // than `visited.len()`.
+    macro_rules! sweep {
+        ($from:expr, $stop:expr) => {{
+            fan.clear();
+            let mut c = $from;
+            loop {
+                fan.push(c);
+                unsafe { *visited.get_unchecked_mut(c) = true };
+                let r = nav.swing_right(c);
+                if r == $stop {
+                    break;
+                }
+                c = r;
+            }
+        }};
+    }
+
+    for &seed in &nav.open_fan_seeds {
+        sweep!(seed, CornerIdx::INVALID);
+        f(&fan, false);
+    }
+
+    for start in 0..num_corners {
+        let start = CornerIdx::from(start);
+        if visited[start] {
+            continue;
+        }
+        // A closed fan's position-left-most corner is the one whose left swing
+        // is `start`, i.e. `swing_right(start)`.
+        let pos_left_most = nav.swing_right(start);
+        sweep!(pos_left_most, pos_left_most);
+        f(&fan, true);
+    }
 }
 
 /// Fast path when no attribute carries a seam: every fan is a single sector,
@@ -207,58 +257,28 @@ fn fan_vertices_seamless(
     pos_ct: &CornerTable,
     num_corners: usize,
 ) -> (VecCornerIdx<PointIdx>, FanVertices) {
+    let nav = FanNav::new(pos_ct, num_corners);
     let mut corner_to_point = UninitCornerMap::new(num_corners);
     let mut out = FanVertices::new();
-    let mut visited: VecCornerIdx<bool> = vec![false; num_corners].into();
 
-    for start in 0..num_corners {
-        let start = CornerIdx::from(start);
-        if visited[start] {
-            continue;
-        }
-
+    for_each_fan(&nav, num_corners, |fan, closed| {
         let pt = PointIdx::from(out.vertex_to_left_most_corner.len());
-        // SAFETY: every corner passed here is `start` or comes from the corner
-        // table, so it is less than `num_corners`.
-        let mut visit = |c: CornerIdx| unsafe {
-            *visited.get_unchecked_mut(c) = true;
-            corner_to_point.set(c, pt);
-        };
-
-        let mut prev = start;
-        let mut closed = false;
-        visit(prev);
-        while let Some(l) = pos_ct.swing_left(prev) {
-            visit(l);
-            if l == start {
-                closed = true;
-                break;
-            }
-            prev = l;
-        }
-        let pos_left_most = prev;
-        prev = start;
-        if !closed {
-            while let Some(r) = pos_ct.swing_right(prev) {
-                visit(r);
-                prev = r;
-            }
+        for &c in fan {
+            // SAFETY: `fan` holds corner-table corners, all less than
+            // `num_corners`.
+            unsafe { corner_to_point.set(c, pt) };
         }
 
         // A closed seamless fan numbers its single sector from the right
         // neighbor of the position-left-most corner, matching the encoder.
-        let left_most = if closed {
-            pos_ct.swing_right(pos_left_most).unwrap_or(pos_left_most)
-        } else {
-            pos_left_most
-        };
+        let left_most = if closed { fan[1 % fan.len()] } else { fan[0] };
 
         out.vertex_to_left_most_corner.push(left_most);
         out.point_to_vertex.push(VertexIdx::from(usize::from(pt)));
-    }
+    });
 
-    // SAFETY: fans partition the corners and every corner of a fan is passed to
-    // `visit`, so every entry is initialized.
+    // SAFETY: fans partition the corners and every corner of a fan is written
+    // above, so every entry is initialized.
     (unsafe { corner_to_point.assume_init() }, out)
 }
 
@@ -275,16 +295,9 @@ fn fan_vertices_one_seamed(
     let mut seamed = FanVertices::new();
     let mut num_points = 0usize;
 
-    let mut visited: VecCornerIdx<bool> = vec![false; num_corners].into();
-    let mut fan: Vec<CornerIdx> = Vec::new();
+    let nav = FanNav::new(pos_ct, num_corners);
 
-    for start in 0..num_corners {
-        let start = CornerIdx::from(start);
-        if visited[start] {
-            continue;
-        }
-
-        let closed = collect_fan(pos_ct, start, &mut visited, &mut fan);
+    for_each_fan(&nav, num_corners, |fan, closed| {
         let m = fan.len();
 
         let s = if closed {
@@ -311,7 +324,7 @@ fn fan_vertices_one_seamed(
             // `num_corners`.
             unsafe { corner_to_point.set(fan[idx], PointIdx::from(num_points - 1)) };
         }
-    }
+    });
 
     // SAFETY: fans partition the corners and the pass above covers every corner
     // of each fan, so every entry is initialized.
@@ -329,25 +342,17 @@ fn fan_vertices_general(
     let mut corner_to_point = UninitCornerMap::new(num_corners);
     let mut num_points = 0usize;
 
-    let mut visited: VecCornerIdx<bool> = vec![false; num_corners].into();
-    // Scratch reused across fans: the fan's corners in right-sweep order from
-    // the position-left-most corner; per corner the edge index consulted for a
+    let nav = FanNav::new(pos_ct, num_corners);
+    // Scratch reused across fans: per corner the edge index consulted for a
     // seam crossing (the edge swung across to reach it); whether that edge is a
     // seam of any attribute (a point boundary); the fan-local point ids; and
     // each output's start index.
-    let mut fan: Vec<CornerIdx> = Vec::new();
     let mut crossed_edge: Vec<usize> = Vec::new();
     let mut is_point_boundary: Vec<bool> = Vec::new();
     let mut point_of: Vec<usize> = Vec::new();
     let mut starts: Vec<usize> = vec![0; num_outputs];
 
-    for start in 0..num_corners {
-        let start = CornerIdx::from(start);
-        if visited[start] {
-            continue;
-        }
-
-        let closed = collect_fan(pos_ct, start, &mut visited, &mut fan);
+    for_each_fan(&nav, num_corners, |fan, closed| {
         let m = fan.len();
         crossed_edge.clear();
         crossed_edge.extend(fan.iter().map(|&c| usize::from(c.next())));
@@ -406,7 +411,7 @@ fn fan_vertices_general(
                 }
             }
         }
-    }
+    });
 
     // SAFETY: fans partition the corners and the union pass covers every corner
     // of each fan, so every entry is initialized.
