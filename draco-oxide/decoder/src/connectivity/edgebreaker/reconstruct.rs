@@ -17,6 +17,10 @@ pub struct Reconstruction {
     pub opposite: Vec<Option<CornerIdx>>,
     /// Per-corner position vertex.
     pub corner_to_vertex: Vec<VertexIdx>,
+    /// Left-most corner per position vertex (`None` for isolated vertices); a
+    /// per-fan seed. For a hole (boundary) vertex it is the boundary-left-most
+    /// corner; for an interior vertex it is an arbitrary incident corner.
+    pub vertex_corners: Vec<Option<CornerIdx>>,
     /// Number of position vertices after isolated-vertex compaction.
     pub num_vertices: usize,
     /// Per-vertex boundary/hole flag (indexed by the pre-compaction vertex id).
@@ -358,6 +362,7 @@ pub fn reconstruct(
     Ok(Reconstruction {
         opposite: ct.opposite,
         corner_to_vertex: ct.corner_to_vertex,
+        vertex_corners: ct.vertex_corners,
         num_vertices,
         is_vert_hole,
         init_corners,

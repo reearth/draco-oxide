@@ -2,6 +2,7 @@
 //! driver that sequences, reverses prediction, inverts transforms, and hands back
 //! portable (quantized-integer) attributes.
 
+mod ds;
 mod inverse_transform;
 mod prediction;
 mod sequence;
@@ -9,7 +10,7 @@ mod sequence;
 #[cfg(feature = "dequantize")]
 pub(crate) mod dequantize;
 
-use crate::connectivity::{points, Connectivity};
+use crate::connectivity::Connectivity;
 use crate::entropy::{decode_symbols, unzigzag};
 use crate::{AttributeTransform, Err};
 use draco_oxide_core::attribute::{
@@ -19,11 +20,11 @@ use draco_oxide_core::bit_coder::ByteReader;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::attribute::Portable;
-use draco_oxide_core::mesh::ds::{AttributeCornerTable, AttributeDS, GenericCornerTable, DS};
+use draco_oxide_core::mesh::ds::AttributeDS;
 use draco_oxide_core::types::{
-    AttributeValueIdx, CornerIdx, NdVector, PointIdx, VecCornerIdx, VecPointIdx, VecVertexIdx,
-    Vector, VertexIdx,
+    AttributeValueIdx, CornerIdx, NdVector, PointIdx, VecPointIdx, Vector, VertexIdx,
 };
+use ds::{build_attribute_ds, build_ds, Input};
 
 use inverse_transform::InverseTransform;
 use prediction::Predictor;
@@ -140,22 +141,46 @@ pub(crate) fn decode_attributes<R: ByteReader>(
         ));
     }
 
-    // One fan walk yields the decoder-side point space (the finest common
-    // refinement of all seams) and every attribute's point-to-vertex map.
+    // The decoder-side point space (the finest common refinement of all seams)
+    // and every attribute's point-to-vertex map, reusing the fan structure the
+    // connectivity reconstruction already produced.
     let seam_sets: Vec<&[bool]> = seams.iter().map(|s| s.as_slice()).collect();
-    let (corner_to_point, fans) = points::fan_vertices(&conn.corner_table, &seam_sets, num_corners);
+    let fan_input = Input {
+        pos_ct: &conn.corner_table,
+        corner_to_vertex: &conn.corner_to_vertex,
+        vertex_corners: &conn.vertex_corners,
+        is_vert_hole: &conn.is_vert_hole,
+        num_vertices: conn.num_vertices,
+        num_corners,
+    };
+    let (ds, fans) = build_ds(fan_input, &seam_sets);
 
     let faces: Vec<[PointIdx; 3]> = (0..conn.num_faces)
         .map(|f| {
             [
-                corner_to_point[CornerIdx::from(3 * f)],
-                corner_to_point[CornerIdx::from(3 * f + 1)],
-                corner_to_point[CornerIdx::from(3 * f + 2)],
+                ds.point_idx(CornerIdx::from(3 * f)),
+                ds.point_idx(CornerIdx::from(3 * f + 1)),
+                ds.point_idx(CornerIdx::from(3 * f + 2)),
             ]
         })
         .collect();
-    let ds = DS::new(corner_to_point);
     let seeds = sequence::traversal_seeds(conn.num_faces);
+
+    // The placeholder attributes the decoded payloads replace, one per attribute
+    // in descriptor order.
+    let placeholders: Vec<Attribute> = descriptors
+        .iter()
+        .map(|desc| {
+            Attribute::new_empty(
+                AttributeId::new(desc.uid as usize),
+                desc.att_type,
+                desc.domain,
+                ComponentDataType::I32,
+                desc.portable_num_components(),
+            )
+        })
+        .collect();
+    let adss = build_attribute_ds(&ds, &conn.corner_table, fans, seams, placeholders);
 
     // Attributes without interior seams share the position connectivity, so
     // their traversal sequences are identical; the walk runs once and is
@@ -164,34 +189,16 @@ pub(crate) fn decode_attributes<R: ByteReader>(
     let mut shared_seq: Option<Vec<CornerIdx>> = None;
     let mut attributes: Vec<Attribute> = Vec::with_capacity(num_atts);
     let mut transforms: Vec<AttributeTransform> = Vec::with_capacity(num_atts);
-    for ((desc, seam), fan) in descriptors.iter().zip(seams).zip(fans) {
-        let seamless = !seam
-            .iter()
-            .enumerate()
-            .any(|(c, &b)| b && conn.corner_table.opposite(CornerIdx::from(c)).is_some());
-        let act = AttributeCornerTable::new(&conn.corner_table, VecCornerIdx::from(seam));
-        let placeholder = Attribute::new_empty(
-            AttributeId::new(desc.uid as usize),
-            desc.att_type,
-            desc.domain,
-            ComponentDataType::I32,
-            desc.portable_num_components(),
-        );
-        let ads = AttributeDS::new(
-            &ds,
-            act,
-            VecVertexIdx::from(fan.vertex_to_left_most_corner),
-            VecPointIdx::from(fan.point_to_vertex),
-            placeholder,
-        );
+    for (desc, ads) in descriptors.iter().zip(&adss) {
+        let seamless = !ads.corner_table().has_interior_seams();
         let owned_seq;
         let seq: &[CornerIdx] = if seamless {
             if shared_seq.is_none() {
-                shared_seq = Some(Traverser::new(&ads, seeds.clone()).compute_seqeunce());
+                shared_seq = Some(Traverser::new(ads, seeds.clone()).compute_seqeunce());
             }
             shared_seq.as_deref().unwrap()
         } else {
-            owned_seq = Traverser::new(&ads, seeds.clone()).compute_seqeunce();
+            owned_seq = Traverser::new(ads, seeds.clone()).compute_seqeunce();
             &owned_seq
         };
 
@@ -199,10 +206,10 @@ pub(crate) fn decode_attributes<R: ByteReader>(
             .iter()
             .find(|a| a.get_attribute_type() == AttributeType::Position);
         let (att, transform) = match desc.portable_num_components() {
-            1 => decode_payload::<R, 1>(reader, &ads, seq, parent, desc)?,
-            2 => decode_payload::<R, 2>(reader, &ads, seq, parent, desc)?,
-            3 => decode_payload::<R, 3>(reader, &ads, seq, parent, desc)?,
-            4 => decode_payload::<R, 4>(reader, &ads, seq, parent, desc)?,
+            1 => decode_payload::<R, 1>(reader, ads, seq, parent, desc)?,
+            2 => decode_payload::<R, 2>(reader, ads, seq, parent, desc)?,
+            3 => decode_payload::<R, 3>(reader, ads, seq, parent, desc)?,
+            4 => decode_payload::<R, 4>(reader, ads, seq, parent, desc)?,
             _ => return Err(Err::MalformedAttribute("unsupported number of components")),
         };
         attributes.push(att);

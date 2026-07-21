@@ -1,7 +1,6 @@
 //! Edgebreaker connectivity decode: counts, topology splits, and the driver that
 //! ties traversal, corner-table reconstruction, and point assignment together.
 
-pub(crate) mod points;
 mod reconstruct;
 mod traversal;
 
@@ -66,6 +65,7 @@ pub fn decode<R: ByteReader>(reader: &mut R) -> Result<Connectivity, Err> {
     Ok(Connectivity {
         corner_table: CornerTable::from_opposites(recon.opposite),
         corner_to_vertex: recon.corner_to_vertex,
+        vertex_corners: recon.vertex_corners,
         num_vertices: recon.num_vertices,
         num_faces,
         num_attribute_data,
