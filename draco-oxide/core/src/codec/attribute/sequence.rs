@@ -19,7 +19,7 @@ impl<'a, D: GenericAttributeDs> Traverser<'a, D> {
     pub fn new(ads: &'a D, corners_of_edgebreaker_traversal: Vec<CornerIdx>) -> Self {
         let num_faces = ads.num_faces();
         Self {
-            visited_vertices: vec![false; ads.num_vertices()].into(),
+            visited_vertices: vec![false; ads.vertex_index_bound()].into(),
             visited_faces: vec![false; num_faces].into(),
             ads,
             corner_traversal_stack: corners_of_edgebreaker_traversal, // The last encoded connected component gets decoded first

@@ -8,7 +8,8 @@ use std::mem::{ManuallyDrop, MaybeUninit};
 
 use draco_oxide_core::attribute::Attribute;
 use draco_oxide_core::mesh::ds::{
-    AttributeCornerTable, AttributeDS, CornerTable, GenericCornerTable, DS,
+    AttributeCornerTable, AttributeDS, CornerTable, GenericAttributeDs, GenericCornerTable,
+    IdentityDS, DS,
 };
 use draco_oxide_core::types::{
     CornerIdx, PointIdx, VecCornerIdx, VecPointIdx, VecVertexIdx, VertexIdx,
@@ -183,29 +184,134 @@ pub(crate) fn build_ds(input: Input, seam_sets: &[&[bool]]) -> (DS, Vec<RawAttri
     (DS::new(corner_to_point), outputs)
 }
 
-/// Assembles each attribute's [`AttributeDS`], borrowing the shared point `ds`
+/// Either the general seam-aware attribute structure or the identity structure
+/// for a seamed mesh's finest attribute. Both are traversed over an
+/// [`AttributeCornerTable`], so a decode over a mix of attributes holds them in
+/// one homogeneous collection while the finest one keeps its single-load
+/// `vertex_idx`.
+pub(crate) enum GeneralDs<'a> {
+    Seamed(AttributeDS<'a>),
+    Finest(IdentityDS<'a, AttributeCornerTable<'a>, PointIdx>),
+}
+
+impl<'a> GenericAttributeDs for GeneralDs<'a> {
+    type Ct = AttributeCornerTable<'a>;
+
+    #[inline]
+    fn corner_table(&self) -> &AttributeCornerTable<'a> {
+        match self {
+            GeneralDs::Seamed(d) => d.corner_table(),
+            GeneralDs::Finest(d) => GenericAttributeDs::corner_table(d),
+        }
+    }
+    #[inline]
+    fn vertex_idx(&self, corner: CornerIdx) -> VertexIdx {
+        match self {
+            GeneralDs::Seamed(d) => d.vertex_idx(corner),
+            GeneralDs::Finest(d) => d.vertex_idx(corner),
+        }
+    }
+    #[inline]
+    fn point_idx(&self, corner: CornerIdx) -> PointIdx {
+        match self {
+            GeneralDs::Seamed(d) => d.point_idx(corner),
+            GeneralDs::Finest(d) => d.point_idx(corner),
+        }
+    }
+    #[inline]
+    fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx {
+        match self {
+            GeneralDs::Seamed(d) => d.left_most_corner(vertex),
+            GeneralDs::Finest(d) => d.left_most_corner(vertex),
+        }
+    }
+    #[inline]
+    fn vertex_index_bound(&self) -> usize {
+        match self {
+            GeneralDs::Seamed(d) => d.num_vertices(),
+            GeneralDs::Finest(d) => d.vertex_index_bound(),
+        }
+    }
+    #[inline]
+    fn num_points(&self) -> usize {
+        match self {
+            GeneralDs::Seamed(d) => d.num_points(),
+            GeneralDs::Finest(d) => d.num_points(),
+        }
+    }
+    #[inline]
+    fn num_faces(&self) -> usize {
+        match self {
+            GeneralDs::Seamed(d) => d.num_faces(),
+            GeneralDs::Finest(d) => d.num_faces(),
+        }
+    }
+    #[inline]
+    fn num_corners(&self) -> usize {
+        match self {
+            GeneralDs::Seamed(d) => d.num_corners(),
+            GeneralDs::Finest(d) => d.num_corners(),
+        }
+    }
+    #[inline]
+    fn att_data(&self) -> &Attribute {
+        match self {
+            GeneralDs::Seamed(d) => d.att_data(),
+            GeneralDs::Finest(d) => d.att_data(),
+        }
+    }
+    #[inline]
+    fn att_data_mut(&mut self) -> &mut Attribute {
+        match self {
+            GeneralDs::Seamed(d) => d.att_data_mut(),
+            GeneralDs::Finest(d) => d.att_data_mut(),
+        }
+    }
+    #[inline]
+    fn has_interior_seams(&self) -> bool {
+        match self {
+            GeneralDs::Seamed(d) => GenericAttributeDs::has_interior_seams(d),
+            GeneralDs::Finest(d) => d.has_interior_seams(),
+        }
+    }
+}
+
+/// Assembles each attribute's data structure, borrowing the shared point `ds`
 /// and position corner table, and consuming the per-attribute vertex maps from
 /// [`build_ds`], the decoded seam edges, and the placeholder attributes. The
-/// three inputs are parallel and equal length (one entry per attribute).
+/// three inputs are parallel and equal length (one entry per attribute). An
+/// attribute whose vertex count equals the point count is the finest one (its
+/// seams generate the whole refinement), so its points coincide with its
+/// vertices and it takes the single-load identity structure.
 pub(crate) fn build_attribute_ds<'a>(
     ds: &'a DS,
     pos_ct: &'a CornerTable,
     fans: Vec<RawAttributeDS>,
     seams: Vec<Vec<bool>>,
     placeholders: Vec<Attribute>,
-) -> Vec<AttributeDS<'a>> {
+) -> Vec<GeneralDs<'a>> {
+    let num_points = ds.num_points();
     fans.into_iter()
         .zip(seams)
         .zip(placeholders)
         .map(|((fan, seam), placeholder)| {
             let corner_table = AttributeCornerTable::new(pos_ct, VecCornerIdx::from(seam));
-            AttributeDS::new(
-                ds,
-                corner_table,
-                VecVertexIdx::from(fan.vertex_to_left_most_corner),
-                VecPointIdx::from(fan.point_to_vertex),
-                placeholder,
-            )
+            if fan.vertex_to_left_most_corner.len() == num_points {
+                GeneralDs::Finest(IdentityDS::finest(
+                    ds,
+                    corner_table,
+                    fan.vertex_to_left_most_corner,
+                    placeholder,
+                ))
+            } else {
+                GeneralDs::Seamed(AttributeDS::new(
+                    ds,
+                    corner_table,
+                    VecVertexIdx::from(fan.vertex_to_left_most_corner),
+                    VecPointIdx::from(fan.point_to_vertex),
+                    placeholder,
+                ))
+            }
         })
         .collect()
 }

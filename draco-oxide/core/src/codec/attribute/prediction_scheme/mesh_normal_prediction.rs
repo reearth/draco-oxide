@@ -121,7 +121,7 @@ where
         );
         let pos = parents[0]; // we made sure that the first parent is the position attribute
 
-        let mut sums = vec![NdVector::<3, i64>::zero(); ads.num_vertices()];
+        let mut sums = vec![NdVector::<3, i64>::zero(); ads.vertex_index_bound()];
         for f in 0..ads.num_faces() {
             let c0 = CornerIdx::from(3 * f);
             let pos_c0 = pos.get::<NdVector<3, i32>, 3>(ads.point_idx(c0));

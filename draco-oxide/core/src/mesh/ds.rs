@@ -37,6 +37,13 @@ impl DS {
         self.corner_to_point_map[corner]
     }
 
+    /// The corner-to-point map as a plain slice. Used by the identity data
+    /// structure of the finest attribute, whose vertices coincide with the
+    /// points, so this map is directly its corner-to-vertex map.
+    pub fn corner_to_point(&self) -> &[PointIdx] {
+        self.corner_to_point_map.as_slice()
+    }
+
     pub fn num_faces(&self) -> usize {
         self.num_faces
     }
@@ -167,7 +174,12 @@ pub trait GenericAttributeDs {
     fn vertex_idx(&self, corner: CornerIdx) -> VertexIdx;
     fn point_idx(&self, corner: CornerIdx) -> PointIdx;
     fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx;
-    fn num_vertices(&self) -> usize;
+    /// The size of the vertex index space, i.e. an exclusive upper bound for
+    /// every value [`Self::vertex_idx`] can return. This is what per-vertex
+    /// working arrays must be sized by. It equals the number of referenced
+    /// vertices for a compactly numbered structure, but may exceed it when the
+    /// numbering includes phantom (unreferenced) vertex ids.
+    fn vertex_index_bound(&self) -> usize;
     fn num_points(&self) -> usize;
     fn num_faces(&self) -> usize;
     fn num_corners(&self) -> usize;
@@ -227,7 +239,7 @@ impl<'a> GenericAttributeDs for AttributeDS<'a> {
         AttributeDS::left_most_corner(self, vertex)
     }
     #[inline]
-    fn num_vertices(&self) -> usize {
+    fn vertex_index_bound(&self) -> usize {
         AttributeDS::num_vertices(self)
     }
     #[inline]
@@ -264,69 +276,132 @@ impl<'a> GenericAttributeDs for AttributeDS<'a> {
     }
 }
 
-/// The identity attribute data structure: points coincide with position
-/// vertices and the attribute is traversed over the base [`CornerTable`]. Valid
-/// only when no attribute carries an interior seam, in which case every
-/// attribute shares the position connectivity and the point/seam layer of
-/// [`AttributeDS`] would be an identity map. It borrows the connectivity the
-/// edgebreaker reconstruction already produced instead of rebuilding it.
-pub struct IdentityDS<'a> {
-    corner_table: &'a CornerTable,
-    /// Per-corner position vertex (also the point, since points equal vertices).
-    corner_to_vertex: &'a [VertexIdx],
-    /// Left-most corner per vertex; every referenced vertex has one.
-    vertex_corners: &'a [Option<CornerIdx>],
-    num_vertices: usize,
+/// Per-vertex left-most corner. The edgebreaker reconstruction already holds
+/// these as seeds (phantom vertices are `None`), so the seamless case borrows
+/// them; the point-fan builder produces a fresh, phantom-free vector with no
+/// longer-lived owner, so the finest case takes ownership.
+enum LeftMost<'a> {
+    Borrowed(&'a [Option<CornerIdx>]),
+    Owned(Vec<CornerIdx>),
+}
+
+impl LeftMost<'_> {
+    #[inline]
+    fn get(&self, vertex: usize) -> CornerIdx {
+        match self {
+            LeftMost::Borrowed(s) => s[vertex].unwrap_or(CornerIdx::INVALID),
+            LeftMost::Owned(s) => s[vertex],
+        }
+    }
+}
+
+/// The identity attribute data structure: points coincide with vertices, so
+/// [`Self::vertex_idx`] is a single direct load with no point-to-vertex
+/// composition. It is valid for any attribute whose vertices equal the points
+/// it is traversed over:
+///
+/// - a fully seamless mesh, where every attribute rides the position
+///   [`CornerTable`] and the points are the position vertices (`CT =
+///   &CornerTable`, `V = VertexIdx`); or
+/// - the finest attribute of a seamed mesh, whose own seams generate the whole
+///   point refinement so its vertices are the points, traversed over its
+///   [`AttributeCornerTable`] (`CT = AttributeCornerTable`, `V = PointIdx`, the
+///   corner-to-vertex map borrowed from [`DS::corner_to_point`]).
+///
+/// It borrows the corner-to-vertex and left-most-corner maps its source already
+/// produced instead of rebuilding them.
+pub struct IdentityDS<'a, CT, V> {
+    corner_table: CT,
+    corner_to_vertex: &'a [V],
+    left_most: LeftMost<'a>,
+    /// Size of the vertex (== point) index space; may include phantom ids.
+    index_bound: usize,
     num_faces: usize,
+    /// Whether this attribute's connectivity carries an interior seam. False
+    /// for the seamless case, true for a seamed mesh's finest attribute.
+    interior_seams: bool,
     att: Attribute,
 }
 
-impl<'a> IdentityDS<'a> {
-    pub fn new(
+impl<'a> IdentityDS<'a, &'a CornerTable, VertexIdx> {
+    /// The identity structure for a fully seamless mesh, borrowing the maps the
+    /// reconstruction produced. `vertex_index_bound` is the reconstruction's
+    /// allocated vertex count, which may include phantom (isolated) vertices.
+    pub fn seamless(
         corner_table: &'a CornerTable,
         corner_to_vertex: &'a [VertexIdx],
         vertex_corners: &'a [Option<CornerIdx>],
-        num_vertices: usize,
+        vertex_index_bound: usize,
         att: Attribute,
     ) -> Self {
         Self {
             corner_table,
             corner_to_vertex,
-            vertex_corners,
-            num_vertices,
+            left_most: LeftMost::Borrowed(vertex_corners),
+            index_bound: vertex_index_bound,
             num_faces: corner_to_vertex.len() / 3,
+            interior_seams: false,
             att,
         }
     }
 }
 
-impl<'a> GenericAttributeDs for IdentityDS<'a> {
-    type Ct = CornerTable;
+impl<'a> IdentityDS<'a, AttributeCornerTable<'a>, PointIdx> {
+    /// The identity structure for the finest attribute of a seamed mesh. Its
+    /// vertices are the points, so its corner-to-vertex map is
+    /// [`DS::corner_to_point`]. The caller must have verified this attribute is
+    /// finest, i.e. its vertex count equals `ds.num_points()`.
+    pub fn finest(
+        ds: &'a DS,
+        corner_table: AttributeCornerTable<'a>,
+        vertex_to_left_most_corner: Vec<CornerIdx>,
+        att: Attribute,
+    ) -> Self {
+        Self {
+            corner_table,
+            corner_to_vertex: ds.corner_to_point(),
+            left_most: LeftMost::Owned(vertex_to_left_most_corner),
+            index_bound: ds.num_points(),
+            num_faces: ds.num_faces(),
+            interior_seams: true,
+            att,
+        }
+    }
+}
+
+impl<'a, CT, V> GenericAttributeDs for IdentityDS<'a, CT, V>
+where
+    CT: GenericCornerTable,
+    V: Copy + Into<usize>,
+{
+    type Ct = CT;
 
     #[inline]
-    fn corner_table(&self) -> &CornerTable {
-        self.corner_table
+    fn corner_table(&self) -> &CT {
+        &self.corner_table
     }
     #[inline]
     fn vertex_idx(&self, corner: CornerIdx) -> VertexIdx {
-        self.corner_to_vertex[usize::from(corner)]
+        let v: usize = self.corner_to_vertex[usize::from(corner)].into();
+        VertexIdx::from(v)
     }
     #[inline]
     fn point_idx(&self, corner: CornerIdx) -> PointIdx {
         // Points coincide with vertices in the identity case.
-        PointIdx::from(usize::from(self.corner_to_vertex[usize::from(corner)]))
+        let v: usize = self.corner_to_vertex[usize::from(corner)].into();
+        PointIdx::from(v)
     }
     #[inline]
     fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx {
-        self.vertex_corners[usize::from(vertex)].unwrap_or(CornerIdx::INVALID)
+        self.left_most.get(usize::from(vertex))
     }
     #[inline]
-    fn num_vertices(&self) -> usize {
-        self.num_vertices
+    fn vertex_index_bound(&self) -> usize {
+        self.index_bound
     }
     #[inline]
     fn num_points(&self) -> usize {
-        self.num_vertices
+        self.index_bound
     }
     #[inline]
     fn num_faces(&self) -> usize {
@@ -343,6 +418,10 @@ impl<'a> GenericAttributeDs for IdentityDS<'a> {
     #[inline]
     fn att_data_mut(&mut self) -> &mut Attribute {
         &mut self.att
+    }
+    #[inline]
+    fn has_interior_seams(&self) -> bool {
+        self.interior_seams
     }
 }
 
@@ -393,6 +472,16 @@ pub trait GenericCornerTable {
         face: FaceIdx,
     ) -> Option<CornerIdx> {
         self.opposite(corner.next_with_face_idx(face))
+    }
+}
+
+/// Lets a shared reference stand in as a corner table, so a data structure
+/// generic over its corner table type can borrow one (e.g. the position
+/// [`CornerTable`]) instead of owning it.
+impl<T: GenericCornerTable + ?Sized> GenericCornerTable for &T {
+    #[inline]
+    fn opposite(&self, corner: CornerIdx) -> Option<CornerIdx> {
+        (**self).opposite(corner)
     }
 }
 

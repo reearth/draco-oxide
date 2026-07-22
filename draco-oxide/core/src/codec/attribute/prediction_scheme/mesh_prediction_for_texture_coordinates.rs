@@ -283,7 +283,7 @@ where
             ads,
             pos_att: parents[0],
             orientation: Vec::new(), // Initialize orientation vector
-            visited: vec![false; ads.num_vertices()],
+            visited: vec![false; ads.vertex_index_bound()],
             synced: 0,
         }
     }

@@ -123,6 +123,10 @@ macro_rules! vec_with_new_idx {
                     pub fn into_inner(self) -> ::std::vec::Vec<T> { self.inner }
 
                     #[allow(unused)]
+                    /// Borrow the contents as a plain slice.
+                    pub fn as_slice(&self) -> &[T] { &self.inner }
+
+                    #[allow(unused)]
                     pub fn iter(&self) -> impl Iterator<Item = &T> {
                         self.inner.iter()
                     }

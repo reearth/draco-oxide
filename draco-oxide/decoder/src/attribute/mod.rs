@@ -205,10 +205,10 @@ pub(crate) fn decode_attributes<R: ByteReader>(
                 ]
             })
             .collect();
-        let adss: Vec<IdentityDS> = placeholders
+        let adss: Vec<_> = placeholders
             .into_iter()
             .map(|placeholder| {
-                IdentityDS::new(
+                IdentityDS::seamless(
                     &conn.corner_table,
                     &conn.corner_to_vertex,
                     &conn.vertex_corners,
@@ -356,7 +356,7 @@ where
         parents_ids,
     );
 
-    let mut vertex_rank = vec![usize::MAX; ads.num_vertices()];
+    let mut vertex_rank = vec![usize::MAX; ads.vertex_index_bound()];
     for (k, &c) in sequence.iter().enumerate() {
         vertex_rank[usize::from(ads.vertex_idx(c))] = k;
     }

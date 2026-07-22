@@ -26,7 +26,7 @@ where
 
     fn new(_parents: &[&'parents Attribute], ads: &'parents D) -> Self {
         Self {
-            visited: vec![false; ads.num_vertices()],
+            visited: vec![false; ads.vertex_index_bound()],
             synced: 0,
             ads,
         }
