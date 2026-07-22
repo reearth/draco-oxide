@@ -6,12 +6,12 @@ use crate::utils::bit_coder::leb128_write;
 use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
 use crate::attribute::AttributeType;
-use crate::mesh::ds::AttributeDS;
+use crate::mesh::ds::GenericAttributeDs;
 use crate::types::NdVector;
 use crate::types::Vector;
 
-pub struct MeshNormalPrediction<'parents, const N: usize> {
-    ads: &'parents AttributeDS<'parents>,
+pub struct MeshNormalPrediction<'parents, const N: usize, D: GenericAttributeDs> {
+    ads: &'parents D,
     /// Per-vertex precomputed prediction (octahedral, quantized), indexed by
     /// `VertexIdx`. Built once in `new()`; `predict` only looks it up and applies
     /// the sign flip.
@@ -19,7 +19,7 @@ pub struct MeshNormalPrediction<'parents, const N: usize> {
     flips: Vec<bool>,
 }
 
-impl<'parents, const N: usize> MeshNormalPrediction<'parents, N>
+impl<'parents, const N: usize, D: GenericAttributeDs> MeshNormalPrediction<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -28,7 +28,7 @@ where
     /// of which corner is chosen as the apex, so a face's normal can be computed
     /// once (from any corner) and reused for all three of its vertices.
     fn compute_normal_of_face(
-        ads: &AttributeDS,
+        ads: &D,
         pos: &Attribute,
         c: CornerIdx,
         pos_c: NdVector<3, i32>,
@@ -37,8 +37,8 @@ where
         let c_next = c.next();
         let c_prev = c.previous();
 
-        let pos_next = pos.get::<NdVector<3, i32>, 3>(ads.global_ds().point_idx(c_next));
-        let pos_prev = pos.get::<NdVector<3, i32>, 3>(ads.global_ds().point_idx(c_prev));
+        let pos_next = pos.get::<NdVector<3, i32>, 3>(ads.point_idx(c_next));
+        let pos_prev = pos.get::<NdVector<3, i32>, 3>(ads.point_idx(c_prev));
 
         // Compute the difference to next and prev.
         let delta_next = pos_next - pos_c;
@@ -92,7 +92,7 @@ where
     }
 }
 
-impl<'parents, const N: usize> MeshNormalPrediction<'parents, N>
+impl<'parents, const N: usize, D: GenericAttributeDs> MeshNormalPrediction<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -104,8 +104,8 @@ where
     }
 }
 
-impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N>
-    for MeshNormalPrediction<'parents, N>
+impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'parents, N, D>
+    for MeshNormalPrediction<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -113,7 +113,7 @@ where
 
     type AdditionalDataForMetadata = ();
 
-    fn new(parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self {
+    fn new(parents: &[&'parents Attribute], ads: &'parents D) -> Self {
         assert!(parents.len() == 1, "MeshNormalPrediction requires exactly one parent attribute for position. but it has {} parents.", parents.len());
         assert!(
             parents[0].get_attribute_type() == AttributeType::Position,
@@ -122,9 +122,9 @@ where
         let pos = parents[0]; // we made sure that the first parent is the position attribute
 
         let mut sums = vec![NdVector::<3, i64>::zero(); ads.num_vertices()];
-        for f in 0..ads.global_ds().num_faces() {
+        for f in 0..ads.num_faces() {
             let c0 = CornerIdx::from(3 * f);
-            let pos_c0 = pos.get::<NdVector<3, i32>, 3>(ads.global_ds().point_idx(c0));
+            let pos_c0 = pos.get::<NdVector<3, i32>, 3>(ads.point_idx(c0));
             let face_normal = Self::compute_normal_of_face(ads, pos, c0, pos_c0);
             for i in 0..3 {
                 let v = ads.vertex_idx(CornerIdx::from(3 * f + i));
@@ -159,7 +159,7 @@ where
         let v = self.ads.vertex_idx(c);
         let mut out = self.predicted[usize::from(v)];
 
-        let actual_val = attribute.get::<NdVector<N, i32>, N>(self.ads.global_ds().point_idx(c));
+        let actual_val = attribute.get::<NdVector<N, i32>, N>(self.ads.point_idx(c));
         let diff1 = out - actual_val;
         let diff2 = out * -1 - actual_val;
         if diff1.dot(diff1) > diff2.dot(diff2) {

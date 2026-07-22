@@ -1,16 +1,16 @@
 use crate::attribute::Attribute;
 use crate::codec::attribute::prediction_scheme::PredictionSchemeImpl;
-use crate::mesh::ds::AttributeDS;
+use crate::mesh::ds::GenericAttributeDs;
 use crate::types::NdVector;
 use crate::types::{CornerIdx, Vector, VertexIdx};
 
-pub struct MeshMultiParallelogramPrediction<'parents, const N: usize> {
+pub struct MeshMultiParallelogramPrediction<'parents, const N: usize, D: GenericAttributeDs> {
     #[allow(unused)] // TODO: Remove this field when the implementation is complete
-    ads: &'parents AttributeDS<'parents>,
+    ads: &'parents D,
 }
 
-impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N>
-    for MeshMultiParallelogramPrediction<'parents, N>
+impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'parents, N, D>
+    for MeshMultiParallelogramPrediction<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -18,7 +18,7 @@ where
 
     type AdditionalDataForMetadata = ();
 
-    fn new(_parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self {
+    fn new(_parents: &[&'parents Attribute], ads: &'parents D) -> Self {
         Self { ads }
     }
 

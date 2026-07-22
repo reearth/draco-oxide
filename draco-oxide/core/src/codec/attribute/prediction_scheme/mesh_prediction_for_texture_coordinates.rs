@@ -2,7 +2,7 @@ use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
 use crate::bit_coder::ByteWriter;
 use crate::codec::entropy::rans::RabsCoder;
-use crate::mesh::ds::AttributeDS;
+use crate::mesh::ds::GenericAttributeDs;
 use crate::safety_assert_eq;
 use crate::types::NdVector;
 use crate::types::{CornerIdx, PointIdx, VertexIdx};
@@ -21,8 +21,8 @@ where
     Single(NdVector<N, i32>),
 }
 
-pub struct MeshPredictionForTextureCoordinates<'parents, const N: usize> {
-    ads: &'parents AttributeDS<'parents>,
+pub struct MeshPredictionForTextureCoordinates<'parents, const N: usize, D: GenericAttributeDs> {
+    ads: &'parents D,
     pos_att: &'parents Attribute,
     orientation: Vec<bool>, // Stores orientation for encoder
     // O(1) "has this vertex been processed yet" membership, replacing a linear
@@ -33,7 +33,8 @@ pub struct MeshPredictionForTextureCoordinates<'parents, const N: usize> {
     synced: usize,
 }
 
-impl<'parents, const N: usize> MeshPredictionForTextureCoordinates<'parents, N>
+impl<'parents, const N: usize, D: GenericAttributeDs>
+    MeshPredictionForTextureCoordinates<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -79,7 +80,7 @@ where
         let next_corner = c.next();
         let next_vertex = self.ads.vertex_idx(next_corner);
         if self.visited[usize::from(next_vertex)] {
-            return attribute.get(self.ads.global_ds().point_idx(next_corner));
+            return attribute.get(self.ads.point_idx(next_corner));
         }
 
         // The following chunk of code is supposed to be there, but it is commented out
@@ -94,11 +95,7 @@ where
 
         // Use the most recently processed vertex
         if let Some(&last_vertex) = vertices_up_till_now.last() {
-            return attribute.get(
-                self.ads
-                    .global_ds()
-                    .point_idx(self.ads.left_most_corner(last_vertex)),
-            );
+            return attribute.get(self.ads.point_idx(self.ads.left_most_corner(last_vertex)));
         }
 
         // If none applies, then this is the first prediction. return zero
@@ -133,9 +130,9 @@ where
         let prev_corner = i.previous();
 
         // Get vertex indices from corners
-        let next_pt = self.ads.global_ds().point_idx(next_corner);
-        let prev_pt = self.ads.global_ds().point_idx(prev_corner);
-        let curr_pt = self.ads.global_ds().point_idx(i);
+        let next_pt = self.ads.point_idx(next_corner);
+        let prev_pt = self.ads.point_idx(prev_corner);
+        let curr_pt = self.ads.point_idx(i);
 
         let next_vertex = self.ads.vertex_idx(next_corner);
         let prev_vertex = self.ads.vertex_idx(prev_corner);
@@ -272,8 +269,8 @@ where
     }
 }
 
-impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N>
-    for MeshPredictionForTextureCoordinates<'parents, N>
+impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'parents, N, D>
+    for MeshPredictionForTextureCoordinates<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -281,7 +278,7 @@ where
 
     type AdditionalDataForMetadata = ();
 
-    fn new(parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self {
+    fn new(parents: &[&'parents Attribute], ads: &'parents D) -> Self {
         Self {
             ads,
             pos_att: parents[0],
@@ -310,7 +307,7 @@ where
             TexCoordsPrediction::Oriented(predicted_uv_0, predicted_uv_1) => {
                 // Choose the orientation that gives the better prediction and
                 // record it for the decoder.
-                let curr_pt = self.ads.global_ds().point_idx(i);
+                let curr_pt = self.ads.point_idx(i);
                 let curr_uv: NdVector<N, i32> = attribute.get(curr_pt);
                 let curr_uv =
                     NdVector::<2, i64>::from([*curr_uv.get(0) as i64, *curr_uv.get(1) as i64]);

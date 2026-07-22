@@ -20,7 +20,7 @@ use draco_oxide_core::bit_coder::ByteReader;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::attribute::Portable;
-use draco_oxide_core::mesh::ds::AttributeDS;
+use draco_oxide_core::mesh::ds::{GenericAttributeDs, GenericCornerTable, IdentityDS};
 use draco_oxide_core::types::{
     AttributeValueIdx, CornerIdx, NdVector, PointIdx, VecPointIdx, Vector, VertexIdx,
 };
@@ -141,29 +141,7 @@ pub(crate) fn decode_attributes<R: ByteReader>(
         ));
     }
 
-    // The decoder-side point space (the finest common refinement of all seams)
-    // and every attribute's point-to-vertex map, reusing the fan structure the
-    // connectivity reconstruction already produced.
     let seam_sets: Vec<&[bool]> = seams.iter().map(|s| s.as_slice()).collect();
-    let fan_input = Input {
-        pos_ct: &conn.corner_table,
-        corner_to_vertex: &conn.corner_to_vertex,
-        vertex_corners: &conn.vertex_corners,
-        is_vert_hole: &conn.is_vert_hole,
-        num_vertices: conn.num_vertices,
-        num_corners,
-    };
-    let (ds, fans) = build_ds(fan_input, &seam_sets);
-
-    let faces: Vec<[PointIdx; 3]> = (0..conn.num_faces)
-        .map(|f| {
-            [
-                ds.point_idx(CornerIdx::from(3 * f)),
-                ds.point_idx(CornerIdx::from(3 * f + 1)),
-                ds.point_idx(CornerIdx::from(3 * f + 2)),
-            ]
-        })
-        .collect();
     let seeds = sequence::traversal_seeds(conn.num_faces);
 
     // The placeholder attributes the decoded payloads replace, one per attribute
@@ -180,41 +158,68 @@ pub(crate) fn decode_attributes<R: ByteReader>(
             )
         })
         .collect();
-    let adss = build_attribute_ds(&ds, &conn.corner_table, fans, seams, placeholders);
 
-    // Attributes without interior seams share the position connectivity, so
-    // their traversal sequences are identical; the walk runs once and is
-    // reused. Boundary edges are seams for every attribute and do not give an
-    // attribute its own connectivity.
-    let mut shared_seq: Option<Vec<CornerIdx>> = None;
-    let mut attributes: Vec<Attribute> = Vec::with_capacity(num_atts);
-    let mut transforms: Vec<AttributeTransform> = Vec::with_capacity(num_atts);
-    for (desc, ads) in descriptors.iter().zip(&adss) {
-        let seamless = !ads.corner_table().has_interior_seams();
-        let owned_seq;
-        let seq: &[CornerIdx] = if seamless {
-            if shared_seq.is_none() {
-                shared_seq = Some(Traverser::new(ads, seeds.clone()).compute_seqeunce());
-            }
-            shared_seq.as_deref().unwrap()
-        } else {
-            owned_seq = Traverser::new(ads, seeds.clone()).compute_seqeunce();
-            &owned_seq
-        };
+    // When no attribute carries an interior seam, points coincide with position
+    // vertices for every attribute: the whole point/seam layer of `AttributeDS`
+    // would be an identity map. Take the identity fast path, which reuses the
+    // connectivity the reconstruction already produced instead of rebuilding a
+    // point data structure and per-attribute corner tables.
+    let any_interior_seam = seam_sets.iter().any(|s| {
+        s.iter()
+            .enumerate()
+            .any(|(c, &b)| b && conn.corner_table.opposite(CornerIdx::from(c)).is_some())
+    });
 
-        let parent = attributes
-            .iter()
-            .find(|a| a.get_attribute_type() == AttributeType::Position);
-        let (att, transform) = match desc.portable_num_components() {
-            1 => decode_payload::<R, 1>(reader, ads, seq, parent, desc)?,
-            2 => decode_payload::<R, 2>(reader, ads, seq, parent, desc)?,
-            3 => decode_payload::<R, 3>(reader, ads, seq, parent, desc)?,
-            4 => decode_payload::<R, 4>(reader, ads, seq, parent, desc)?,
-            _ => return Err(Err::MalformedAttribute("unsupported number of components")),
+    let (faces, attributes, transforms) = if any_interior_seam {
+        // General path: build the refined point space and each attribute's
+        // sector decomposition.
+        let fan_input = Input {
+            pos_ct: &conn.corner_table,
+            corner_to_vertex: &conn.corner_to_vertex,
+            vertex_corners: &conn.vertex_corners,
+            is_vert_hole: &conn.is_vert_hole,
+            num_vertices: conn.num_vertices,
+            num_corners,
         };
-        attributes.push(att);
-        transforms.push(transform);
-    }
+        let (ds, fans) = build_ds(fan_input, &seam_sets);
+        let faces: Vec<[PointIdx; 3]> = (0..conn.num_faces)
+            .map(|f| {
+                [
+                    ds.point_idx(CornerIdx::from(3 * f)),
+                    ds.point_idx(CornerIdx::from(3 * f + 1)),
+                    ds.point_idx(CornerIdx::from(3 * f + 2)),
+                ]
+            })
+            .collect();
+        let adss = build_attribute_ds(&ds, &conn.corner_table, fans, seams, placeholders);
+        let (attributes, transforms) = decode_payloads(reader, &descriptors, &adss, &seeds)?;
+        (faces, attributes, transforms)
+    } else {
+        // Identity path: points equal position vertices.
+        let faces: Vec<[PointIdx; 3]> = (0..conn.num_faces)
+            .map(|f| {
+                [
+                    PointIdx::from(usize::from(conn.corner_to_vertex[3 * f])),
+                    PointIdx::from(usize::from(conn.corner_to_vertex[3 * f + 1])),
+                    PointIdx::from(usize::from(conn.corner_to_vertex[3 * f + 2])),
+                ]
+            })
+            .collect();
+        let adss: Vec<IdentityDS> = placeholders
+            .into_iter()
+            .map(|placeholder| {
+                IdentityDS::new(
+                    &conn.corner_table,
+                    &conn.corner_to_vertex,
+                    &conn.vertex_corners,
+                    conn.num_vertices,
+                    placeholder,
+                )
+            })
+            .collect();
+        let (attributes, transforms) = decode_payloads(reader, &descriptors, &adss, &seeds)?;
+        (faces, attributes, transforms)
+    };
 
     Ok(DecodedAttributes {
         faces,
@@ -223,13 +228,56 @@ pub(crate) fn decode_attributes<R: ByteReader>(
     })
 }
 
+/// Decodes every attribute payload over the shared connectivity `adss`, generic
+/// over the attribute data structure so the caller dispatches the identity fast
+/// path or the general one. Attributes without interior seams share the
+/// position connectivity, so their traversal sequences are identical; the walk
+/// runs once and is reused.
+fn decode_payloads<R: ByteReader, D: GenericAttributeDs>(
+    reader: &mut R,
+    descriptors: &[Descriptor],
+    adss: &[D],
+    seeds: &[CornerIdx],
+) -> Result<(Vec<Attribute>, Vec<AttributeTransform>), Err> {
+    let mut shared_seq: Option<Vec<CornerIdx>> = None;
+    let mut attributes: Vec<Attribute> = Vec::with_capacity(adss.len());
+    let mut transforms: Vec<AttributeTransform> = Vec::with_capacity(adss.len());
+    for (desc, ads) in descriptors.iter().zip(adss) {
+        let seamless = !ads.has_interior_seams();
+        let owned_seq;
+        let seq: &[CornerIdx] = if seamless {
+            if shared_seq.is_none() {
+                shared_seq = Some(Traverser::new(ads, seeds.to_vec()).compute_seqeunce());
+            }
+            shared_seq.as_deref().unwrap()
+        } else {
+            owned_seq = Traverser::new(ads, seeds.to_vec()).compute_seqeunce();
+            &owned_seq
+        };
+
+        let parent = attributes
+            .iter()
+            .find(|a| a.get_attribute_type() == AttributeType::Position);
+        let (att, transform) = match desc.portable_num_components() {
+            1 => decode_payload::<R, 1, D>(reader, ads, seq, parent, desc)?,
+            2 => decode_payload::<R, 2, D>(reader, ads, seq, parent, desc)?,
+            3 => decode_payload::<R, 3, D>(reader, ads, seq, parent, desc)?,
+            4 => decode_payload::<R, 4, D>(reader, ads, seq, parent, desc)?,
+            _ => return Err(Err::MalformedAttribute("unsupported number of components")),
+        };
+        attributes.push(att);
+        transforms.push(transform);
+    }
+    Ok((attributes, transforms))
+}
+
 /// Decodes one attribute's payload: prediction/transform ids, the correction
 /// stream, the scheme and transform metadata (in the scheme-dependent order the
 /// encoder writes them), the portabilization parameters, and finally the
 /// prediction-reversal loop over the traversal sequence.
-fn decode_payload<R: ByteReader, const N: usize>(
+fn decode_payload<R: ByteReader, const N: usize, D: GenericAttributeDs>(
     reader: &mut R,
-    ads: &AttributeDS<'_>,
+    ads: &D,
     sequence: &[CornerIdx],
     parent: Option<&Attribute>,
     desc: &Descriptor,
@@ -312,9 +360,8 @@ where
     for (k, &c) in sequence.iter().enumerate() {
         vertex_rank[usize::from(ads.vertex_idx(c))] = k;
     }
-    let gds = ads.global_ds();
-    let mut point_map = vec![AttributeValueIdx::from(0); gds.num_points()];
-    for c in 0..gds.num_corners() {
+    let mut point_map = vec![AttributeValueIdx::from(0); ads.num_points()];
+    for c in 0..ads.num_corners() {
         let c = CornerIdx::from(c);
         let rank = vertex_rank[usize::from(ads.vertex_idx(c))];
         if rank == usize::MAX {
@@ -322,12 +369,12 @@ where
                 "traversal did not reach every attribute vertex",
             ));
         }
-        point_map[usize::from(gds.point_idx(c))] = AttributeValueIdx::from(rank);
+        point_map[usize::from(ads.point_idx(c))] = AttributeValueIdx::from(rank);
     }
     att.set_point_to_att_val_map(Some(VecPointIdx::from(point_map)));
 
     let parent_refs: Vec<&Attribute> = parent.into_iter().collect();
-    let mut predictor = Predictor::<N>::new(&scheme_ty, &parent_refs, ads, flips, orientations)?;
+    let mut predictor = Predictor::<N, D>::new(&scheme_ty, &parent_refs, ads, flips, orientations)?;
 
     // Reverse the prediction in traversal order. Predictions only ever read
     // values at already visited vertices, so the partially filled attribute is

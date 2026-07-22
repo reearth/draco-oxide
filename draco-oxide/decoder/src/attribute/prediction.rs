@@ -12,7 +12,7 @@ use draco_oxide_core::codec::attribute::prediction_scheme::{
     mesh_prediction_for_texture_coordinates::MeshPredictionForTextureCoordinates,
     PredictionSchemeImpl, PredictionSchemeType,
 };
-use draco_oxide_core::mesh::ds::AttributeDS;
+use draco_oxide_core::mesh::ds::GenericAttributeDs;
 use draco_oxide_core::types::{CornerIdx, NdVector, Vector, VertexIdx};
 use draco_oxide_core::utils::bit_coder::leb128_read;
 
@@ -86,25 +86,25 @@ pub(crate) fn decode_orientation_metadata<R: ByteReader>(reader: &mut R) -> Resu
 /// The decode-side predictor: wraps the core prediction schemes, feeding the
 /// decoded flip/orientation metadata where the encoder consulted the actual
 /// values.
-pub(crate) enum Predictor<'p, const N: usize>
+pub(crate) enum Predictor<'p, const N: usize, D: GenericAttributeDs>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
     NoPrediction,
-    Delta(DeltaPrediction<'p, N>),
-    Parallelogram(MeshParallelogramPrediction<'p, N>),
+    Delta(DeltaPrediction<'p, N, D>),
+    Parallelogram(MeshParallelogramPrediction<'p, N, D>),
     TexCoords {
-        scheme: MeshPredictionForTextureCoordinates<'p, N>,
+        scheme: MeshPredictionForTextureCoordinates<'p, N, D>,
         orientations: Vec<bool>,
     },
     Normal {
-        scheme: MeshNormalPrediction<'p, N>,
+        scheme: MeshNormalPrediction<'p, N, D>,
         flips: Vec<bool>,
         next: usize,
     },
 }
 
-impl<'p, const N: usize> Predictor<'p, N>
+impl<'p, const N: usize, D: GenericAttributeDs> Predictor<'p, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -113,7 +113,7 @@ where
     pub(crate) fn new(
         scheme_ty: &PredictionSchemeType,
         parents: &[&'p Attribute],
-        ads: &'p AttributeDS<'p>,
+        ads: &'p D,
         flips: Vec<bool>,
         orientations: Vec<bool>,
     ) -> Result<Self, Err> {

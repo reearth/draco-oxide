@@ -7,14 +7,18 @@ pub mod mesh_prediction_for_texture_coordinates;
 
 use crate::attribute::Attribute;
 use crate::bit_coder::{ByteReader, ByteWriter};
-use crate::mesh::ds::AttributeDS;
+use crate::mesh::ds::GenericAttributeDs;
 use crate::types::NdVector;
 use crate::types::{ConfigType, CornerIdx, Vector, VertexIdx};
 
 /// PredictionScheme traits are not generic and the structs implementing the
 /// trait are generic. This is so because some of the structs need to store
 /// the previous values in order to compute the current value.
-pub trait PredictionSchemeImpl<'parents, const N: usize>
+///
+/// `D` is the attribute data structure the scheme reads its already decoded
+/// values from; the caller monomorphizes it (e.g. the general `AttributeDS` or
+/// the identity fast path) and the scheme never needs to know which.
+pub trait PredictionSchemeImpl<'parents, const N: usize, D: GenericAttributeDs>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -26,7 +30,7 @@ where
     type AdditionalDataForMetadata;
 
     /// Creates the prediction.
-    fn new(parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self;
+    fn new(parents: &[&'parents Attribute], ads: &'parents D) -> Self;
 
     // This function is not used in the current implementation, but it will be used in the future
     // to allow multiple encoding groups for one attribute.
@@ -146,32 +150,36 @@ pub enum Err {
     RanscoderError(#[from] crate::codec::entropy::rans::Err),
 }
 
-pub enum PredictionScheme<'parents, const N: usize> {
-    DeltaPrediction(delta_prediction::DeltaPrediction<'parents, N>),
+pub enum PredictionScheme<'parents, const N: usize, D: GenericAttributeDs> {
+    DeltaPrediction(delta_prediction::DeltaPrediction<'parents, N, D>),
     DerivativePrediction(
-        derivative_prediction::DerivativePredictionForTextureCoordinates<'parents, N>,
+        derivative_prediction::DerivativePredictionForTextureCoordinates<'parents, N, D>,
     ),
     MeshMultiParallelogramPrediction(
-        mesh_multi_parallelogram_prediction::MeshMultiParallelogramPrediction<'parents, N>,
+        mesh_multi_parallelogram_prediction::MeshMultiParallelogramPrediction<'parents, N, D>,
     ),
     MeshParallelogramPrediction(
-        mesh_parallelogram_prediction::MeshParallelogramPrediction<'parents, N>,
+        mesh_parallelogram_prediction::MeshParallelogramPrediction<'parents, N, D>,
     ),
-    MeshNormalPrediction(mesh_normal_prediction::MeshNormalPrediction<'parents, N>),
+    MeshNormalPrediction(mesh_normal_prediction::MeshNormalPrediction<'parents, N, D>),
     MeshPredictionForTextureCoordinates(
-        mesh_prediction_for_texture_coordinates::MeshPredictionForTextureCoordinates<'parents, N>,
+        mesh_prediction_for_texture_coordinates::MeshPredictionForTextureCoordinates<
+            'parents,
+            N,
+            D,
+        >,
     ),
     NoPrediction(NoPrediction),
 }
 
-impl<'parents, const N: usize> PredictionScheme<'parents, N>
+impl<'parents, const N: usize, D: GenericAttributeDs> PredictionScheme<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
     pub fn new(
         ty: PredictionSchemeType,
         parents: &[&'parents Attribute],
-        ads: &'parents AttributeDS<'parents>,
+        ads: &'parents D,
     ) -> Self {
         match ty {
             PredictionSchemeType::DeltaPrediction => {
@@ -221,7 +229,7 @@ where
     pub fn read_from<R>(
         reader: &mut R,
         parents: &[&'parents Attribute],
-        ads: &'parents AttributeDS<'parents>,
+        ads: &'parents D,
     ) -> Result<Self, usize>
     where
         R: ByteReader,
@@ -372,13 +380,13 @@ impl NoPrediction {
     }
 }
 
-impl<'a, const N: usize> PredictionSchemeImpl<'a, N> for NoPrediction
+impl<'a, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'a, N, D> for NoPrediction
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
     const ID: u32 = 0;
     type AdditionalDataForMetadata = ();
-    fn new(_parents: &[&'a Attribute], _ads: &'a AttributeDS<'a>) -> Self {
+    fn new(_parents: &[&'a Attribute], _ads: &'a D) -> Self {
         unreachable!()
     }
 

@@ -1,12 +1,12 @@
 use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
-use crate::mesh::ds::{AttributeDS, GenericCornerTable};
+use crate::mesh::ds::{GenericAttributeDs, GenericCornerTable};
 use crate::types::NdVector;
 use crate::types::Vector;
 use crate::types::{CornerIdx, VertexIdx};
 
-pub struct MeshParallelogramPrediction<'parents, const N: usize> {
-    ads: &'parents AttributeDS<'parents>,
+pub struct MeshParallelogramPrediction<'parents, const N: usize, D: GenericAttributeDs> {
+    ads: &'parents D,
     // O(1) "has this vertex been processed yet" membership, replacing a linear
     // scan of `vertices_up_till_now` on every predict (which made the encode
     // loop O(corners^2)). Indexed by VertexIdx; `synced` tracks how much of the
@@ -15,8 +15,8 @@ pub struct MeshParallelogramPrediction<'parents, const N: usize> {
     synced: usize,
 }
 
-impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N>
-    for MeshParallelogramPrediction<'parents, N>
+impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'parents, N, D>
+    for MeshParallelogramPrediction<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -24,7 +24,7 @@ where
 
     type AdditionalDataForMetadata = ();
 
-    fn new(_parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self {
+    fn new(_parents: &[&'parents Attribute], ads: &'parents D) -> Self {
         Self {
             visited: vec![false; ads.num_vertices()],
             synced: 0,
@@ -224,11 +224,7 @@ where
                     // If there is no opposite corner, then we cannot do the parallelogram prediction.
                     // return the most recent value instead.
                     return if let Some(&last_v) = vertices_up_till_now.last() {
-                        attribute.get(
-                            self.ads
-                                .global_ds()
-                                .point_idx(self.ads.left_most_corner(last_v)),
-                        )
+                        attribute.get(self.ads.point_idx(self.ads.left_most_corner(last_v)))
                     } else {
                         // If there are no vertices or corners up till now, return a zero vector.
                         NdVector::<N, i32>::zero()
@@ -238,11 +234,7 @@ where
                 // If there is no opposite corner, then we cannot do the parallelogram prediction.
                 // return the most recent value instead.
                 return if let Some(&last_v) = vertices_up_till_now.last() {
-                    attribute.get(
-                        self.ads
-                            .global_ds()
-                            .point_idx(self.ads.left_most_corner(last_v)),
-                    )
+                    attribute.get(self.ads.point_idx(self.ads.left_most_corner(last_v)))
                 } else {
                     // If there are no vertices or corners up till now, return a zero vector.
                     NdVector::<N, i32>::zero()
@@ -250,9 +242,9 @@ where
             }
         };
 
-        let diagonal = self.ads.global_ds().point_idx(diagonal);
-        let a = self.ads.global_ds().point_idx(a);
-        let b = self.ads.global_ds().point_idx(b);
+        let diagonal = self.ads.point_idx(diagonal);
+        let a = self.ads.point_idx(a);
+        let b = self.ads.point_idx(b);
 
         let a_coord = attribute.get::<NdVector<N, i32>, N>(a);
         let b_coord = attribute.get::<NdVector<N, i32>, N>(b);

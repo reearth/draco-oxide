@@ -1,23 +1,23 @@
-use crate::mesh::ds::{AttributeDS, GenericCornerTable};
+use crate::mesh::ds::{GenericAttributeDs, GenericCornerTable};
 use crate::types::{CornerIdx, VecFaceIdx, VecVertexIdx, VertexIdx};
 
 #[derive(Debug, Clone)]
-pub struct Traverser<'a> {
-    ads: &'a AttributeDS<'a>,
+pub struct Traverser<'a, D: GenericAttributeDs> {
+    ads: &'a D,
     visited_vertices: VecVertexIdx<bool>,
     visited_faces: VecFaceIdx<bool>,
     corner_traversal_stack: Vec<CornerIdx>,
     out: Vec<CornerIdx>,
 }
 
-impl<'a> Traverser<'a> {
+impl<'a, D: GenericAttributeDs> Traverser<'a, D> {
     /// Creates a new `Traverser` instance.
     /// # Arguments
     /// * `ads` - A reference to the attribute data structure to traverse.
     /// * `corners_of_edgebreaker_traversal` - A vector of corner indices
     ///   representing the last-encoded corners for connected components in encoded order.
-    pub fn new(ads: &'a AttributeDS, corners_of_edgebreaker_traversal: Vec<CornerIdx>) -> Self {
-        let num_faces = ads.global_ds().num_faces();
+    pub fn new(ads: &'a D, corners_of_edgebreaker_traversal: Vec<CornerIdx>) -> Self {
+        let num_faces = ads.num_faces();
         Self {
             visited_vertices: vec![false; ads.num_vertices()].into(),
             visited_faces: vec![false; num_faces].into(),
