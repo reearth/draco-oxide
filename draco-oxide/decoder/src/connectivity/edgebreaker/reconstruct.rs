@@ -13,14 +13,15 @@ use draco_oxide_core::types::{CornerIdx, VertexIdx};
 /// The reconstructed connectivity: opposite/vertex corner maps and the derived data
 /// the attribute stages need.
 pub struct Reconstruction {
-    /// Per-corner opposite corner (`None` on boundaries).
-    pub opposite: Vec<Option<CornerIdx>>,
+    /// Per-corner opposite corner (`CornerIdx::INVALID` on boundaries).
+    pub opposite: Vec<CornerIdx>,
     /// Per-corner position vertex.
     pub corner_to_vertex: Vec<VertexIdx>,
-    /// Left-most corner per position vertex (`None` for isolated vertices); a
-    /// per-fan seed. For a hole (boundary) vertex it is the boundary-left-most
-    /// corner; for an interior vertex it is an arbitrary incident corner.
-    pub vertex_corners: Vec<Option<CornerIdx>>,
+    /// Left-most corner per position vertex (`CornerIdx::INVALID` for isolated
+    /// vertices); a per-fan seed. For a hole (boundary) vertex it is the
+    /// boundary-left-most corner; for an interior vertex it is an arbitrary
+    /// incident corner.
+    pub vertex_corners: Vec<CornerIdx>,
     /// Number of position vertices after isolated-vertex compaction.
     pub num_vertices: usize,
     /// Per-vertex boundary/hole flag (indexed by the pre-compaction vertex id).
@@ -29,31 +30,36 @@ pub struct Reconstruction {
     pub init_corners: Vec<CornerIdx>,
 }
 
-/// Mutable corner-table state used during reconstruction.
+/// Mutable corner-table state used during reconstruction. The corner tables are
+/// stored with a `CornerIdx::INVALID` sentinel rather than `Option<CornerIdx>`
+/// so each entry is 4 bytes, halving the footprint the scattered per-symbol
+/// accesses touch; the accessors still hand out `Option` at their boundary.
 struct CornerTableBuilder {
-    opposite: Vec<Option<CornerIdx>>,
+    /// Per-corner opposite corner (`INVALID` on boundaries).
+    opposite: Vec<CornerIdx>,
     corner_to_vertex: Vec<VertexIdx>,
-    /// Left-most corner per vertex (`None` when isolated).
-    vertex_corners: Vec<Option<CornerIdx>>,
+    /// Left-most corner per vertex (`INVALID` when isolated).
+    vertex_corners: Vec<CornerIdx>,
 }
 
 impl CornerTableBuilder {
     fn new(num_faces: usize) -> Self {
         let num_corners = num_faces * 3;
         Self {
-            opposite: vec![None; num_corners],
+            opposite: vec![CornerIdx::INVALID; num_corners],
             corner_to_vertex: vec![VertexIdx::INVALID; num_corners],
             vertex_corners: Vec::new(),
         }
     }
 
     fn opposite(&self, c: CornerIdx) -> Option<CornerIdx> {
-        self.opposite[usize::from(c)]
+        let o = self.opposite[usize::from(c)];
+        (o != CornerIdx::INVALID).then_some(o)
     }
 
     fn set_opposite_corners(&mut self, a: CornerIdx, b: CornerIdx) {
-        self.opposite[usize::from(a)] = Some(b);
-        self.opposite[usize::from(b)] = Some(a);
+        self.opposite[usize::from(a)] = b;
+        self.opposite[usize::from(b)] = a;
     }
 
     fn vertex(&self, c: CornerIdx) -> VertexIdx {
@@ -66,7 +72,7 @@ impl CornerTableBuilder {
 
     fn add_new_vertex(&mut self) -> VertexIdx {
         let v = self.vertex_corners.len();
-        self.vertex_corners.push(None);
+        self.vertex_corners.push(CornerIdx::INVALID);
         VertexIdx::from(v)
     }
 
@@ -75,17 +81,18 @@ impl CornerTableBuilder {
     }
 
     fn left_most_corner(&self, v: VertexIdx) -> Option<CornerIdx> {
-        self.vertex_corners[usize::from(v)]
+        let c = self.vertex_corners[usize::from(v)];
+        (c != CornerIdx::INVALID).then_some(c)
     }
 
     fn set_left_most_corner(&mut self, v: VertexIdx, c: CornerIdx) {
         if v != VertexIdx::INVALID {
-            self.vertex_corners[usize::from(v)] = Some(c);
+            self.vertex_corners[usize::from(v)] = c;
         }
     }
 
     fn make_vertex_isolated(&mut self, v: VertexIdx) {
-        self.vertex_corners[usize::from(v)] = None;
+        self.vertex_corners[usize::from(v)] = CornerIdx::INVALID;
     }
 
     fn swing_left(&self, c: CornerIdx) -> Option<CornerIdx> {
@@ -117,9 +124,9 @@ fn take_topology_split(
     Some(Ok((s.source_edge_right, s.split_symbol_id)))
 }
 
-/// Runs the spirale-reversi reconstruction.
-pub fn reconstruct(
-    traversal: &mut TraversalDecoder,
+/// Runs the spirale-reversi reconstruction over a concrete traversal variant.
+pub fn reconstruct<T: TraversalDecoder>(
+    traversal: &mut T,
     num_symbols: usize,
     num_encoded_vertices: usize,
     num_split_symbols: usize,
@@ -141,8 +148,6 @@ pub fn reconstruct(
 
     let malformed = || Err::MalformedConnectivity("invalid edgebreaker symbol stream");
 
-    let valence = traversal.is_valence();
-
     for symbol_id in 0..num_symbols {
         let face = num_faces_built;
         num_faces_built += 1;
@@ -153,21 +158,36 @@ pub fn reconstruct(
         let symbol = traversal.decode_symbol()?;
         let mut check_topology_split = false;
 
+        let top = active_corner_stack.last().copied();
+        let (v_next_a, v_prev_a, opp_a) = match top {
+            Some(ca) => (ct.vertex(ca.next()), ct.vertex(ca.previous()), ct.opposite(ca)),
+            None => (VertexIdx::INVALID, VertexIdx::INVALID, None),
+        };
+
+        let corner_b = if usize::from(v_next_a) < ct.num_vertices() {
+            ct.left_most_corner(v_next_a).map(CornerIdx::next)
+        } else {
+            None
+        };
+        let corner_b_op = corner_b.map(|c| ct.opposite(c));
+        let vert_b_next = corner_b.map(|c| ct.vertex(c.next()));
+
         match symbol {
             Symbol::C => {
-                let corner_a = *active_corner_stack.last().ok_or_else(malformed)?;
-                let vertex_x = ct.vertex(corner_a.next());
-                let corner_b = ct.left_most_corner(vertex_x).ok_or_else(malformed)?.next();
+                let corner_a = top.ok_or_else(malformed)?;
+                let vertex_x = v_next_a;
+                let corner_b = corner_b.ok_or_else(malformed)?;
+                let corner_b_op = corner_b_op.unwrap();
                 if corner_a == corner_b {
                     return Err(malformed());
                 }
-                if ct.opposite(corner_a).is_some() || ct.opposite(corner_b).is_some() {
+                if opp_a.is_some() || corner_b_op.is_some() {
                     return Err(malformed());
                 }
                 ct.set_opposite_corners(corner_a, c1);
                 ct.set_opposite_corners(corner_b, c2);
-                let vert_a_prev = ct.vertex(corner_a.previous());
-                let vert_b_next = ct.vertex(corner_b.next());
+                let vert_a_prev = v_prev_a;
+                let vert_b_next = vert_b_next.unwrap();
                 if vertex_x == vert_a_prev || vertex_x == vert_b_next {
                     return Err(malformed());
                 }
@@ -179,8 +199,8 @@ pub fn reconstruct(
                 *active_corner_stack.last_mut().unwrap() = c0;
             }
             Symbol::R | Symbol::L => {
-                let corner_a = *active_corner_stack.last().ok_or_else(malformed)?;
-                if ct.opposite(corner_a).is_some() {
+                let corner_a = top.ok_or_else(malformed)?;
+                if opp_a.is_some() {
                     return Err(malformed());
                 }
                 let (opp_corner, corner_l, corner_r) = if symbol == Symbol::R {
@@ -195,10 +215,10 @@ pub fn reconstruct(
                 }
                 ct.map_corner_to_vertex(opp_corner, new_vert);
                 ct.set_left_most_corner(new_vert, opp_corner);
-                let vertex_r = ct.vertex(corner_a.previous());
+                let vertex_r = v_prev_a;
                 ct.map_corner_to_vertex(corner_r, vertex_r);
                 ct.set_left_most_corner(vertex_r, corner_r);
-                let vertex_l = ct.vertex(corner_a.next());
+                let vertex_l = v_next_a;
                 ct.map_corner_to_vertex(corner_l, vertex_l);
                 *active_corner_stack.last_mut().unwrap() = c0;
                 check_topology_split = true;
@@ -261,14 +281,12 @@ pub fn reconstruct(
             }
         }
 
-        if valence {
-            let top = *active_corner_stack.last().ok_or_else(malformed)?;
-            traversal.new_active_corner_reached(
-                usize::from(ct.vertex(top)),
-                usize::from(ct.vertex(top.next())),
-                usize::from(ct.vertex(top.previous())),
-            );
-        }
+        let active_top = *active_corner_stack.last().ok_or_else(malformed)?;
+        traversal.new_active_corner_reached(
+            usize::from(ct.vertex(active_top)),
+            usize::from(ct.vertex(active_top.next())),
+            usize::from(ct.vertex(active_top.previous())),
+        );
 
         if check_topology_split {
             let encoder_symbol_id = num_symbols - symbol_id - 1;

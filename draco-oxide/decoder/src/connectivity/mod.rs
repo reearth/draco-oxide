@@ -16,10 +16,10 @@ pub struct Connectivity {
     pub corner_table: CornerTable,
     /// Per-corner position vertex.
     pub corner_to_vertex: Vec<VertexIdx>,
-    /// Left-most corner per position vertex (`None` for isolated vertices); a
-    /// per-fan seed reused by point assignment. Boundary-left-most for hole
-    /// vertices, an arbitrary incident corner otherwise.
-    pub vertex_corners: Vec<Option<CornerIdx>>,
+    /// Left-most corner per position vertex (`CornerIdx::INVALID` for isolated
+    /// vertices); a per-fan seed reused by point assignment. Boundary-left-most
+    /// for hole vertices, an arbitrary incident corner otherwise.
+    pub vertex_corners: Vec<CornerIdx>,
     /// Number of position vertices (compacted when there is no attribute data).
     pub num_vertices: usize,
     /// Number of faces.

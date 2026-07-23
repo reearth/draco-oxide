@@ -21,5 +21,10 @@ name = "profile-decode"
 path = "src/bin/profile_decode.rs"
 required-features = ["profiling"]
 
+[[bin]]
+name = "profile-decode-draco"
+path = "src/bin/profile_decode_draco.rs"
+required-features = ["profiling"]
+
 [build-dependencies]
 cc = "1"

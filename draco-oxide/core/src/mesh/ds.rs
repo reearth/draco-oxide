@@ -281,7 +281,7 @@ impl<'a> GenericAttributeDs for AttributeDS<'a> {
 /// them; the point-fan builder produces a fresh, phantom-free vector with no
 /// longer-lived owner, so the finest case takes ownership.
 enum LeftMost<'a> {
-    Borrowed(&'a [Option<CornerIdx>]),
+    Borrowed(&'a [CornerIdx]),
     Owned(Vec<CornerIdx>),
 }
 
@@ -289,7 +289,7 @@ impl LeftMost<'_> {
     #[inline]
     fn get(&self, vertex: usize) -> CornerIdx {
         match self {
-            LeftMost::Borrowed(s) => s[vertex].unwrap_or(CornerIdx::INVALID),
+            LeftMost::Borrowed(s) => s[vertex],
             LeftMost::Owned(s) => s[vertex],
         }
     }
@@ -330,7 +330,7 @@ impl<'a> IdentityDS<'a, &'a CornerTable, VertexIdx> {
     pub fn seamless(
         corner_table: &'a CornerTable,
         corner_to_vertex: &'a [VertexIdx],
-        vertex_corners: &'a [Option<CornerIdx>],
+        vertex_corners: &'a [CornerIdx],
         vertex_index_bound: usize,
         att: Attribute,
     ) -> Self {
@@ -504,6 +504,12 @@ impl CornerTable {
                 .collect::<Vec<_>>()
                 .into(),
         )
+    }
+
+    /// Builds a corner table from an opposite array already stored with the
+    /// `CornerIdx::INVALID` boundary sentinel, taking it as-is.
+    pub fn from_opposite_sentinels(opposite_corners: Vec<CornerIdx>) -> Self {
+        Self(opposite_corners.into())
     }
 }
 

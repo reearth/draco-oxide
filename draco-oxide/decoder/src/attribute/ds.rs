@@ -112,7 +112,7 @@ fn sector_start(is_seam: impl Fn(usize) -> bool, m: usize) -> usize {
 pub(crate) struct Input<'a> {
     pub pos_ct: &'a CornerTable,
     pub corner_to_vertex: &'a [VertexIdx],
-    pub vertex_corners: &'a [Option<CornerIdx>],
+    pub vertex_corners: &'a [CornerIdx],
     pub is_vert_hole: &'a [bool],
     pub num_vertices: usize,
     pub num_corners: usize,
@@ -367,9 +367,10 @@ fn for_each_fan(input: Input, nav: &FanNav, mut f: impl FnMut(&[CornerIdx], bool
     }
 
     for v in 0..input.num_vertices {
-        let Some(seed) = input.vertex_corners[v] else {
+        let seed = input.vertex_corners[v];
+        if seed == CornerIdx::INVALID {
             continue;
-        };
+        }
         if input.is_vert_hole[v] {
             let left = open_fan_left_most(input.pos_ct, seed);
             sweep!(left, CornerIdx::INVALID);
@@ -397,7 +398,8 @@ fn fan_vertices_seamless(input: Input) -> (VecCornerIdx<PointIdx>, RawAttributeD
             pt = PointIdx::from(out.vertex_to_left_most_corner.len());
             vertex_to_point[v] = pt;
             // A referenced vertex always has a seed; `c` is a defensive fallback.
-            let left_most = input.vertex_corners[v].unwrap_or(c);
+            let seed = input.vertex_corners[v];
+            let left_most = if seed == CornerIdx::INVALID { c } else { seed };
             debug_assert!(
                 !input.is_vert_hole[v] || swing_left(input.pos_ct, left_most).is_none(),
                 "hole vertex seed is not the boundary-left-most corner"
