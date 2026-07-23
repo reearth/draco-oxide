@@ -1,7 +1,7 @@
 //! Corner-table reconstruction (spirale-reversi). Replays the symbol stream over an
 //! active-corner stack (C/R/L/S/E), merging vertices on S, closing start-face fans,
 //! and compacting isolated vertices, producing a `CornerTable` plus the
-//! corner-to-vertex map. Ported from Google's `DecodeConnectivity` main loop.
+//! corner-to-vertex map.
 
 use std::collections::HashMap;
 
@@ -53,21 +53,28 @@ impl CornerTableBuilder {
     }
 
     fn opposite(&self, c: CornerIdx) -> Option<CornerIdx> {
-        let o = self.opposite[usize::from(c)];
+        // SAFETY: every corner id is < num_faces * 3 == opposite.len(); see the
+        // corner-bound argument on `reconstruct`'s num_symbols <= num_faces check.
+        let o = unsafe { *self.opposite.get_unchecked(usize::from(c)) };
         (o != CornerIdx::INVALID).then_some(o)
     }
 
     fn set_opposite_corners(&mut self, a: CornerIdx, b: CornerIdx) {
-        self.opposite[usize::from(a)] = b;
-        self.opposite[usize::from(b)] = a;
+        // SAFETY: corner ids are < num_faces * 3 == opposite.len() (see `reconstruct`).
+        unsafe {
+            *self.opposite.get_unchecked_mut(usize::from(a)) = b;
+            *self.opposite.get_unchecked_mut(usize::from(b)) = a;
+        }
     }
 
     fn vertex(&self, c: CornerIdx) -> VertexIdx {
-        self.corner_to_vertex[usize::from(c)]
+        // SAFETY: corner ids are < num_faces * 3 == corner_to_vertex.len() (see `reconstruct`).
+        unsafe { *self.corner_to_vertex.get_unchecked(usize::from(c)) }
     }
 
     fn map_corner_to_vertex(&mut self, c: CornerIdx, v: VertexIdx) {
-        self.corner_to_vertex[usize::from(c)] = v;
+        // SAFETY: corner ids are < num_faces * 3 == corner_to_vertex.len() (see `reconstruct`).
+        unsafe { *self.corner_to_vertex.get_unchecked_mut(usize::from(c)) = v };
     }
 
     fn add_new_vertex(&mut self) -> VertexIdx {
@@ -80,6 +87,8 @@ impl CornerTableBuilder {
         self.vertex_corners.len()
     }
 
+    /// Checked: `v` may be a `ct.vertex` read of an unmapped corner
+    /// (`VertexIdx::INVALID`) on a malformed stream, so this must not index blind.
     fn left_most_corner(&self, v: VertexIdx) -> Option<CornerIdx> {
         let c = self.vertex_corners[usize::from(v)];
         (c != CornerIdx::INVALID).then_some(c)
@@ -87,10 +96,16 @@ impl CornerTableBuilder {
 
     fn set_left_most_corner(&mut self, v: VertexIdx, c: CornerIdx) {
         if v != VertexIdx::INVALID {
-            self.vertex_corners[usize::from(v)] = c;
+            // SAFETY: a non-INVALID vertex id is always < num_vertices ==
+            // vertex_corners.len(): ids come only from add_new_vertex (< len at
+            // creation, and len only grows) or copies of such via
+            // corner_to_vertex, which never stores a non-INVALID id >= len.
+            unsafe { *self.vertex_corners.get_unchecked_mut(usize::from(v)) = c };
         }
     }
 
+    /// Checked: `v` may be an unmapped corner's vertex (`INVALID`) on a malformed
+    /// stream (e.g. the S-symbol path), so this must not index blind.
     fn make_vertex_isolated(&mut self, v: VertexIdx) {
         self.vertex_corners[usize::from(v)] = CornerIdx::INVALID;
     }
@@ -134,6 +149,17 @@ pub fn reconstruct<T: TraversalDecoder>(
     num_attribute_data: usize,
     mut splits: Vec<TopologySplit>,
 ) -> Result<Reconstruction, Err> {
+    // Corner-bound contract for the unchecked `CornerTableBuilder` accessors: the
+    // main loop builds one face per symbol (face ids 0..num_symbols) and forms
+    // corners `3 * face + {0,1,2}`, so every corner id stays < num_faces * 3 (the
+    // table length) exactly when num_symbols <= num_faces. Start faces are bounded
+    // separately by the `num_faces_built >= num_faces` check below.
+    if num_symbols > num_faces {
+        return Err(Err::MalformedConnectivity(
+            "encoded symbol count exceeds face count",
+        ));
+    }
+
     let mut ct = CornerTableBuilder::new(num_faces);
 
     let max_num_vertices = num_encoded_vertices + num_split_symbols;
@@ -160,7 +186,11 @@ pub fn reconstruct<T: TraversalDecoder>(
 
         let top = active_corner_stack.last().copied();
         let (v_next_a, v_prev_a, opp_a) = match top {
-            Some(ca) => (ct.vertex(ca.next()), ct.vertex(ca.previous()), ct.opposite(ca)),
+            Some(ca) => (
+                ct.vertex(ca.next()),
+                ct.vertex(ca.previous()),
+                ct.opposite(ca),
+            ),
             None => (VertexIdx::INVALID, VertexIdx::INVALID, None),
         };
 
@@ -352,7 +382,7 @@ pub fn reconstruct<T: TraversalDecoder>(
         return Err(malformed());
     }
 
-    // Compact isolated vertices when there is no attribute data (Google's fast path).
+    // Compact isolated vertices when there is no attribute data.
     let mut num_vertices = ct.num_vertices();
     if remove_invalid_vertices {
         for invalid_vert in invalid_vertices {

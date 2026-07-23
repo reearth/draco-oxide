@@ -141,8 +141,7 @@ fn open_fan_left_most(pos_ct: &CornerTable, c: CornerIdx) -> CornerIdx {
 }
 
 /// Builds the decoder-side point [`DS`] (splitting every position fan into
-/// points, the sectors of the union of all seams, the decoder-side equivalent of
-/// Google's `AssignPointsToCorners`) and, parallel to `seam_sets`, each
+/// points, the sectors of the union of all seams, parallel to `seam_sets`, each
 /// attribute's sector decomposition as an [`RawAttributeDS`].
 pub(crate) fn build_ds(input: Input, seam_sets: &[&[bool]]) -> (DS, Vec<RawAttributeDS>) {
     // Boundary edges are seams for every attribute and never split a fan, so

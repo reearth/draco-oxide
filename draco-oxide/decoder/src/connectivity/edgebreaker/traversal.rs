@@ -23,8 +23,7 @@ fn start_rabs<'a>(reader: &mut Reader<'a>) -> Result<RabsDecoder<'a>, Err> {
     RabsDecoder::new(rev, prob_zero)
 }
 
-/// LSB-first bit reader over a fixed byte buffer, matching Google's
-/// `DecoderBuffer::BitDecoder` (used for the symbol stream and split-edge bits).
+/// LSB-first bit reader over a fixed byte buffer
 struct BitSource<'a> {
     bytes: &'a [u8],
     byte_pos: usize,

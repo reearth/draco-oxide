@@ -82,8 +82,6 @@ pub(crate) fn decode_attributes(
         let domain = AttributeDomain::read_from(reader)?;
         let traversal = reader.read_u8()?;
         if traversal != 0 {
-            // Only depth-first traversal is emitted; MaxPredictionDegree arrives
-            // with Google interop.
             return Err(Err::Unimplemented);
         }
         domains.push(domain);
