@@ -5,7 +5,7 @@ use kiddo::immutable::float::kdtree::ImmutableKdTree;
 use kiddo::SquaredEuclidean;
 
 use super::buffer;
-use crate::bit_coder::{ByteReader, ByteWriter};
+use crate::bit_coder::{ByteWriter, Reader};
 use crate::types::DataValue;
 use crate::types::{AttributeValueIdx, PointIdx, VecPointIdx, Vector};
 
@@ -727,7 +727,7 @@ impl ComponentDataType {
 
     /// Reads the data type from the reader.
     #[inline]
-    pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+    pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, Err> {
         let id = reader.read_u8()?;
         Self::from_id(id as usize).ok_or(Err::InvalidDataTypeId(id))
     }
@@ -805,7 +805,7 @@ impl AttributeType {
 
     /// Reads the attribute type from the reader.
     #[inline]
-    pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+    pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, Err> {
         let id = reader.read_u8()?;
         Self::from_id(id)
     }
@@ -830,7 +830,7 @@ impl AttributeDomain {
     }
 
     /// Reads the attribute domain from the reader.
-    pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+    pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, Err> {
         let id = reader.read_u8()?;
         match id {
             0 => Ok(Self::Position),

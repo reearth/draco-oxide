@@ -12,7 +12,6 @@
 use std::collections::HashMap;
 
 use draco_oxide::core::attribute::AttributeType;
-use draco_oxide::core::bit_coder::SliceReader;
 use draco_oxide::core::mesh::Mesh;
 use draco_oxide::core::types::{ConfigType, NdVector, PointIdx, Vector};
 use draco_oxide::{
@@ -67,7 +66,7 @@ fn oxide_decodes_its_own_output() {
         encode(original.clone(), &mut buf, encode::Config::default())
             .unwrap_or_else(|e| panic!("{obj}: encode failed: {e:?}"));
 
-        let decoded = draco_oxide::decode::decode(SliceReader::new(&buf))
+        let decoded = draco_oxide::decode::decode(&buf)
             .unwrap_or_else(|e| panic!("{obj}: decode failed: {e:?}"));
 
         assert_eq!(

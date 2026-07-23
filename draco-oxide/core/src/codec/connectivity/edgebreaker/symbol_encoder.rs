@@ -1,5 +1,4 @@
 use crate::bit_coder::BitReader;
-use crate::bit_coder::ByteReader;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Symbol {
@@ -41,9 +40,7 @@ pub trait SymbolEncoder {
     fn encode_symbol(symbol: Symbol) -> (u8, u64);
 
     #[allow(dead_code)] // TODO: remove this after completing the decoder.
-    fn decode_symbol<R>(reader: &mut BitReader<R>) -> Symbol
-    where
-        R: ByteReader;
+    fn decode_symbol(reader: &mut BitReader<'_, '_>) -> Symbol;
 }
 
 pub struct CrLight;
@@ -58,10 +55,7 @@ impl SymbolEncoder for CrLight {
         }
     }
 
-    fn decode_symbol<R>(reader: &mut BitReader<R>) -> Symbol
-    where
-        R: ByteReader,
-    {
+    fn decode_symbol(reader: &mut BitReader<'_, '_>) -> Symbol {
         if reader.read_bits(1).unwrap() == 0 {
             return Symbol::C;
         }

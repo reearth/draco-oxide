@@ -8,7 +8,7 @@
 //! gated behind the default `dequantize` feature, additionally applies those
 //! transforms and returns a [`Mesh`] with original-format (float) attributes.
 //!
-use draco_oxide_core::bit_coder::{ByteReader, ReaderErr};
+use draco_oxide_core::bit_coder::{Reader, ReaderErr};
 use draco_oxide_core::mesh::Mesh;
 
 mod attribute;
@@ -16,6 +16,7 @@ pub mod connectivity;
 pub mod entropy;
 pub mod header;
 mod metadata;
+mod reader;
 #[cfg(feature = "simd")]
 mod simd;
 
@@ -94,7 +95,8 @@ pub enum AttributeTransform {
 
 /// Decode a draco stream into a [`PortableMesh`] with quantized-integer
 /// attributes. Always available, on every target.
-pub fn decode_portable<R: ByteReader>(mut reader: R) -> Result<PortableMesh, Err> {
+pub fn decode_portable(bytes: &[u8]) -> Result<PortableMesh, Err> {
+    let mut reader = Reader::new(bytes);
     let header = header::decode_header(&mut reader)?;
     if header.metadata {
         metadata::decode_metadata(&mut reader)?;
@@ -116,11 +118,11 @@ pub fn decode_portable<R: ByteReader>(mut reader: R) -> Result<PortableMesh, Err
 /// Equivalent to [`decode_portable`] followed by applying each
 /// [`AttributeTransform`].
 #[cfg(feature = "dequantize")]
-pub fn decode<R: ByteReader>(reader: R) -> Result<Mesh, Err> {
+pub fn decode(bytes: &[u8]) -> Result<Mesh, Err> {
     let PortableMesh {
         mut mesh,
         transforms,
-    } = decode_portable(reader)?;
+    } = decode_portable(bytes)?;
     let attributes = std::mem::take(&mut mesh.attributes);
     mesh.attributes = attributes
         .into_iter()

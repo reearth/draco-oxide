@@ -209,8 +209,7 @@ fn bench_oxide(mesh: &Mesh) -> CodecResult {
     });
 
     let decode_ms = time_median_ms(|| {
-        let reader = draco_oxide::core::bit_coder::SliceReader::new(&buffer);
-        draco_oxide::decode::decode(reader).expect("draco-oxide decode");
+        draco_oxide::decode::decode(&buffer).expect("draco-oxide decode");
     });
 
     CodecResult {

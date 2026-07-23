@@ -5,15 +5,15 @@
 pub mod rans;
 
 use crate::Err;
-use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
 use rans::RansSymbolDecoder;
 
 /// Decodes `num_values * num_components` symbols from `reader`. Mirrors Google's
 /// `DecodeSymbols`: reads the encoding-method byte and dispatches. Only DirectCoded
 /// is supported for now; `num_components` is used only by the Tagged path.
-pub fn decode_symbols<R: ByteReader>(
-    reader: &mut R,
+pub fn decode_symbols(
+    reader: &mut Reader<'_>,
     num_values: usize,
     num_components: usize,
 ) -> Result<Vec<u64>, Err> {
@@ -29,28 +29,25 @@ pub fn decode_symbols<R: ByteReader>(
 /// Decodes `num_symbols` DirectCoded symbols. The leading bit-length byte selects
 /// the rANS precision via the same mapping the encoder uses
 /// (`clamp(3 * bit_length / 2, 12, 20)`).
-fn decode_symbols_direct<R: ByteReader>(
-    reader: &mut R,
-    num_symbols: usize,
-) -> Result<Vec<u64>, Err> {
+fn decode_symbols_direct(reader: &mut Reader<'_>, num_symbols: usize) -> Result<Vec<u64>, Err> {
     let bit_length = reader.read_u8()?;
     match bit_length {
-        1..=8 => decode_direct::<R, 12>(reader, num_symbols),
-        9 => decode_direct::<R, 13>(reader, num_symbols),
-        10 => decode_direct::<R, 15>(reader, num_symbols),
-        11 => decode_direct::<R, 16>(reader, num_symbols),
-        12 => decode_direct::<R, 18>(reader, num_symbols),
-        13 => decode_direct::<R, 19>(reader, num_symbols),
-        14..=18 => decode_direct::<R, 20>(reader, num_symbols),
+        1..=8 => decode_direct::<12>(reader, num_symbols),
+        9 => decode_direct::<13>(reader, num_symbols),
+        10 => decode_direct::<15>(reader, num_symbols),
+        11 => decode_direct::<16>(reader, num_symbols),
+        12 => decode_direct::<18>(reader, num_symbols),
+        13 => decode_direct::<19>(reader, num_symbols),
+        14..=18 => decode_direct::<20>(reader, num_symbols),
         _ => Err(Err::InvalidBitLength(bit_length)),
     }
 }
 
-fn decode_direct<R: ByteReader, const RANS_PRECISION: usize>(
-    reader: &mut R,
+fn decode_direct<const RANS_PRECISION: usize>(
+    reader: &mut Reader<'_>,
     num_symbols: usize,
 ) -> Result<Vec<u64>, Err> {
-    let mut decoder = RansSymbolDecoder::<R::Rev, RANS_PRECISION>::new(reader, num_symbols)?;
+    let mut decoder = RansSymbolDecoder::<'_, RANS_PRECISION>::new(reader, num_symbols)?;
     let mut out = Vec::with_capacity(num_symbols);
     for _ in 0..num_symbols {
         out.push(decoder.decode() as u64);
@@ -102,9 +99,9 @@ mod tests {
         // A trailing sentinel confirms `decode_symbols` consumes exactly the payload.
         buf.write_u8(0xAB);
 
-        let mut reader = buf.into_iter();
+        let mut reader = Reader::new(&buf);
         let decoded = decode_symbols(&mut reader, symbols.len(), 1).unwrap();
         assert_eq!(decoded, symbols);
-        assert_eq!(reader.next(), Some(0xAB));
+        assert_eq!(reader.read_u8().unwrap(), 0xAB);
     }
 }

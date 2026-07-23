@@ -4,44 +4,32 @@
 //! and the topology-split event stream.
 
 use crate::entropy::rans::RabsDecoder;
+use crate::reader::RevReader;
 use crate::Err;
-use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::connectivity::edgebreaker::symbol_encoder::Symbol;
 use draco_oxide_core::codec::connectivity::edgebreaker::{MAX_VALENCE, MIN_VALENCE};
 use draco_oxide_core::utils::bit_coder::leb128_read;
 
-type Rev = <std::vec::IntoIter<u8> as ByteReader>::Rev;
-
-/// Reads exactly `n` bytes from `reader`, keeping it positioned after them.
-fn read_bytes<R: ByteReader>(reader: &mut R, n: usize) -> Result<Vec<u8>, Err> {
-    let mut out = Vec::with_capacity(n);
-    for _ in 0..n {
-        out.push(reader.read_u8()?);
-    }
-    Ok(out)
-}
-
 /// Builds a rabs decoder over a self-contained `[prob_zero | leb128 len | bytes]`
 /// sub-stream read from `reader`.
-fn start_rabs<R: ByteReader>(reader: &mut R) -> Result<RabsDecoder<Rev>, Err> {
+fn start_rabs<'a>(reader: &mut Reader<'a>) -> Result<RabsDecoder<'a>, Err> {
     let prob_zero = reader.read_u8()?;
     let len = leb128_read(reader)? as usize;
-    let bytes = read_bytes(reader, len)?;
-    let mut iter = bytes.into_iter();
-    let rev = iter.spown_reverse_reader_at(len)?;
+    let rev = RevReader::new(reader.read_bytes(len)?);
     RabsDecoder::new(rev, prob_zero)
 }
 
 /// LSB-first bit reader over a fixed byte buffer, matching Google's
 /// `DecoderBuffer::BitDecoder` (used for the symbol stream and split-edge bits).
-struct BitSource {
-    bytes: Vec<u8>,
+struct BitSource<'a> {
+    bytes: &'a [u8],
     byte_pos: usize,
     bit_pos: u8,
 }
 
-impl BitSource {
-    fn new(bytes: Vec<u8>) -> Self {
+impl<'a> BitSource<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
         Self {
             bytes,
             byte_pos: 0,
@@ -78,7 +66,7 @@ pub struct TopologySplit {
 
 /// Decodes the topology-split event stream: leb128 count, delta-coded id pairs, then
 /// one LSB-first edge bit per split (byte-padded).
-pub fn decode_topology_splits<R: ByteReader>(reader: &mut R) -> Result<Vec<TopologySplit>, Err> {
+pub fn decode_topology_splits(reader: &mut Reader<'_>) -> Result<Vec<TopologySplit>, Err> {
     let num_splits = leb128_read(reader)? as usize;
     let mut splits = Vec::with_capacity(num_splits);
 
@@ -100,7 +88,7 @@ pub fn decode_topology_splits<R: ByteReader>(reader: &mut R) -> Result<Vec<Topol
 
     // One edge bit per split, LSB-first, byte-padded (no size prefix).
     if num_splits > 0 {
-        let edge_bytes = read_bytes(reader, num_splits.div_ceil(8))?;
+        let edge_bytes = reader.read_bytes(num_splits.div_ceil(8))?;
         let mut bits = BitSource::new(edge_bytes);
         for split in &mut splits {
             split.source_edge_right = bits.read_bit() & 1 == 1;
@@ -118,10 +106,10 @@ pub enum TraversalKind {
 }
 
 /// Symbol-stream state of the two traversal variants.
-enum SymbolSource {
+enum SymbolSource<'a> {
     /// The CR-light symbol bit stream.
     Standard {
-        symbols: BitSource,
+        symbols: BitSource<'a>,
     },
     Valence(ValenceState),
 }
@@ -141,21 +129,21 @@ struct ValenceState {
 
 /// The traversal decoder: the variant-specific symbol source plus the rabs
 /// decoders for start-face configuration and per-attribute seams.
-pub struct TraversalDecoder {
-    source: SymbolSource,
-    start_face: RabsDecoder<Rev>,
-    seams: Vec<RabsDecoder<Rev>>,
+pub struct TraversalDecoder<'a> {
+    source: SymbolSource<'a>,
+    start_face: RabsDecoder<'a>,
+    seams: Vec<RabsDecoder<'a>>,
 }
 
-impl TraversalDecoder {
+impl<'a> TraversalDecoder<'a> {
     /// Sets up the sub-streams in the order the encoder wrote them. Standard:
     /// symbol stream, start-face rabs stream, seam rabs streams. Valence:
     /// start-face rabs stream, seam rabs streams, then one rANS symbol stream
     /// per valence context. `max_num_vertices` bounds the valence table
     /// (encoded vertices plus split symbols); `num_faces` bounds each context's
     /// symbol count.
-    pub fn start<R: ByteReader>(
-        reader: &mut R,
+    pub fn start(
+        reader: &mut Reader<'a>,
         kind: TraversalKind,
         num_attribute_data: usize,
         max_num_vertices: usize,
@@ -164,7 +152,7 @@ impl TraversalDecoder {
         let symbols = match kind {
             TraversalKind::Standard => {
                 let symbol_len = leb128_read(reader)? as usize;
-                Some(BitSource::new(read_bytes(reader, symbol_len)?))
+                Some(BitSource::new(reader.read_bytes(symbol_len)?))
             }
             TraversalKind::Valence => None,
         };

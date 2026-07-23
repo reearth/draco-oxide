@@ -1,4 +1,4 @@
-use crate::bit_coder::{ByteReader, ByteWriter, ReaderErr};
+use crate::bit_coder::{ByteWriter, Reader, ReaderErr};
 
 pub mod rans;
 
@@ -15,10 +15,7 @@ pub enum SymbolEncodingMethod {
 
 impl SymbolEncodingMethod {
     #[allow(unused)]
-    pub fn read_from<R>(reader: &mut R) -> Result<Self, Err>
-    where
-        R: ByteReader,
-    {
+    pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, Err> {
         let method = reader.read_u8()?;
         match method {
             0 => Ok(SymbolEncodingMethod::LengthCoded),

@@ -3,9 +3,10 @@
 //! partially decoded data.
 
 use crate::entropy::rans::RabsDecoder;
+use crate::reader::RevReader;
 use crate::Err;
 use draco_oxide_core::attribute::Attribute;
-use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::attribute::prediction_scheme::{
     delta_prediction::DeltaPrediction, mesh_normal_prediction::MeshNormalPrediction,
     mesh_parallelogram_prediction::MeshParallelogramPrediction,
@@ -18,7 +19,7 @@ use draco_oxide_core::utils::bit_coder::leb128_read;
 
 /// Parses the prediction scheme id byte (the ids of
 /// `PredictionSchemeType::get_id`).
-pub(crate) fn read_scheme_id<R: ByteReader>(reader: &mut R) -> Result<PredictionSchemeType, Err> {
+pub(crate) fn read_scheme_id(reader: &mut Reader<'_>) -> Result<PredictionSchemeType, Err> {
     let id = reader.read_u8()?;
     match id {
         0 => Ok(PredictionSchemeType::DeltaPrediction),
@@ -32,29 +33,19 @@ pub(crate) fn read_scheme_id<R: ByteReader>(reader: &mut R) -> Result<Prediction
     }
 }
 
-type Rev = <std::vec::IntoIter<u8> as ByteReader>::Rev;
-
 /// Builds a rabs decoder over a self-contained `[leb128 len | bytes]` sub-stream,
 /// with the probability byte already read by the caller.
-fn rabs_over_substream<R: ByteReader>(
-    reader: &mut R,
-    prob_zero: u8,
-) -> Result<RabsDecoder<Rev>, Err> {
+fn rabs_over_substream<'a>(reader: &mut Reader<'a>, prob_zero: u8) -> Result<RabsDecoder<'a>, Err> {
     let len = leb128_read(reader)? as usize;
-    let mut bytes = Vec::with_capacity(len);
-    for _ in 0..len {
-        bytes.push(reader.read_u8()?);
-    }
-    let mut iter = bytes.into_iter();
-    let rev = iter.spown_reverse_reader_at(len)?;
+    let rev = RevReader::new(reader.read_bytes(len)?);
     RabsDecoder::new(rev, prob_zero)
 }
 
 /// Decodes the normal-prediction flip metadata: one bit per value. The rabs
 /// stream yields the bits in reverse traversal order, so the result is reversed
 /// into traversal order before returning.
-pub(crate) fn decode_flip_metadata<R: ByteReader>(
-    reader: &mut R,
+pub(crate) fn decode_flip_metadata(
+    reader: &mut Reader<'_>,
     num_values: usize,
 ) -> Result<Vec<bool>, Err> {
     let zero_prob = reader.read_u8()?;
@@ -68,7 +59,7 @@ pub(crate) fn decode_flip_metadata<R: ByteReader>(
 /// delta-coded bit per recorded orientation (a zero bit toggles the running
 /// value, anchored at `true`). The decoded vector is in reverse traversal order;
 /// consume it by popping from the back.
-pub(crate) fn decode_orientation_metadata<R: ByteReader>(reader: &mut R) -> Result<Vec<bool>, Err> {
+pub(crate) fn decode_orientation_metadata(reader: &mut Reader<'_>) -> Result<Vec<bool>, Err> {
     let count = reader.read_u32()? as usize;
     let zero_prob = reader.read_u8()?;
     let mut rabs = rabs_over_substream(reader, zero_prob)?;

@@ -3,7 +3,7 @@
 //! implementation yet and is rejected as unimplemented.
 
 use crate::Err;
-use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::attribute::geom::invert_diamond;
 use draco_oxide_core::codec::attribute::Portable;
 use draco_oxide_core::types::{NdVector, Vector};
@@ -32,7 +32,7 @@ pub(crate) enum InverseTransform {
 impl InverseTransform {
     /// Parses the transform metadata for `transform_id` from `reader` (the
     /// `squeeze` output of the encoder-side transform).
-    pub(crate) fn read_from<R: ByteReader>(reader: &mut R, transform_id: u8) -> Result<Self, Err> {
+    pub(crate) fn read_from(reader: &mut Reader<'_>, transform_id: u8) -> Result<Self, Err> {
         match transform_id {
             TRANSFORM_NONE => Ok(InverseTransform::None),
             TRANSFORM_DIFFERENCE => Ok(InverseTransform::Difference),

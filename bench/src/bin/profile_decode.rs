@@ -35,8 +35,7 @@ fn main() {
     let start = Instant::now();
     let mut iters = 0u64;
     while start.elapsed() < Duration::from_secs_f64(seconds) {
-        let reader = draco_oxide::core::bit_coder::SliceReader::new(&buffer);
-        let decoded = draco_oxide::decode::decode(reader).expect("decode");
+        let decoded = draco_oxide::decode::decode(&buffer).expect("decode");
         std::hint::black_box(&decoded);
         iters += 1;
     }

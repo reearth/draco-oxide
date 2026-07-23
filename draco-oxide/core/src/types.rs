@@ -495,8 +495,7 @@ macro_rules! impl_data_value {
                     }
                 }
 
-                fn read_from<R>(reader: &mut R) -> Result<Self, ReaderErr>
-                    where R: ByteReader
+                fn read_from(reader: &mut Reader<'_>) -> Result<Self, ReaderErr>
                 {
                     let mut bytes = [0u8; mem::size_of::<Self>()];
                     for i in 0..bytes.len() {
@@ -559,8 +558,7 @@ macro_rules! impl_data_value {
                     }
                 }
 
-                fn read_from<R>(reader: &mut R) -> Result<Self, ReaderErr>
-                    where R: ByteReader
+                fn read_from(reader: &mut Reader<'_>) -> Result<Self, ReaderErr>
                 {
                     let mut bytes = [0u8; mem::size_of::<Self>()];
                     for i in 0..bytes.len() {
@@ -648,7 +646,7 @@ where
     }
 }
 
-use crate::bit_coder::{ByteReader, ByteWriter};
+use crate::bit_coder::{ByteWriter, Reader};
 use crate::codec::attribute::Portable;
 use std::ops::Index;
 use std::ops::IndexMut;

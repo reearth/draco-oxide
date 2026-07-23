@@ -256,11 +256,10 @@ mod symbol_coding {
         )
         .unwrap();
 
-        let mut reader = buffer.into_iter();
+        let mut reader = draco_oxide_core::bit_coder::Reader::new(&buffer);
         let decoded = decode_symbols(&mut reader, num_values, num_components)?;
-        assert_eq!(
-            reader.next(),
-            None,
+        assert!(
+            reader.is_empty(),
             "reader should be empty after decoding all symbols"
         );
         assert_eq!(decoded, symbols);
@@ -337,7 +336,7 @@ mod connectivity {
         let mesh = load_obj(path).unwrap();
         let mut buffer = Vec::new();
         encode(mesh, &mut buffer, Config::default()).unwrap();
-        let mut reader = buffer.into_iter();
+        let mut reader = draco_oxide_core::bit_coder::Reader::new(&buffer);
         let header = decode_header(&mut reader).unwrap();
         let conn = decode_connectivity(&mut reader, header.encoder_method).unwrap();
         conn.position_faces().0
@@ -744,7 +743,7 @@ mod dequantized {
         let mesh = load_obj(path).unwrap();
         let mut buffer = Vec::new();
         encode(mesh, &mut buffer, Config::default()).unwrap();
-        let decoded = decode(buffer.into_iter()).unwrap();
+        let decoded = decode(&buffer).unwrap();
 
         let input = load_obj(path).unwrap();
         assert_eq!(decoded.attributes.len(), input.attributes.len());
@@ -833,7 +832,7 @@ mod dequantized {
             Config::default().with_normals(NormalEncoding::PredictedOnly),
         )
         .unwrap();
-        let decoded = decode(buffer.into_iter()).unwrap();
+        let decoded = decode(&buffer).unwrap();
 
         let normals = decoded
             .attributes
@@ -865,17 +864,14 @@ mod portable_attributes {
     };
     use crate::encode::{encode, Config};
     use crate::io::obj::load_obj;
-    use draco_oxide_core::bit_coder::SliceReader;
     use draco_oxide_core::types::ConfigType;
     use draco_oxide_decoder::decode_portable;
 
-    // Decodes through `SliceReader` (the `dequantized` module covers the owned
-    // iterator reader), so both reader types stay exercised.
     fn assert_portable_roundtrip(path: &str) {
         let mesh = load_obj(path).unwrap();
         let mut buffer = Vec::new();
         encode(mesh, &mut buffer, Config::default()).unwrap();
-        let portable = decode_portable(SliceReader::new(&buffer)).unwrap();
+        let portable = decode_portable(&buffer).unwrap();
 
         let decoded = canonicalize(decoded_corner_tuples(&portable.mesh));
         let expected = canonicalize(expected_corner_tuples(path));
@@ -997,7 +993,7 @@ mod attribute_seams {
         let mesh = load_obj(path).unwrap();
         let mut buffer = Vec::new();
         encode(mesh, &mut buffer, Config::default()).unwrap();
-        let mut reader = buffer.into_iter();
+        let mut reader = draco_oxide_core::bit_coder::Reader::new(&buffer);
         let header = draco_oxide_decoder::header::decode_header(&mut reader).unwrap();
         let conn = draco_oxide_decoder::connectivity::decode_connectivity(
             &mut reader,

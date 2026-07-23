@@ -5,7 +5,6 @@
 
 use std::time::Instant;
 
-use draco_oxide::core::bit_coder::SliceReader;
 use draco_oxide::core::types::ConfigType;
 use draco_oxide::encode::{encode, Config};
 use draco_oxide::io::obj::load_obj;
@@ -31,10 +30,12 @@ fn main() {
         encode(mesh, &mut buffer, Config::default()).expect("encode");
 
         let ms = median_ms(|| {
-            let reader = SliceReader::new(&buffer);
-            let decoded = draco_oxide::decode::decode(reader).expect("decode");
+            let decoded = draco_oxide::decode::decode(&buffer).expect("decode");
             std::hint::black_box(&decoded);
         });
-        println!("{path}: {faces} faces, {} bytes, {ms:.4} ms/decode", buffer.len());
+        println!(
+            "{path}: {faces} faces, {} bytes, {ms:.4} ms/decode",
+            buffer.len()
+        );
     }
 }

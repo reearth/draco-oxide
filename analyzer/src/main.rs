@@ -5,7 +5,7 @@ use std::process::{self, Command};
 #[allow(unused_imports)]
 use draco_oxide::core::{
     attribute::{Attribute, AttributeType},
-    bit_coder::{ByteReader, ByteWriter, FunctionalByteReader, FunctionalByteWriter},
+    bit_coder::{ByteWriter, FunctionalByteWriter},
     mesh::{Mesh, builder::MeshBuilder},
     types::{ConfigType, DataValue, NdVector, Vector},
 };

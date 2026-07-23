@@ -4,7 +4,7 @@
 mod edgebreaker;
 
 use crate::Err;
-use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::header::EncoderMethod;
 use draco_oxide_core::mesh::ds::{AttributeCornerTable, CornerTable};
 use draco_oxide_core::types::{CornerIdx, VecCornerIdx, VertexIdx};
@@ -70,8 +70,8 @@ impl Connectivity {
 }
 
 /// Decodes the connectivity section, dispatching on the header's encoder method.
-pub fn decode_connectivity<R: ByteReader>(
-    reader: &mut R,
+pub fn decode_connectivity(
+    reader: &mut Reader<'_>,
     encoder_method: EncoderMethod,
 ) -> Result<Connectivity, Err> {
     match encoder_method {

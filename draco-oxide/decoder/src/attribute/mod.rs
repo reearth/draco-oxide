@@ -16,7 +16,7 @@ use crate::{AttributeTransform, Err};
 use draco_oxide_core::attribute::{
     Attribute, AttributeDomain, AttributeId, AttributeType, ComponentDataType,
 };
-use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::attribute::Portable;
@@ -69,8 +69,8 @@ impl Descriptor {
 }
 
 /// Decodes the whole attribute section, positioned right after connectivity.
-pub(crate) fn decode_attributes<R: ByteReader>(
-    reader: &mut R,
+pub(crate) fn decode_attributes(
+    reader: &mut Reader<'_>,
     conn: &Connectivity,
 ) -> Result<DecodedAttributes, Err> {
     let num_atts = reader.read_u8()? as usize;
@@ -233,8 +233,8 @@ pub(crate) fn decode_attributes<R: ByteReader>(
 /// path or the general one. Attributes without interior seams share the
 /// position connectivity, so their traversal sequences are identical; the walk
 /// runs once and is reused.
-fn decode_payloads<R: ByteReader, D: GenericAttributeDs>(
-    reader: &mut R,
+fn decode_payloads<D: GenericAttributeDs>(
+    reader: &mut Reader<'_>,
     descriptors: &[Descriptor],
     adss: &[D],
     seeds: &[CornerIdx],
@@ -259,10 +259,10 @@ fn decode_payloads<R: ByteReader, D: GenericAttributeDs>(
             .iter()
             .find(|a| a.get_attribute_type() == AttributeType::Position);
         let (att, transform) = match desc.portable_num_components() {
-            1 => decode_payload::<R, 1, D>(reader, ads, seq, parent, desc)?,
-            2 => decode_payload::<R, 2, D>(reader, ads, seq, parent, desc)?,
-            3 => decode_payload::<R, 3, D>(reader, ads, seq, parent, desc)?,
-            4 => decode_payload::<R, 4, D>(reader, ads, seq, parent, desc)?,
+            1 => decode_payload::<1, D>(reader, ads, seq, parent, desc)?,
+            2 => decode_payload::<2, D>(reader, ads, seq, parent, desc)?,
+            3 => decode_payload::<3, D>(reader, ads, seq, parent, desc)?,
+            4 => decode_payload::<4, D>(reader, ads, seq, parent, desc)?,
             _ => return Err(Err::MalformedAttribute("unsupported number of components")),
         };
         attributes.push(att);
@@ -275,8 +275,8 @@ fn decode_payloads<R: ByteReader, D: GenericAttributeDs>(
 /// stream, the scheme and transform metadata (in the scheme-dependent order the
 /// encoder writes them), the portabilization parameters, and finally the
 /// prediction-reversal loop over the traversal sequence.
-fn decode_payload<R: ByteReader, const N: usize, D: GenericAttributeDs>(
-    reader: &mut R,
+fn decode_payload<const N: usize, D: GenericAttributeDs>(
+    reader: &mut Reader<'_>,
     ads: &D,
     sequence: &[CornerIdx],
     parent: Option<&Attribute>,
@@ -329,7 +329,7 @@ where
     };
 
     // Portabilization (dequantization) parameters come last.
-    let dequant = read_portabilization::<R, N>(reader, desc.port_type)?;
+    let dequant = read_portabilization::<N>(reader, desc.port_type)?;
 
     // The attribute to fill: one value slot per traversal rank, and a
     // point-to-value map through each point's vertex rank.
@@ -399,8 +399,8 @@ where
 
 /// Parses the portabilization metadata for `port_type` into the dequantization
 /// parameters surfaced through [`AttributeTransform`].
-fn read_portabilization<R: ByteReader, const N: usize>(
-    reader: &mut R,
+fn read_portabilization<const N: usize>(
+    reader: &mut Reader<'_>,
     port_type: u8,
 ) -> Result<AttributeTransform, Err>
 where

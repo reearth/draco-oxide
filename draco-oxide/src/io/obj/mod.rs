@@ -138,7 +138,7 @@ pub fn write_obj<P: AsRef<Path>>(mesh: &Mesh, path: P) -> Result<(), Err> {
 #[cfg(feature = "decoder")]
 pub fn decode_drc_to_obj<P: AsRef<Path>, Q: AsRef<Path>>(drc: P, obj: Q) -> Result<(), Err> {
     let bytes = std::fs::read(drc)?;
-    let mesh = crate::decode::decode(draco_oxide_core::bit_coder::SliceReader::new(&bytes))?;
+    let mesh = crate::decode::decode(&bytes)?;
     write_obj(&mesh, obj)
 }
 

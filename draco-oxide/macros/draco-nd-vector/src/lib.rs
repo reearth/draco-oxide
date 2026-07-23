@@ -189,8 +189,7 @@ pub fn impl_ndvector_ops_for_dim(input: TokenStream) -> TokenStream {
                 unsafe{ #(#indices_portable_write_to)* }
             }
 
-            fn read_from<R>(reader: &mut R) -> Result<Self, ReaderErr>
-                where R: ByteReader
+            fn read_from(reader: &mut Reader<'_>) -> Result<Self, ReaderErr>
             {
                 let mut data = [Data::zero(); #n];
                 unsafe { #(#indices_portable_read_from)* }

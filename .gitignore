@@ -24,3 +24,5 @@ third_party/draco
 
 # local Claude Code instructions
 CLAUDE.local.md
+
+.claude/

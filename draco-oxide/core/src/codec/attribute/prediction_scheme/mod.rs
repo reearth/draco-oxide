@@ -6,7 +6,7 @@ pub mod mesh_parallelogram_prediction;
 pub mod mesh_prediction_for_texture_coordinates;
 
 use crate::attribute::Attribute;
-use crate::bit_coder::{ByteReader, ByteWriter};
+use crate::bit_coder::{ByteWriter, Reader};
 use crate::mesh::ds::GenericAttributeDs;
 use crate::types::NdVector;
 use crate::types::{ConfigType, CornerIdx, Vector, VertexIdx};
@@ -102,10 +102,7 @@ impl PredictionSchemeType {
     }
 
     #[allow(unused)]
-    pub fn read_from<R>(reader: &mut R) -> Result<Self, usize>
-    where
-        R: ByteReader,
-    {
+    pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, usize> {
         let id = reader.read_u8().unwrap() as usize; // ToDo: handle error.
         let out = match id {
             0 => PredictionSchemeType::DeltaPrediction,
@@ -226,14 +223,11 @@ where
     }
 
     #[allow(unused)] // TODO: Remove this function when the decoder is complete
-    pub fn read_from<R>(
-        reader: &mut R,
+    pub fn read_from(
+        reader: &mut Reader<'_>,
         parents: &[&'parents Attribute],
         ads: &'parents D,
-    ) -> Result<Self, usize>
-    where
-        R: ByteReader,
-    {
+    ) -> Result<Self, usize> {
         let ty = PredictionSchemeType::read_from(reader)?;
         Ok(Self::new(ty, parents, ads))
     }

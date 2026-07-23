@@ -6,7 +6,7 @@ mod traversal;
 
 use super::Connectivity;
 use crate::Err;
-use draco_oxide_core::bit_coder::ByteReader;
+use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::mesh::ds::CornerTable;
 use draco_oxide_core::types::CornerIdx;
 use draco_oxide_core::utils::bit_coder::leb128_read;
@@ -20,7 +20,7 @@ const TRAVERSAL_VALENCE: u8 = 2;
 
 /// Decodes edgebreaker connectivity from `reader`, positioned just after the header
 /// (and metadata). Leaves the reader at the start of the attribute section.
-pub fn decode<R: ByteReader>(reader: &mut R) -> Result<Connectivity, Err> {
+pub fn decode(reader: &mut Reader<'_>) -> Result<Connectivity, Err> {
     let traversal_type = reader.read_u8()?;
     let kind = match traversal_type {
         TRAVERSAL_STANDARD => TraversalKind::Standard,
