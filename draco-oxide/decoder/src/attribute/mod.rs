@@ -190,7 +190,8 @@ pub(crate) fn decode_attributes(
             })
             .collect();
         let adss = build_attribute_ds(&ds, &conn.corner_table, fans, seams, placeholders);
-        let (attributes, transforms) = decode_payloads(reader, &descriptors, &adss, &seeds)?;
+        let (attributes, transforms) =
+            decode_payloads(reader, &descriptors, &adss, &seeds, false)?;
         (faces, attributes, transforms)
     } else {
         // Identity path: points equal position vertices.
@@ -215,7 +216,8 @@ pub(crate) fn decode_attributes(
                 )
             })
             .collect();
-        let (attributes, transforms) = decode_payloads(reader, &descriptors, &adss, &seeds)?;
+        let (attributes, transforms) =
+            decode_payloads(reader, &descriptors, &adss, &seeds, true)?;
         (faces, attributes, transforms)
     };
 
@@ -236,37 +238,69 @@ fn decode_payloads<D: GenericAttributeDs>(
     descriptors: &[Descriptor],
     adss: &[D],
     seeds: &[CornerIdx],
+    allow_fuse: bool,
 ) -> Result<(Vec<Attribute>, Vec<AttributeTransform>), Err> {
-    let mut shared_seq: Option<Vec<CornerIdx>> = None;
+    // Seamless attributes share the position connectivity, so their traversal
+    // sequence and ranks are identical and computed once. A lone seamless
+    // attribute has nothing to share, so it is instead traversed lazily with its
+    // reversal fused into the same pass. Fusion relies on `point == vertex`, which
+    // only holds on the identity dispatch, so the caller gates it with
+    // `allow_fuse`; the general (seam-aware) dispatch keeps the materialized path.
+    let seamless_count = adss.iter().filter(|a| !a.has_interior_seams()).count();
+    let fuse_seamless = allow_fuse && seamless_count == 1;
+    let mut shared: Option<(Vec<CornerIdx>, Vec<usize>)> = None;
     let mut attributes: Vec<Attribute> = Vec::with_capacity(adss.len());
     let mut transforms: Vec<AttributeTransform> = Vec::with_capacity(adss.len());
     for (desc, ads) in descriptors.iter().zip(adss) {
         let seamless = !ads.has_interior_seams();
-        let owned_seq;
-        let seq: &[CornerIdx] = if seamless {
-            if shared_seq.is_none() {
-                shared_seq = Some(Traverser::new(ads, seeds.to_vec()).compute_seqeunce());
+        let owned;
+        let traversal: Traversal<D> = if seamless && fuse_seamless {
+            Traversal::Fused(Traverser::new(ads, seeds.to_vec()))
+        } else if seamless {
+            if shared.is_none() {
+                shared = Some(Traverser::new(ads, seeds.to_vec()).compute_sequence_and_ranks());
             }
-            shared_seq.as_deref().unwrap()
+            let s = shared.as_ref().unwrap();
+            Traversal::Materialized {
+                sequence: &s.0,
+                vertex_rank: &s.1,
+            }
         } else {
-            owned_seq = Traverser::new(ads, seeds.to_vec()).compute_seqeunce();
-            &owned_seq
+            owned = Traverser::new(ads, seeds.to_vec()).compute_sequence_and_ranks();
+            Traversal::Materialized {
+                sequence: &owned.0,
+                vertex_rank: &owned.1,
+            }
         };
 
         let parent = attributes
             .iter()
             .find(|a| a.get_attribute_type() == AttributeType::Position);
         let (att, transform) = match desc.portable_num_components() {
-            1 => decode_payload::<1, D>(reader, ads, seq, parent, desc)?,
-            2 => decode_payload::<2, D>(reader, ads, seq, parent, desc)?,
-            3 => decode_payload::<3, D>(reader, ads, seq, parent, desc)?,
-            4 => decode_payload::<4, D>(reader, ads, seq, parent, desc)?,
+            1 => decode_payload::<1, D>(reader, ads, traversal, parent, desc)?,
+            2 => decode_payload::<2, D>(reader, ads, traversal, parent, desc)?,
+            3 => decode_payload::<3, D>(reader, ads, traversal, parent, desc)?,
+            4 => decode_payload::<4, D>(reader, ads, traversal, parent, desc)?,
             _ => return Err(Err::MalformedAttribute("unsupported number of components")),
         };
         attributes.push(att);
         transforms.push(transform);
     }
     Ok((attributes, transforms))
+}
+
+/// How one attribute's payload consumes the connectivity traversal.
+enum Traversal<'a, D: GenericAttributeDs> {
+    /// A precomputed sequence (with per-vertex ranks), shared across seamless
+    /// attributes or owned by a seamed one. The point-to-value map is built in a
+    /// batch pass and the reversal walks the materialized sequence.
+    Materialized {
+        sequence: &'a [CornerIdx],
+        vertex_rank: &'a [usize],
+    },
+    /// A single-use identity traversal driven lazily, one corner per step, with
+    /// the prediction reversal fused into the walk.
+    Fused(Traverser<'a, D>),
 }
 
 /// Decodes one attribute's payload: prediction/transform ids, the correction
@@ -276,7 +310,7 @@ fn decode_payloads<D: GenericAttributeDs>(
 fn decode_payload<const N: usize, D: GenericAttributeDs>(
     reader: &mut Reader<'_>,
     ads: &D,
-    sequence: &[CornerIdx],
+    traversal: Traversal<D>,
     parent: Option<&Attribute>,
     desc: &Descriptor,
 ) -> Result<(Attribute, AttributeTransform), Err>
@@ -286,7 +320,12 @@ where
 {
     let scheme_ty = prediction::read_scheme_id(reader)?;
     let transform_id = reader.read_u8()?;
-    let num_values = sequence.len();
+    // Every attribute vertex is reached exactly once, so the value count is the
+    // sequence length (materialized) or the vertex bound (fused, no sequence).
+    let num_values = match &traversal {
+        Traversal::Materialized { sequence, .. } => sequence.len(),
+        Traversal::Fused(_) => ads.vertex_index_bound(),
+    };
 
     // The correction stream: rANS-coded symbols or raw values.
     let rans_flag = reader.read_u8()?;
@@ -354,23 +393,6 @@ where
         parents_ids,
     );
 
-    let mut vertex_rank = vec![usize::MAX; ads.vertex_index_bound()];
-    for (k, &c) in sequence.iter().enumerate() {
-        vertex_rank[usize::from(ads.vertex_idx(c))] = k;
-    }
-    let mut point_map = vec![AttributeValueIdx::from(0); ads.num_points()];
-    for c in 0..ads.num_corners() {
-        let c = CornerIdx::from(c);
-        let rank = vertex_rank[usize::from(ads.vertex_idx(c))];
-        if rank == usize::MAX {
-            return Err(Err::MalformedAttribute(
-                "traversal did not reach every attribute vertex",
-            ));
-        }
-        point_map[usize::from(ads.point_idx(c))] = AttributeValueIdx::from(rank);
-    }
-    att.set_point_to_att_val_map(Some(VecPointIdx::from(point_map)));
-
     let parent_refs: Vec<&Attribute> = parent.into_iter().collect();
     let mut predictor = Predictor::<N, D>::new(&scheme_ty, &parent_refs, ads, flips, orientations)?;
 
@@ -379,17 +401,68 @@ where
     // safe to consult.
     let zigzagged = transform.corrections_are_zigzagged();
     let mut record: Vec<VertexIdx> = Vec::with_capacity(num_values);
-    for (k, &c) in sequence.iter().enumerate() {
-        let pred = predictor.predict(c, &record, &att);
-        record.push(ads.vertex_idx(c));
-        let mut corr = corrections[k];
-        if zigzagged {
-            for i in 0..N {
-                *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
+    match traversal {
+        Traversal::Materialized {
+            sequence,
+            vertex_rank,
+        } => {
+            // Build the point-to-value map from the completed ranks, then walk
+            // the materialized sequence.
+            let mut point_map = vec![AttributeValueIdx::from(0); ads.num_points()];
+            for c in 0..ads.num_corners() {
+                let c = CornerIdx::from(c);
+                let rank = vertex_rank[usize::from(ads.vertex_idx(c))];
+                if rank == usize::MAX {
+                    return Err(Err::MalformedAttribute(
+                        "traversal did not reach every attribute vertex",
+                    ));
+                }
+                point_map[usize::from(ads.point_idx(c))] = AttributeValueIdx::from(rank);
+            }
+            att.set_point_to_att_val_map(Some(VecPointIdx::from(point_map)));
+
+            for (k, &c) in sequence.iter().enumerate() {
+                let pred = predictor.predict(c, &record, &att);
+                record.push(ads.vertex_idx(c));
+                let mut corr = corrections[k];
+                if zigzagged {
+                    for i in 0..N {
+                        *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
+                    }
+                }
+                att.unique_vals_as_slice_mut::<NdVector<N, i32>>()[k] =
+                    transform.compute_original(pred, corr);
             }
         }
-        let orig = transform.compute_original(pred, corr);
-        att.unique_vals_as_slice_mut::<NdVector<N, i32>>()[k] = orig;
+        Traversal::Fused(traverser) => {
+            // Identity fast path: point == vertex, so each emitted corner sets
+            // exactly the one map entry a later predict will read. Filling the
+            // map as the walk proceeds lets the reversal fuse into the traversal.
+            att.set_point_to_att_val_map(Some(VecPointIdx::from(vec![
+                AttributeValueIdx::from(0);
+                ads.num_points()
+            ])));
+            let mut k = 0;
+            for c in traverser {
+                att.set_point_att_val(ads.point_idx(c), AttributeValueIdx::from(k));
+                let pred = predictor.predict(c, &record, &att);
+                record.push(ads.vertex_idx(c));
+                let mut corr = corrections[k];
+                if zigzagged {
+                    for i in 0..N {
+                        *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
+                    }
+                }
+                att.unique_vals_as_slice_mut::<NdVector<N, i32>>()[k] =
+                    transform.compute_original(pred, corr);
+                k += 1;
+            }
+            if k != num_values {
+                return Err(Err::MalformedAttribute(
+                    "traversal did not reach every attribute vertex",
+                ));
+            }
+        }
     }
 
     Ok((att, dequant))

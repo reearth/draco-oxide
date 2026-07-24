@@ -206,6 +206,17 @@ impl Attribute {
         self.point_to_att_val_map
     }
 
+    /// Assigns the attribute-value index of a single point. The point-to-value
+    /// map must already be present (see [`Self::set_point_to_att_val_map`]); this
+    /// fills it entry by entry as a traversal visits each point.
+    #[inline]
+    pub fn set_point_att_val(&mut self, p_idx: PointIdx, val_idx: AttributeValueIdx) {
+        self.point_to_att_val_map
+            .as_mut()
+            .expect("point-to-value map must be initialized before per-point assignment")[p_idx] =
+            val_idx;
+    }
+
     #[inline]
     pub fn get_id(&self) -> AttributeId {
         self.id
