@@ -82,11 +82,15 @@ impl GroupConfig {
                     portabilization: portabilization::Config::default_for(att_ty),
                 },
             },
+            // Parallelogram over the UV connectivity is the default: it
+            // decodes substantially faster than the geometric texture scheme
+            // (no position reads, no orientation bits, no integer sqrt) at a
+            // small ratio cost on heavily distorted atlases. The geometric
+            // scheme stays available as a per-attribute override.
             AttributeType::TextureCoordinate => Self {
                 range: vec![0..size],
                 prediction_scheme: prediction_scheme::Config {
-                    ty:
-                        prediction_scheme::PredictionSchemeType::MeshPredictionForTextureCoordinates,
+                    ty: prediction_scheme::PredictionSchemeType::MeshParallelogramPrediction,
                     ..prediction_scheme::Config::default()
                 },
                 prediction_transform: prediction_transform::Config {

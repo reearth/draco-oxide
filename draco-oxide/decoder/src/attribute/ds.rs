@@ -8,8 +8,7 @@ use std::mem::{ManuallyDrop, MaybeUninit};
 
 use draco_oxide_core::attribute::Attribute;
 use draco_oxide_core::mesh::ds::{
-    AttributeCornerTable, AttributeDS, CornerTable, GenericAttributeDs, GenericCornerTable,
-    IdentityDS, DS,
+    AttributeCornerTable, AttributeDS, CornerTable, GenericCornerTable, IdentityDS, DS,
 };
 use draco_oxide_core::types::{
     CornerIdx, PointIdx, VecCornerIdx, VecPointIdx, VecVertexIdx, VertexIdx,
@@ -184,116 +183,14 @@ pub(crate) fn build_ds(input: Input, seam_sets: &[&[bool]]) -> (DS, Vec<RawAttri
 }
 
 /// Either the general seam-aware attribute structure or the identity structure
-/// for a seamed mesh's finest attribute. Both are traversed over an
-/// [`AttributeCornerTable`], so a decode over a mix of attributes holds them in
-/// one homogeneous collection while the finest one keeps its single-load
-/// `vertex_idx`.
+/// for a seamed mesh's finest attribute, so a decode over a mix of attributes
+/// holds them in one homogeneous collection. Hot traversal code never calls
+/// through this enum: a group walk matches the variant once and runs
+/// monomorphized on the concrete structure (`GroupWalkDs` in the attribute
+/// module).
 pub(crate) enum GeneralDs<'a> {
     Seamed(AttributeDS<'a>),
     Finest(IdentityDS<'a, AttributeCornerTable<'a>, PointIdx>),
-}
-
-impl<'a> GenericAttributeDs for GeneralDs<'a> {
-    type Ct = AttributeCornerTable<'a>;
-
-    #[inline]
-    fn corner_table(&self) -> &AttributeCornerTable<'a> {
-        match self {
-            GeneralDs::Seamed(d) => d.corner_table(),
-            GeneralDs::Finest(d) => GenericAttributeDs::corner_table(d),
-        }
-    }
-    #[inline]
-    fn vertex_idx(&self, corner: CornerIdx) -> VertexIdx {
-        match self {
-            GeneralDs::Seamed(d) => d.vertex_idx(corner),
-            GeneralDs::Finest(d) => d.vertex_idx(corner),
-        }
-    }
-    #[inline]
-    fn point_idx(&self, corner: CornerIdx) -> PointIdx {
-        match self {
-            GeneralDs::Seamed(d) => d.point_idx(corner),
-            GeneralDs::Finest(d) => d.point_idx(corner),
-        }
-    }
-    #[inline]
-    fn point_to_vertex(&self, point: PointIdx) -> VertexIdx {
-        match self {
-            GeneralDs::Seamed(d) => GenericAttributeDs::point_to_vertex(d, point),
-            GeneralDs::Finest(d) => d.point_to_vertex(point),
-        }
-    }
-    #[inline]
-    fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx {
-        match self {
-            GeneralDs::Seamed(d) => d.left_most_corner(vertex),
-            GeneralDs::Finest(d) => d.left_most_corner(vertex),
-        }
-    }
-    #[inline]
-    fn vertex_index_bound(&self) -> usize {
-        match self {
-            GeneralDs::Seamed(d) => d.num_vertices(),
-            GeneralDs::Finest(d) => d.vertex_index_bound(),
-        }
-    }
-    #[inline]
-    fn num_points(&self) -> usize {
-        match self {
-            GeneralDs::Seamed(d) => d.num_points(),
-            GeneralDs::Finest(d) => d.num_points(),
-        }
-    }
-    #[inline]
-    fn num_faces(&self) -> usize {
-        match self {
-            GeneralDs::Seamed(d) => d.num_faces(),
-            GeneralDs::Finest(d) => d.num_faces(),
-        }
-    }
-    #[inline]
-    fn num_corners(&self) -> usize {
-        match self {
-            GeneralDs::Seamed(d) => d.num_corners(),
-            GeneralDs::Finest(d) => d.num_corners(),
-        }
-    }
-    #[inline]
-    fn att_data(&self) -> &Attribute {
-        match self {
-            GeneralDs::Seamed(d) => d.att_data(),
-            GeneralDs::Finest(d) => d.att_data(),
-        }
-    }
-    #[inline]
-    fn att_data_mut(&mut self) -> &mut Attribute {
-        match self {
-            GeneralDs::Seamed(d) => d.att_data_mut(),
-            GeneralDs::Finest(d) => d.att_data_mut(),
-        }
-    }
-    #[inline]
-    fn has_interior_seams(&self) -> bool {
-        match self {
-            GeneralDs::Seamed(d) => GenericAttributeDs::has_interior_seams(d),
-            GeneralDs::Finest(d) => d.has_interior_seams(),
-        }
-    }
-    #[inline]
-    fn point_equals_vertex(&self) -> bool {
-        match self {
-            GeneralDs::Seamed(_) => false,
-            GeneralDs::Finest(d) => d.point_equals_vertex(),
-        }
-    }
-    #[inline]
-    fn vertex_numbering_is_compact(&self) -> bool {
-        match self {
-            GeneralDs::Seamed(d) => GenericAttributeDs::vertex_numbering_is_compact(d),
-            GeneralDs::Finest(d) => d.vertex_numbering_is_compact(),
-        }
-    }
 }
 
 /// Assembles each attribute's data structure, borrowing the shared point `ds`

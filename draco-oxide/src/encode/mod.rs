@@ -191,6 +191,7 @@ fn allowed_schemes(
         ],
         Normal => vec![S::MeshNormalPrediction],
         TextureCoordinate => vec![
+            S::MeshParallelogramPrediction,
             S::MeshPredictionForTextureCoordinates,
             S::DerivativePrediction,
             S::DeltaPrediction,

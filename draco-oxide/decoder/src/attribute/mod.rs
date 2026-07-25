@@ -27,7 +27,7 @@ use draco_oxide_core::mesh::ds::{GenericAttributeDs, GenericCornerTable, Identit
 use draco_oxide_core::types::{
     AttributeValueIdx, CornerIdx, NdVector, PointIdx, VecPointIdx, Vector, VertexIdx,
 };
-use ds::{build_attribute_ds, build_ds, Input};
+use ds::{build_attribute_ds, build_ds, GeneralDs, Input};
 
 use inverse_transform::InverseTransform;
 use prediction::Predictor;
@@ -244,13 +244,13 @@ pub(crate) fn decode_attributes(
     })
 }
 
-/// Decodes every attribute payload over the shared connectivity `adss`, generic
-/// over the attribute data structure so the caller dispatches the identity fast
-/// path or the general one. Payload blocks are parsed up front in wire order;
-/// decode then runs one lazy traversal per (wave, group), stepping every member
-/// attribute at each emitted corner, so a shared sequence is computed exactly
-/// once and never materialized.
-fn decode_payloads<D: GenericAttributeDs>(
+/// Decodes every attribute payload over the shared connectivity `adss`.
+/// Payload blocks are parsed up front in wire order; decode then runs one lazy
+/// traversal per (wave, group), stepping every member attribute at each
+/// emitted corner, so a shared sequence is computed exactly once and never
+/// materialized. Each group walk is handed to [`GroupWalkDs::run_group`],
+/// which monomorphizes the walk on the concrete attribute data structure.
+fn decode_payloads<D: GroupWalkDs>(
     reader: &mut Reader<'_>,
     descriptors: &[Descriptor],
     adss: &[D],
@@ -343,9 +343,9 @@ fn decode_payloads<D: GenericAttributeDs>(
             if members.is_empty() && fused.is_empty() {
                 continue;
             }
-            let ads = &adss[rep];
             let num_values = group_num_values[rep];
-            let mut steppers: Vec<AnyStepper<'_, D>> = Vec::with_capacity(members.len());
+            let mut member_adss: Vec<&D> = Vec::with_capacity(members.len());
+            let mut group_members: Vec<GroupMember<'_>> = Vec::with_capacity(members.len());
             for &i in &members {
                 let parent = if parent_wave {
                     let parent = descriptors[..i].iter().zip(&slots).find_map(|(d, slot)| {
@@ -365,68 +365,45 @@ fn decode_payloads<D: GenericAttributeDs>(
                     None
                 };
                 let payload = parsed[i].take().expect("each attribute joins one group");
-                steppers.push(build_stepper(
+                member_adss.push(&adss[i]);
+                group_members.push(GroupMember {
                     payload,
-                    &descriptors[i],
-                    &adss[i],
+                    desc: &descriptors[i],
                     parent,
-                    num_values,
-                )?);
+                });
             }
-            let mut fusers: Vec<NormalFuser> = Vec::with_capacity(fused.len());
+            let mut fused_normals: Vec<FusedNormal<'_>> = Vec::with_capacity(fused.len());
             for &(i, parent_stepper) in &fused {
                 let Some(ParsedPayload::N2(p)) = parsed[i].take() else {
                     unreachable!("fused attributes are 2-component normals");
                 };
                 let parent_id = AttributeId::new(descriptors[members[parent_stepper]].uid as usize);
-                fusers.push(NormalFuser::new(
-                    p,
-                    &descriptors[i],
+                fused_normals.push(FusedNormal {
+                    payload: p,
+                    desc: &descriptors[i],
                     parent_id,
-                    ads,
                     parent_stepper,
-                    num_values,
-                ));
+                });
             }
-            let csr = if ads.point_equals_vertex() {
-                None
-            } else {
-                if csrs[rep].is_none() {
-                    csrs[rep] = Some(vertex_points_csr(ads));
-                }
-                csrs[rep].as_ref()
-            };
-            match recorded_seqs[rep].take() {
-                Some(seq) => decode_group(
-                    ads,
-                    seq.iter().copied(),
-                    &mut steppers,
-                    &mut fusers,
+            let result = D::run_group(
+                &adss[rep],
+                &member_adss,
+                GroupCtx {
+                    members: group_members,
+                    fused: fused_normals,
                     num_values,
-                    None,
-                    csr,
-                )?,
-                None => {
-                    let mut record_seq = later_wave_members.then(|| Vec::with_capacity(num_values));
-                    decode_group(
-                        ads,
-                        Traverser::new(ads, seeds.to_vec()),
-                        &mut steppers,
-                        &mut fusers,
-                        num_values,
-                        record_seq.as_mut(),
-                        csr,
-                    )?;
-                    recorded_seqs[rep] = record_seq;
-                }
-            }
-            let results: Vec<(Attribute, AttributeTransform)> =
-                steppers.into_iter().map(AnyStepper::finish).collect();
-            for (i, r) in members.into_iter().zip(results) {
+                    seeds,
+                    replay: recorded_seqs[rep].take(),
+                    record_walk: later_wave_members,
+                    csr: &mut csrs[rep],
+                },
+            )?;
+            recorded_seqs[rep] = result.recorded_seq;
+            for (i, r) in members.into_iter().zip(result.members) {
                 slots[i] = Some(r);
             }
-            for ((i, _), fuser) in fused.into_iter().zip(fusers) {
-                slots[i] = Some(fuser.finish());
+            for ((i, _), r) in fused.into_iter().zip(result.fused) {
+                slots[i] = Some(r);
             }
         }
     }
@@ -439,6 +416,200 @@ fn decode_payloads<D: GenericAttributeDs>(
         transforms.push(transform);
     }
     Ok((attributes, transforms))
+}
+
+/// One member attribute's inputs to a group walk: its parsed payload, wire
+/// descriptor, and the decoded parent position when the scheme predicts from
+/// one.
+struct GroupMember<'p> {
+    payload: ParsedPayload,
+    desc: &'p Descriptor,
+    parent: Option<&'p Attribute>,
+}
+
+/// One fused normal attribute's inputs to a group walk (see [`NormalFuser`]).
+struct FusedNormal<'p> {
+    payload: Parsed<2>,
+    desc: &'p Descriptor,
+    parent_id: AttributeId,
+    parent_stepper: usize,
+}
+
+/// The variant-independent inputs of one group walk, assembled by the
+/// scheduler in [`decode_payloads`].
+struct GroupCtx<'p, 'c> {
+    members: Vec<GroupMember<'p>>,
+    fused: Vec<FusedNormal<'p>>,
+    num_values: usize,
+    seeds: &'c [CornerIdx],
+    /// The corners recorded by an earlier walk of this group, replayed instead
+    /// of re-traversing.
+    replay: Option<Vec<CornerIdx>>,
+    /// Whether the walk must record its corners for a later wave.
+    record_walk: bool,
+    /// The group's cached vertex-to-points adjacency, built on first use.
+    csr: &'c mut Option<(Vec<usize>, Vec<PointIdx>)>,
+}
+
+/// The owned results of one group walk: decoded (attribute, transform) pairs
+/// for the members and the fused normals, in input order, plus the walk's
+/// recorded corners when a later wave will replay it.
+struct GroupResult {
+    members: Vec<(Attribute, AttributeTransform)>,
+    fused: Vec<(Attribute, AttributeTransform)>,
+    recorded_seq: Option<Vec<CornerIdx>>,
+}
+
+/// Group-walk entry point of an attribute data structure. `run_group` hands
+/// the walk to the concrete structure type, so the per-corner body is
+/// monomorphized per variant: a heterogeneous collection ([`GeneralDs`])
+/// dispatches once per group instead of at every hot call.
+trait GroupWalkDs: Sized {
+    /// See [`GenericAttributeDs::num_referenced_vertices`].
+    fn num_referenced_vertices(&self) -> usize;
+
+    /// Runs one traversal walk over `rep`'s connectivity for `ctx`'s member
+    /// attributes. `member_adss` is parallel to `ctx.members`.
+    fn run_group<'p>(
+        rep: &'p Self,
+        member_adss: &[&'p Self],
+        ctx: GroupCtx<'p, '_>,
+    ) -> Result<GroupResult, Err>;
+}
+
+impl<'a, CT, V> GroupWalkDs for IdentityDS<'a, CT, V>
+where
+    IdentityDS<'a, CT, V>: GenericAttributeDs,
+{
+    fn num_referenced_vertices(&self) -> usize {
+        GenericAttributeDs::num_referenced_vertices(self)
+    }
+
+    fn run_group<'p>(
+        rep: &'p Self,
+        member_adss: &[&'p Self],
+        ctx: GroupCtx<'p, '_>,
+    ) -> Result<GroupResult, Err> {
+        run_group_impl(rep, member_adss, ctx)
+    }
+}
+
+impl GroupWalkDs for GeneralDs<'_> {
+    fn num_referenced_vertices(&self) -> usize {
+        match self {
+            GeneralDs::Seamed(d) => GenericAttributeDs::num_referenced_vertices(d),
+            GeneralDs::Finest(d) => GenericAttributeDs::num_referenced_vertices(d),
+        }
+    }
+
+    fn run_group<'p>(
+        rep: &'p Self,
+        member_adss: &[&'p Self],
+        ctx: GroupCtx<'p, '_>,
+    ) -> Result<GroupResult, Err> {
+        // A traversal group is keyed by seam-set equality, and equal seam sets
+        // build identical structures, so every member shares the rep's variant.
+        match rep {
+            GeneralDs::Seamed(r) => {
+                let members: Vec<_> = member_adss
+                    .iter()
+                    .map(|&m| match m {
+                        GeneralDs::Seamed(d) => d,
+                        GeneralDs::Finest(_) => {
+                            unreachable!("group member variant differs from its rep")
+                        }
+                    })
+                    .collect();
+                run_group_impl(r, &members, ctx)
+            }
+            GeneralDs::Finest(r) => {
+                let members: Vec<_> = member_adss
+                    .iter()
+                    .map(|&m| match m {
+                        GeneralDs::Finest(d) => d,
+                        GeneralDs::Seamed(_) => {
+                            unreachable!("group member variant differs from its rep")
+                        }
+                    })
+                    .collect();
+                run_group_impl(r, &members, ctx)
+            }
+        }
+    }
+}
+
+/// Builds the group's steppers and fusers and runs one traversal walk,
+/// monomorphized on the concrete attribute data structure.
+fn run_group_impl<'p, D: GenericAttributeDs>(
+    rep: &'p D,
+    member_adss: &[&'p D],
+    ctx: GroupCtx<'p, '_>,
+) -> Result<GroupResult, Err> {
+    let GroupCtx {
+        members,
+        fused,
+        num_values,
+        seeds,
+        replay,
+        record_walk,
+        csr,
+    } = ctx;
+    debug_assert_eq!(members.len(), member_adss.len());
+    let mut steppers: Vec<AnyStepper<'_, D>> = Vec::with_capacity(members.len());
+    for (m, &ads) in members.into_iter().zip(member_adss) {
+        steppers.push(build_stepper(m.payload, m.desc, ads, m.parent, num_values)?);
+    }
+    let mut fusers: Vec<NormalFuser> = Vec::with_capacity(fused.len());
+    for f in fused {
+        fusers.push(NormalFuser::new(
+            f.payload,
+            f.desc,
+            f.parent_id,
+            rep,
+            f.parent_stepper,
+            num_values,
+        ));
+    }
+    let csr_ref = if rep.point_equals_vertex() {
+        None
+    } else {
+        if csr.is_none() {
+            *csr = Some(vertex_points_csr(rep));
+        }
+        csr.as_ref()
+    };
+    let recorded_seq = match replay {
+        Some(seq) => {
+            decode_group(
+                rep,
+                seq.iter().copied(),
+                &mut steppers,
+                &mut fusers,
+                num_values,
+                None,
+                csr_ref,
+            )?;
+            None
+        }
+        None => {
+            let mut record_seq = record_walk.then(|| Vec::with_capacity(num_values));
+            decode_group(
+                rep,
+                Traverser::new(rep, seeds.to_vec()),
+                &mut steppers,
+                &mut fusers,
+                num_values,
+                record_seq.as_mut(),
+                csr_ref,
+            )?;
+            record_seq
+        }
+    };
+    Ok(GroupResult {
+        members: steppers.into_iter().map(AnyStepper::finish).collect(),
+        fused: fusers.into_iter().map(NormalFuser::finish).collect(),
+        recorded_seq,
+    })
 }
 
 /// One attribute's parsed wire payload: prediction/transform ids, the

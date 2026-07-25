@@ -37,8 +37,9 @@ fn encode_fingerprint(obj: &str) -> (usize, u64) {
 #[test]
 fn encode_output_is_byte_stable() {
     // (obj, expected_len, expected_fnv1a). tetrahedron carries position +
-    // normal + texcoord attributes, exercising all three mesh prediction
-    // schemes; sphere/torus/bunny exercise position (parallelogram) at scale
+    // normal + texcoord attributes, exercising the default prediction scheme
+    // of each (parallelogram for position and texcoord, normal prediction for
+    // normal); sphere/torus/bunny exercise position (parallelogram) at scale
     // and over handle topology (torus).
     let cases: &[(&str, usize, u64)] = &[
         ("data/tetrahedron.obj", EXPECT_TETRA_LEN, EXPECT_TETRA_HASH),
@@ -61,8 +62,8 @@ fn encode_output_is_byte_stable() {
     }
 }
 
-const EXPECT_TETRA_LEN: usize = 865;
-const EXPECT_TETRA_HASH: u64 = 5124338407658962295;
+const EXPECT_TETRA_LEN: usize = 1156;
+const EXPECT_TETRA_HASH: u64 = 18074224272254933968;
 const EXPECT_SPHERE_LEN: usize = 1966;
 const EXPECT_SPHERE_HASH: u64 = 17293669947149617272;
 const EXPECT_TORUS_LEN: usize = 3238;
