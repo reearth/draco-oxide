@@ -8,7 +8,6 @@ pub struct Traverser<'a, D: GenericAttributeDs> {
     visited_faces: VecFaceIdx<bool>,
     corner_traversal_stack: Vec<CornerIdx>,
     out: Vec<CornerIdx>,
-    vertex_rank: Vec<usize>,
     /// The second corner emitted by a single traversal step, buffered for the
     /// next `Iterator::next` call. Only a start-of-component step emits two
     /// corners; every other step emits at most one.
@@ -28,8 +27,7 @@ impl<'a, D: GenericAttributeDs> Traverser<'a, D> {
             visited_faces: vec![false; num_faces].into(),
             ads,
             corner_traversal_stack: corners_of_edgebreaker_traversal, // The last encoded connected component gets decoded first
-            out: Vec::with_capacity(num_faces * 3),
-            vertex_rank: Vec::new(),
+            out: Vec::new(),
             pending: None,
         }
     }
@@ -39,15 +37,10 @@ impl<'a, D: GenericAttributeDs> Traverser<'a, D> {
         unsafe { *self.visited_vertices.get_unchecked(v) }
     }
 
-    /// Records `c` as the first corner reaching vertex `v`. When `TRACK` is set,
-    /// also stores the vertex's rank (its position in the output sequence) into
-    /// `vertex_rank`, built in the same pass as the sequence.
+    /// Records `c` as the first corner reaching vertex `v`.
     #[inline]
-    fn visit<const TRACK: bool>(&mut self, v: VertexIdx, c: CornerIdx) {
+    fn visit(&mut self, v: VertexIdx, c: CornerIdx) {
         if !self.is_vertex_visited(v) {
-            if TRACK {
-                self.vertex_rank[usize::from(v)] = self.out.len();
-            }
             self.out.push(c);
         }
         unsafe {
@@ -55,10 +48,8 @@ impl<'a, D: GenericAttributeDs> Traverser<'a, D> {
         }
     }
 
-    /// Traverses the mesh, filling `out` with the attribute sequence. When
-    /// `TRACK` is set, `vertex_rank` is filled with each vertex's output rank in
-    /// the same pass.
-    fn drive<const TRACK: bool>(&mut self) {
+    /// Traverses the mesh, filling `out` with the attribute sequence.
+    fn drive(&mut self) {
         while let Some(curr_corner) = self.corner_traversal_stack.pop() {
             // If the face has not yet been visited, then the
             // other vertices of the face are not visited yet either. If this is the case, then
@@ -75,8 +66,8 @@ impl<'a, D: GenericAttributeDs> Traverser<'a, D> {
             if !self.is_vertex_visited(next_v) || !self.is_vertex_visited(prev_v) {
                 // We need to return the next corner first, then the previous corner, and finally the current corner.
                 // This order is determined by the draco library.
-                self.visit::<TRACK>(next_v, next_c);
-                self.visit::<TRACK>(prev_v, prev_c);
+                self.visit(next_v, next_c);
+                self.visit(prev_v, prev_c);
                 self.corner_traversal_stack.push(curr_corner);
                 continue;
             }
@@ -92,7 +83,7 @@ impl<'a, D: GenericAttributeDs> Traverser<'a, D> {
 
             // If we have not yet visited the vertex of the current corner and if it is not on a boundary then we can simply return it.
             if !self.is_vertex_visited(v) {
-                self.visit::<TRACK>(v, curr_corner);
+                self.visit(v, curr_corner);
                 if !self.ads.is_on_boundary(v) {
                     self.corner_traversal_stack.push(
                         self.ads
@@ -104,7 +95,7 @@ impl<'a, D: GenericAttributeDs> Traverser<'a, D> {
                 }
             }
 
-            self.visit::<TRACK>(v, curr_corner);
+            self.visit(v, curr_corner);
             self.push_fan_neighbors(curr_corner, face_idx);
         }
     }
@@ -167,17 +158,9 @@ impl<'a, D: GenericAttributeDs> Traverser<'a, D> {
 
     /// Computes the attribute traversal sequence.
     pub fn compute_seqeunce(mut self) -> Vec<CornerIdx> {
-        self.drive::<false>();
+        self.out.reserve(self.ads.vertex_index_bound());
+        self.drive();
         self.out
-    }
-
-    /// Computes the attribute traversal sequence together with each vertex's
-    /// rank (its index in the sequence), built in the same traversal pass.
-    /// `vertex_rank` is indexed by vertex; unreached vertices stay `usize::MAX`.
-    pub fn compute_sequence_and_ranks(mut self) -> (Vec<CornerIdx>, Vec<usize>) {
-        self.vertex_rank = vec![usize::MAX; self.ads.vertex_index_bound()];
-        self.drive::<true>();
-        (self.out, self.vertex_rank)
     }
 }
 

@@ -218,6 +218,13 @@ impl<'a> GenericAttributeDs for GeneralDs<'a> {
         }
     }
     #[inline]
+    fn point_to_vertex(&self, point: PointIdx) -> VertexIdx {
+        match self {
+            GeneralDs::Seamed(d) => GenericAttributeDs::point_to_vertex(d, point),
+            GeneralDs::Finest(d) => d.point_to_vertex(point),
+        }
+    }
+    #[inline]
     fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx {
         match self {
             GeneralDs::Seamed(d) => d.left_most_corner(vertex),
@@ -271,6 +278,20 @@ impl<'a> GenericAttributeDs for GeneralDs<'a> {
         match self {
             GeneralDs::Seamed(d) => GenericAttributeDs::has_interior_seams(d),
             GeneralDs::Finest(d) => d.has_interior_seams(),
+        }
+    }
+    #[inline]
+    fn point_equals_vertex(&self) -> bool {
+        match self {
+            GeneralDs::Seamed(_) => false,
+            GeneralDs::Finest(d) => d.point_equals_vertex(),
+        }
+    }
+    #[inline]
+    fn vertex_numbering_is_compact(&self) -> bool {
+        match self {
+            GeneralDs::Seamed(d) => GenericAttributeDs::vertex_numbering_is_compact(d),
+            GeneralDs::Finest(d) => d.vertex_numbering_is_compact(),
         }
     }
 }

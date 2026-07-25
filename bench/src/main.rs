@@ -9,6 +9,7 @@
 
 mod chart;
 
+use draco_oxide::core::attribute::AttributeType;
 use draco_oxide::core::mesh::Mesh;
 use draco_oxide::core::types::ConfigType;
 use draco_oxide::encode::{encode, Config};
@@ -25,10 +26,48 @@ struct CodecResult {
 
 struct MeshBench {
     name: String,
+    /// Comma-separated attribute codes carried by the mesh, e.g. "P, N, T".
+    attrs: String,
     faces: usize,
     raw_bytes: usize,
     oxide: CodecResult,
     draco: CodecResult,
+}
+
+impl MeshBench {
+    /// Display label combining the mesh name with its attributes, e.g.
+    /// `bunny (P, N)`.
+    fn label(&self) -> String {
+        format!("{} ({})", self.name, self.attrs)
+    }
+}
+
+/// One-letter code for an attribute, following the report legend
+/// (P position, N normal, C color, T texture coordinate).
+fn attr_code(ty: AttributeType) -> &'static str {
+    match ty {
+        AttributeType::Position => "P",
+        AttributeType::Normal => "N",
+        AttributeType::Color => "C",
+        AttributeType::TextureCoordinate => "T",
+        AttributeType::Tangent => "Tan",
+        AttributeType::Material => "M",
+        AttributeType::Joint => "J",
+        AttributeType::Weight => "W",
+        AttributeType::Custom => "X",
+        AttributeType::Invalid => "?",
+    }
+}
+
+/// The mesh's attributes as a stable "P, N, T"-style summary.
+fn attr_summary(mesh: &Mesh) -> String {
+    let mut codes: Vec<&str> = mesh
+        .attributes
+        .iter()
+        .map(|a| attr_code(a.get_attribute_type()))
+        .collect();
+    codes.dedup();
+    codes.join(", ")
 }
 
 #[cfg(have_libdraco)]
@@ -111,9 +150,16 @@ fn run() {
 
     // Excluded: pathological_* are timeout regression fixtures, not
     // representative inputs; mobius is not encoded correctly by Draco (a
-    // non-orientable comparison would be meaningless); the cube_flat variants
-    // are too small to time meaningfully.
-    let excluded = ["mobius", "cube_flat", "cube_flat_random_normals"];
+    // non-orientable comparison would be meaningless); the cube_flat, open_box,
+    // tetrahedron, and groove_fan meshes are too small to time meaningfully.
+    let excluded = [
+        "mobius",
+        "cube_flat",
+        "cube_flat_random_normals",
+        "open_box",
+        "tetrahedron",
+        "groove_fan",
+    ];
     let mut objs: Vec<PathBuf> = std::fs::read_dir(&data_dir)
         .expect("read tests/data")
         .filter_map(|e| {
@@ -140,6 +186,7 @@ fn run() {
         };
         let faces = mesh.faces.len();
         let raw_bytes = raw_geometry_bytes(&mesh);
+        let attrs = attr_summary(&mesh);
 
         let oxide = bench_oxide(&mesh);
         let draco = match bench_draco(obj) {
@@ -152,6 +199,7 @@ fn run() {
 
         results.push(MeshBench {
             name,
+            attrs,
             faces,
             raw_bytes,
             oxide,
@@ -246,7 +294,7 @@ const OXIDE_COLOR: &str = "#2a78d6";
 const DRACO_COLOR: &str = "#008300";
 
 fn write_charts(assets_dir: &Path, results: &[MeshBench]) {
-    let categories: Vec<String> = results.iter().map(|r| r.name.clone()).collect();
+    let categories: Vec<String> = results.iter().map(|r| r.label()).collect();
 
     let two_series = |oxide: Vec<Option<f64>>, draco: Vec<Option<f64>>| {
         [
@@ -361,6 +409,10 @@ fn render_report(results: &[MeshBench]) -> String {
 
     md.push_str("## Results\n\n");
     md.push_str(
+        "Each mesh name is annotated with the attributes it carries: \
+         P (position), N (normal), T (texture coordinate), C (color).\n\n",
+    );
+    md.push_str(
         "| mesh | faces | raw KB | oxide KB | Draco KB | oxide ratio | Draco ratio | \
          oxide enc ms | Draco enc ms | oxide dec ms | Draco dec ms |\n",
     );
@@ -368,7 +420,7 @@ fn render_report(results: &[MeshBench]) -> String {
     for r in results {
         md.push_str(&format!(
             "| {} | {} | {} | {} | {} | {:.2} | {:.2} | {} | {} | {} | {} |\n",
-            r.name,
+            r.label(),
             r.faces,
             fmt_kb(r.raw_bytes),
             fmt_kb(r.oxide.compressed_bytes),

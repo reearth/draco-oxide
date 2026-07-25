@@ -173,6 +173,8 @@ pub trait GenericAttributeDs {
     fn corner_table(&self) -> &Self::Ct;
     fn vertex_idx(&self, corner: CornerIdx) -> VertexIdx;
     fn point_idx(&self, corner: CornerIdx) -> PointIdx;
+    /// The attribute vertex that `point` belongs to.
+    fn point_to_vertex(&self, point: PointIdx) -> VertexIdx;
     fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx;
     /// The size of the vertex index space, i.e. an exclusive upper bound for
     /// every value [`Self::vertex_idx`] can return. This is what per-vertex
@@ -191,6 +193,39 @@ pub trait GenericAttributeDs {
     /// identity case, where the attribute rides the position corner table.
     fn has_interior_seams(&self) -> bool {
         false
+    }
+
+    /// Whether every corner's point index equals its vertex index, so a
+    /// traversal needs one point-map write per emitted vertex instead of a
+    /// write per fan corner.
+    fn point_equals_vertex(&self) -> bool {
+        false
+    }
+
+    /// Whether every id below [`Self::vertex_index_bound`] is referenced by
+    /// some corner. False when the numbering may contain phantom ids, in which
+    /// case the referenced count must be established by scanning.
+    fn vertex_numbering_is_compact(&self) -> bool {
+        false
+    }
+
+    /// The number of vertices referenced by some corner, i.e. the number of
+    /// values an attribute traversal visits. Equals the bound for a compact
+    /// numbering; established by a corner scan otherwise.
+    fn num_referenced_vertices(&self) -> usize {
+        if self.vertex_numbering_is_compact() {
+            return self.vertex_index_bound();
+        }
+        let mut seen = vec![false; self.vertex_index_bound()];
+        let mut count = 0;
+        for c in 0..self.num_corners() {
+            let v = usize::from(self.vertex_idx(CornerIdx::from(c)));
+            if !seen[v] {
+                seen[v] = true;
+                count += 1;
+            }
+        }
+        count
     }
 
     /// Whether `vertex` lies on an open (boundary) fan, i.e. swinging left from
@@ -235,6 +270,10 @@ impl<'a> GenericAttributeDs for AttributeDS<'a> {
         AttributeDS::point_idx(self, corner)
     }
     #[inline]
+    fn point_to_vertex(&self, point: PointIdx) -> VertexIdx {
+        self.point_to_vertex_map[point]
+    }
+    #[inline]
     fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx {
         AttributeDS::left_most_corner(self, vertex)
     }
@@ -265,6 +304,11 @@ impl<'a> GenericAttributeDs for AttributeDS<'a> {
     #[inline]
     fn has_interior_seams(&self) -> bool {
         self.corner_table.has_interior_seams()
+    }
+    // The sector decomposition assigns vertex ids sequentially, one fan each.
+    #[inline]
+    fn vertex_numbering_is_compact(&self) -> bool {
+        true
     }
     #[inline]
     fn is_on_boundary(&self, vertex: VertexIdx) -> bool {
@@ -320,6 +364,10 @@ pub struct IdentityDS<'a, CT, V> {
     /// Whether this attribute's connectivity carries an interior seam. False
     /// for the seamless case, true for a seamed mesh's finest attribute.
     interior_seams: bool,
+    /// Whether every id below `index_bound` is referenced by a corner. False
+    /// for the seamless case, whose bound comes from a reconstruction that may
+    /// keep phantom (merged-away) vertex ids.
+    compact_vertices: bool,
     att: Attribute,
 }
 
@@ -341,6 +389,7 @@ impl<'a> IdentityDS<'a, &'a CornerTable, VertexIdx> {
             index_bound: vertex_index_bound,
             num_faces: corner_to_vertex.len() / 3,
             interior_seams: false,
+            compact_vertices: false,
             att,
         }
     }
@@ -364,6 +413,8 @@ impl<'a> IdentityDS<'a, AttributeCornerTable<'a>, PointIdx> {
             index_bound: ds.num_points(),
             num_faces: ds.num_faces(),
             interior_seams: true,
+            // Points are numbered from the corners, so every id is referenced.
+            compact_vertices: true,
             att,
         }
     }
@@ -390,6 +441,10 @@ where
         // Points coincide with vertices in the identity case.
         let v: usize = self.corner_to_vertex[usize::from(corner)].into();
         PointIdx::from(v)
+    }
+    #[inline]
+    fn point_to_vertex(&self, point: PointIdx) -> VertexIdx {
+        VertexIdx::from(usize::from(point))
     }
     #[inline]
     fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx {
@@ -422,6 +477,24 @@ where
     #[inline]
     fn has_interior_seams(&self) -> bool {
         self.interior_seams
+    }
+    #[inline]
+    fn point_equals_vertex(&self) -> bool {
+        true
+    }
+    #[inline]
+    fn vertex_numbering_is_compact(&self) -> bool {
+        self.compact_vertices
+    }
+    // Phantom ids carry the INVALID left-most sentinel, so one sequential
+    // sentinel scan replaces the generic corner scan.
+    fn num_referenced_vertices(&self) -> usize {
+        if self.compact_vertices {
+            return self.index_bound;
+        }
+        (0..self.index_bound)
+            .filter(|&v| self.left_most.get(v) != CornerIdx::INVALID)
+            .count()
     }
 }
 

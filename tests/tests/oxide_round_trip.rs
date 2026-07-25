@@ -30,6 +30,7 @@ const CASES: &[(&str, f32)] = &[
     ("data/sphere.obj", 1e-2),
     ("data/punctured_sphere.obj", 1e-2),
     ("data/bunny.obj", 1e-2),
+    ("data/Duck.obj", 1e-2),
 ];
 
 fn positions(mesh: &Mesh) -> Vec<NdVector<3, f32>> {

@@ -212,6 +212,40 @@ mod sequence {
         }
     }
 
+    /// The lazy iterator must yield exactly the sequence `compute_seqeunce`
+    /// materializes, for every attribute connectivity (boundaries, seams,
+    /// handles included).
+    #[test]
+    fn iterator_matches_drive() {
+        let paths = [
+            "../tests/data/tetrahedron.obj",
+            "../tests/data/sphere.obj",
+            "../tests/data/punctured_sphere.obj",
+            "../tests/data/torus.obj",
+            "../tests/data/bunny.obj",
+        ];
+        for path in paths {
+            let mesh = load_obj(path).unwrap();
+            let faces = mesh.faces;
+            let mut attributes = mesh.attributes;
+
+            let (ds, pos_corner_table) = build_global_ds(faces, &mut attributes);
+            let mut adss = build_attribute_ds(&ds, &pos_corner_table, attributes);
+
+            let corners =
+                encode_connectivity(&mut adss, &mut Vec::new(), &Config::default()).unwrap();
+
+            for (attr_idx, ads) in adss.iter().enumerate() {
+                let lazy: Vec<_> = Traverser::new(ads, corners.clone()).collect();
+                let driven = Traverser::new(ads, corners.clone()).compute_seqeunce();
+                assert_eq!(
+                    lazy, driven,
+                    "iterator order diverged: {path} attr {attr_idx}"
+                );
+            }
+        }
+    }
+
     // Captured from the pre-optimization implementation. Format: (attr_idx, len, fnv1a_digest).
     const EXPECT_TETRAHEDRON: &[AttrDigest] = &[
         (0, 4, 18054049684469353541),

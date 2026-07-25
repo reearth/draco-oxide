@@ -17,6 +17,9 @@ use draco_oxide_core::attribute::{
     Attribute, AttributeDomain, AttributeId, AttributeType, ComponentDataType,
 };
 use draco_oxide_core::bit_coder::Reader;
+use draco_oxide_core::codec::attribute::prediction_scheme::mesh_normal_prediction::{
+    compute_normal_of_face, sum_to_prediction,
+};
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::attribute::Portable;
@@ -189,9 +192,20 @@ pub(crate) fn decode_attributes(
                 ]
             })
             .collect();
+        // Attributes with identical seam sets get identical sector
+        // decompositions and hence identical traversals, so they share one
+        // decode walk. Each group id is its smallest member index.
+        let mut group_ids: Vec<usize> = Vec::with_capacity(num_atts);
+        for i in 0..num_atts {
+            let gid = (0..i)
+                .find(|&j| seams[j] == seams[i])
+                .map(|j| group_ids[j])
+                .unwrap_or(i);
+            group_ids.push(gid);
+        }
         let adss = build_attribute_ds(&ds, &conn.corner_table, fans, seams, placeholders);
         let (attributes, transforms) =
-            decode_payloads(reader, &descriptors, &adss, &seeds, false)?;
+            decode_payloads(reader, &descriptors, &adss, &seeds, &group_ids)?;
         (faces, attributes, transforms)
     } else {
         // Identity path: points equal position vertices.
@@ -216,8 +230,10 @@ pub(crate) fn decode_attributes(
                 )
             })
             .collect();
+        // Every attribute rides the position connectivity: one traversal group.
+        let group_ids = vec![0; num_atts];
         let (attributes, transforms) =
-            decode_payloads(reader, &descriptors, &adss, &seeds, true)?;
+            decode_payloads(reader, &descriptors, &adss, &seeds, &group_ids)?;
         (faces, attributes, transforms)
     };
 
@@ -230,102 +246,255 @@ pub(crate) fn decode_attributes(
 
 /// Decodes every attribute payload over the shared connectivity `adss`, generic
 /// over the attribute data structure so the caller dispatches the identity fast
-/// path or the general one. Attributes without interior seams share the
-/// position connectivity, so their traversal sequences are identical; the walk
-/// runs once and is reused.
+/// path or the general one. Payload blocks are parsed up front in wire order;
+/// decode then runs one lazy traversal per (wave, group), stepping every member
+/// attribute at each emitted corner, so a shared sequence is computed exactly
+/// once and never materialized.
 fn decode_payloads<D: GenericAttributeDs>(
     reader: &mut Reader<'_>,
     descriptors: &[Descriptor],
     adss: &[D],
     seeds: &[CornerIdx],
-    allow_fuse: bool,
+    group_ids: &[usize],
 ) -> Result<(Vec<Attribute>, Vec<AttributeTransform>), Err> {
-    // Seamless attributes share the position connectivity, so their traversal
-    // sequence and ranks are identical and computed once. A lone seamless
-    // attribute has nothing to share, so it is instead traversed lazily with its
-    // reversal fused into the same pass. Fusion relies on `point == vertex`, which
-    // only holds on the identity dispatch, so the caller gates it with
-    // `allow_fuse`; the general (seam-aware) dispatch keeps the materialized path.
-    let seamless_count = adss.iter().filter(|a| !a.has_interior_seams()).count();
-    let fuse_seamless = allow_fuse && seamless_count == 1;
-    let mut shared: Option<(Vec<CornerIdx>, Vec<usize>)> = None;
-    let mut attributes: Vec<Attribute> = Vec::with_capacity(adss.len());
-    let mut transforms: Vec<AttributeTransform> = Vec::with_capacity(adss.len());
-    for (desc, ads) in descriptors.iter().zip(adss) {
-        let seamless = !ads.has_interior_seams();
-        let owned;
-        let traversal: Traversal<D> = if seamless && fuse_seamless {
-            Traversal::Fused(Traverser::new(ads, seeds.to_vec()))
-        } else if seamless {
-            if shared.is_none() {
-                shared = Some(Traverser::new(ads, seeds.to_vec()).compute_sequence_and_ranks());
-            }
-            let s = shared.as_ref().unwrap();
-            Traversal::Materialized {
-                sequence: &s.0,
-                vertex_rank: &s.1,
-            }
-        } else {
-            owned = Traverser::new(ads, seeds.to_vec()).compute_sequence_and_ranks();
-            Traversal::Materialized {
-                sequence: &owned.0,
-                vertex_rank: &owned.1,
-            }
-        };
+    // The value count is per traversal group: the walk reaches every
+    // referenced vertex exactly once. The vertex index space may carry phantom
+    // ids (split merges are not compacted when seam data is present), so the
+    // vertex bound alone overcounts.
+    let mut group_num_values: Vec<usize> = vec![0; adss.len()];
+    for rep in 0..adss.len() {
+        if group_ids[rep] == rep {
+            group_num_values[rep] = adss[rep].num_referenced_vertices();
+        }
+    }
 
-        let parent = attributes
-            .iter()
-            .find(|a| a.get_attribute_type() == AttributeType::Position);
-        let (att, transform) = match desc.portable_num_components() {
-            1 => decode_payload::<1, D>(reader, ads, traversal, parent, desc)?,
-            2 => decode_payload::<2, D>(reader, ads, traversal, parent, desc)?,
-            3 => decode_payload::<3, D>(reader, ads, traversal, parent, desc)?,
-            4 => decode_payload::<4, D>(reader, ads, traversal, parent, desc)?,
+    // The wire holds one contiguous block per attribute, so every block is
+    // parsed before the first group walk starts.
+    let mut parsed: Vec<Option<ParsedPayload>> = Vec::with_capacity(adss.len());
+    for (i, desc) in descriptors.iter().enumerate() {
+        let num_values = group_num_values[group_ids[i]];
+        let payload = match desc.portable_num_components() {
+            1 => ParsedPayload::N1(parse_payload::<1>(reader, num_values, desc)?),
+            2 => ParsedPayload::N2(parse_payload::<2>(reader, num_values, desc)?),
+            3 => ParsedPayload::N3(parse_payload::<3>(reader, num_values, desc)?),
+            4 => ParsedPayload::N4(parse_payload::<4>(reader, num_values, desc)?),
             _ => return Err(Err::MalformedAttribute("unsupported number of components")),
         };
+        parsed.push(Some(payload));
+    }
+
+    // Waves order the parent dependency: geometric schemes consult the decoded
+    // position attribute, so they generally cannot share the walk that decodes
+    // their parent. Normal prediction is the exception: its prediction never
+    // reads other normals, so it rides the parent's walk with per-vertex
+    // finalization deferred to the moment the one-ring positions complete
+    // (see [`NormalFuser`]). When both waves do use the same traversal, the
+    // first wave's walk records the corners it emits as a byproduct and the
+    // second wave replays them, so a shared sequence is still computed once.
+    let mut recorded_seqs: Vec<Option<Vec<CornerIdx>>> = (0..adss.len()).map(|_| None).collect();
+    // The vertex-to-points adjacency per group, built on first use and shared
+    // by both waves.
+    let mut csrs: Vec<Option<(Vec<usize>, Vec<PointIdx>)>> =
+        (0..adss.len()).map(|_| None).collect();
+    let mut slots: Vec<Option<(Attribute, AttributeTransform)>> =
+        (0..adss.len()).map(|_| None).collect();
+    for wave in 0..2 {
+        let parent_wave = wave == 1;
+        for rep in 0..adss.len() {
+            if group_ids[rep] != rep {
+                continue;
+            }
+            let mut members: Vec<usize> = Vec::new();
+            let mut deferred: Vec<usize> = Vec::new();
+            for i in 0..adss.len() {
+                if group_ids[i] != rep {
+                    continue;
+                }
+                match parsed[i].as_ref() {
+                    Some(p) if p.needs_parent() == parent_wave => members.push(i),
+                    Some(_) => deferred.push(i),
+                    None => {}
+                }
+            }
+            // Normal attributes whose parent position decodes in this very
+            // walk fuse into it instead of waiting for the second wave.
+            let mut fused: Vec<(usize, usize)> = Vec::new();
+            if !parent_wave {
+                deferred.retain(|&i| {
+                    let is_normal = matches!(
+                        parsed[i].as_ref(),
+                        Some(ParsedPayload::N2(p))
+                            if p.scheme_ty == PredictionSchemeType::MeshNormalPrediction
+                    );
+                    let parent_stepper = descriptors[..i]
+                        .iter()
+                        .position(|d| d.att_type == AttributeType::Position)
+                        .and_then(|j| members.iter().position(|&m| m == j));
+                    match (is_normal, parent_stepper) {
+                        (true, Some(s)) => {
+                            fused.push((i, s));
+                            false
+                        }
+                        _ => true,
+                    }
+                });
+            }
+            let later_wave_members = !parent_wave && !deferred.is_empty();
+            if members.is_empty() && fused.is_empty() {
+                continue;
+            }
+            let ads = &adss[rep];
+            let num_values = group_num_values[rep];
+            let mut steppers: Vec<AnyStepper<'_, D>> = Vec::with_capacity(members.len());
+            for &i in &members {
+                let parent = if parent_wave {
+                    let parent = descriptors[..i].iter().zip(&slots).find_map(|(d, slot)| {
+                        if d.att_type == AttributeType::Position {
+                            slot.as_ref().map(|(a, _)| a)
+                        } else {
+                            None
+                        }
+                    });
+                    if parent.is_none() {
+                        return Err(Err::MalformedAttribute(
+                            "geometric prediction requires an already decoded position attribute",
+                        ));
+                    }
+                    parent
+                } else {
+                    None
+                };
+                let payload = parsed[i].take().expect("each attribute joins one group");
+                steppers.push(build_stepper(
+                    payload,
+                    &descriptors[i],
+                    &adss[i],
+                    parent,
+                    num_values,
+                )?);
+            }
+            let mut fusers: Vec<NormalFuser> = Vec::with_capacity(fused.len());
+            for &(i, parent_stepper) in &fused {
+                let Some(ParsedPayload::N2(p)) = parsed[i].take() else {
+                    unreachable!("fused attributes are 2-component normals");
+                };
+                let parent_id = AttributeId::new(descriptors[members[parent_stepper]].uid as usize);
+                fusers.push(NormalFuser::new(
+                    p,
+                    &descriptors[i],
+                    parent_id,
+                    ads,
+                    parent_stepper,
+                    num_values,
+                ));
+            }
+            let csr = if ads.point_equals_vertex() {
+                None
+            } else {
+                if csrs[rep].is_none() {
+                    csrs[rep] = Some(vertex_points_csr(ads));
+                }
+                csrs[rep].as_ref()
+            };
+            match recorded_seqs[rep].take() {
+                Some(seq) => decode_group(
+                    ads,
+                    seq.iter().copied(),
+                    &mut steppers,
+                    &mut fusers,
+                    num_values,
+                    None,
+                    csr,
+                )?,
+                None => {
+                    let mut record_seq = later_wave_members.then(|| Vec::with_capacity(num_values));
+                    decode_group(
+                        ads,
+                        Traverser::new(ads, seeds.to_vec()),
+                        &mut steppers,
+                        &mut fusers,
+                        num_values,
+                        record_seq.as_mut(),
+                        csr,
+                    )?;
+                    recorded_seqs[rep] = record_seq;
+                }
+            }
+            let results: Vec<(Attribute, AttributeTransform)> =
+                steppers.into_iter().map(AnyStepper::finish).collect();
+            for (i, r) in members.into_iter().zip(results) {
+                slots[i] = Some(r);
+            }
+            for ((i, _), fuser) in fused.into_iter().zip(fusers) {
+                slots[i] = Some(fuser.finish());
+            }
+        }
+    }
+
+    let mut attributes: Vec<Attribute> = Vec::with_capacity(adss.len());
+    let mut transforms: Vec<AttributeTransform> = Vec::with_capacity(adss.len());
+    for slot in slots {
+        let (att, transform) = slot.expect("every attribute belongs to exactly one wave");
         attributes.push(att);
         transforms.push(transform);
     }
     Ok((attributes, transforms))
 }
 
-/// How one attribute's payload consumes the connectivity traversal.
-enum Traversal<'a, D: GenericAttributeDs> {
-    /// A precomputed sequence (with per-vertex ranks), shared across seamless
-    /// attributes or owned by a seamed one. The point-to-value map is built in a
-    /// batch pass and the reversal walks the materialized sequence.
-    Materialized {
-        sequence: &'a [CornerIdx],
-        vertex_rank: &'a [usize],
-    },
-    /// A single-use identity traversal driven lazily, one corner per step, with
-    /// the prediction reversal fused into the walk.
-    Fused(Traverser<'a, D>),
+/// One attribute's parsed wire payload: prediction/transform ids, the
+/// correction stream, the scheme and transform metadata (in the
+/// scheme-dependent order the encoder writes them), and the portabilization
+/// parameters. Everything the reversal walk consumes.
+struct Parsed<const N: usize> {
+    scheme_ty: PredictionSchemeType,
+    corrections: Vec<NdVector<N, i32>>,
+    flips: Vec<bool>,
+    orientations: Vec<bool>,
+    transform: InverseTransform,
+    dequant: AttributeTransform,
 }
 
-/// Decodes one attribute's payload: prediction/transform ids, the correction
-/// stream, the scheme and transform metadata (in the scheme-dependent order the
-/// encoder writes them), the portabilization parameters, and finally the
-/// prediction-reversal loop over the traversal sequence.
-fn decode_payload<const N: usize, D: GenericAttributeDs>(
+/// [`Parsed`] behind the component-count dispatch.
+enum ParsedPayload {
+    N1(Parsed<1>),
+    N2(Parsed<2>),
+    N3(Parsed<3>),
+    N4(Parsed<4>),
+}
+
+impl ParsedPayload {
+    fn scheme_ty(&self) -> &PredictionSchemeType {
+        match self {
+            ParsedPayload::N1(p) => &p.scheme_ty,
+            ParsedPayload::N2(p) => &p.scheme_ty,
+            ParsedPayload::N3(p) => &p.scheme_ty,
+            ParsedPayload::N4(p) => &p.scheme_ty,
+        }
+    }
+
+    /// Whether the scheme predicts from a decoded position attribute, which
+    /// places the attribute in the second decode wave.
+    fn needs_parent(&self) -> bool {
+        matches!(
+            self.scheme_ty(),
+            PredictionSchemeType::MeshNormalPrediction
+                | PredictionSchemeType::MeshPredictionForTextureCoordinates
+        )
+    }
+}
+
+/// Parses one attribute's contiguous payload block off the wire.
+fn parse_payload<const N: usize>(
     reader: &mut Reader<'_>,
-    ads: &D,
-    traversal: Traversal<D>,
-    parent: Option<&Attribute>,
+    num_values: usize,
     desc: &Descriptor,
-) -> Result<(Attribute, AttributeTransform), Err>
+) -> Result<Parsed<N>, Err>
 where
     NdVector<N, i32>: Vector<N, Component = i32> + Portable,
     NdVector<N, f32>: Vector<N, Component = f32> + Portable,
 {
     let scheme_ty = prediction::read_scheme_id(reader)?;
     let transform_id = reader.read_u8()?;
-    // Every attribute vertex is reached exactly once, so the value count is the
-    // sequence length (materialized) or the vertex bound (fused, no sequence).
-    let num_values = match &traversal {
-        Traversal::Materialized { sequence, .. } => sequence.len(),
-        Traversal::Fused(_) => ads.vertex_index_bound(),
-    };
 
     // The correction stream: rANS-coded symbols or raw values.
     let rans_flag = reader.read_u8()?;
@@ -368,104 +537,340 @@ where
     // Portabilization (dequantization) parameters come last.
     let dequant = read_portabilization::<N>(reader, desc.port_type)?;
 
-    // The attribute to fill: one value slot per traversal rank, and a
-    // point-to-value map through each point's vertex rank.
-    let needs_parent = matches!(
+    Ok(Parsed {
         scheme_ty,
-        PredictionSchemeType::MeshNormalPrediction
-            | PredictionSchemeType::MeshPredictionForTextureCoordinates
-    );
-    if needs_parent && parent.is_none() {
+        corrections,
+        flips,
+        orientations,
+        transform,
+        dequant,
+    })
+}
+
+/// One attribute's state through a group walk: the partially filled attribute,
+/// its predictor, and the parsed correction/transform data. Each emitted corner
+/// advances every stepper of the group by one value.
+struct Stepper<'p, const N: usize, D: GenericAttributeDs>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    att: Attribute,
+    predictor: Predictor<'p, N, D>,
+    transform: InverseTransform,
+    corrections: Vec<NdVector<N, i32>>,
+    zigzagged: bool,
+    dequant: AttributeTransform,
+}
+
+impl<'p, const N: usize, D: GenericAttributeDs> Stepper<'p, N, D>
+where
+    NdVector<N, i32>: Vector<N, Component = i32> + Portable,
+{
+    fn new(
+        parsed: Parsed<N>,
+        desc: &Descriptor,
+        ads: &'p D,
+        parent: Option<&'p Attribute>,
+        num_values: usize,
+    ) -> Result<Self, Err> {
+        let parents_ids = parent.map(|p| vec![p.get_id()]).unwrap_or_default();
+        let mut att = Attribute::from_without_removing_duplicates::<NdVector<N, i32>, N>(
+            AttributeId::new(desc.uid as usize),
+            vec![NdVector::<N, i32>::zero(); num_values],
+            desc.att_type,
+            desc.domain,
+            parents_ids,
+        );
+        att.set_point_to_att_val_map(Some(VecPointIdx::from(vec![
+            AttributeValueIdx::from(0);
+            ads.num_points()
+        ])));
+        let parent_refs: Vec<&Attribute> = parent.into_iter().collect();
+        let predictor = Predictor::<N, D>::new(
+            &parsed.scheme_ty,
+            &parent_refs,
+            ads,
+            parsed.flips,
+            parsed.orientations,
+        )?;
+        let zigzagged = parsed.transform.corrections_are_zigzagged();
+        Ok(Self {
+            att,
+            predictor,
+            transform: parsed.transform,
+            corrections: parsed.corrections,
+            zigzagged,
+            dequant: parsed.dequant,
+        })
+    }
+
+    /// Decodes this attribute's value of rank `k` at the emitted corner `c`,
+    /// after mapping the corner's fan `points` to `k`.
+    #[inline]
+    fn step(&mut self, c: CornerIdx, k: usize, points: &[PointIdx], record: &[VertexIdx]) {
+        for &p in points {
+            self.att.set_point_att_val(p, AttributeValueIdx::from(k));
+        }
+        // Predictions only ever read values at already visited vertices, so
+        // the partially filled attribute is safe to consult.
+        let pred = self.predictor.predict(c, record, &self.att);
+        let mut corr = self.corrections[k];
+        if self.zigzagged {
+            for i in 0..N {
+                *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
+            }
+        }
+        self.att.unique_vals_as_slice_mut::<NdVector<N, i32>>()[k] =
+            self.transform.compute_original(pred, corr);
+    }
+}
+
+/// [`Stepper`] behind the component-count dispatch, so one group walk drives
+/// attributes of different component counts.
+enum AnyStepper<'p, D: GenericAttributeDs> {
+    N1(Stepper<'p, 1, D>),
+    N2(Stepper<'p, 2, D>),
+    N3(Stepper<'p, 3, D>),
+    N4(Stepper<'p, 4, D>),
+}
+
+impl<'p, D: GenericAttributeDs> AnyStepper<'p, D> {
+    #[inline]
+    fn step(&mut self, c: CornerIdx, k: usize, points: &[PointIdx], record: &[VertexIdx]) {
+        match self {
+            AnyStepper::N1(s) => s.step(c, k, points, record),
+            AnyStepper::N2(s) => s.step(c, k, points, record),
+            AnyStepper::N3(s) => s.step(c, k, points, record),
+            AnyStepper::N4(s) => s.step(c, k, points, record),
+        }
+    }
+
+    fn finish(self) -> (Attribute, AttributeTransform) {
+        match self {
+            AnyStepper::N1(s) => (s.att, s.dequant),
+            AnyStepper::N2(s) => (s.att, s.dequant),
+            AnyStepper::N3(s) => (s.att, s.dequant),
+            AnyStepper::N4(s) => (s.att, s.dequant),
+        }
+    }
+
+    fn att(&self) -> &Attribute {
+        match self {
+            AnyStepper::N1(s) => &s.att,
+            AnyStepper::N2(s) => &s.att,
+            AnyStepper::N3(s) => &s.att,
+            AnyStepper::N4(s) => &s.att,
+        }
+    }
+}
+
+fn build_stepper<'p, D: GenericAttributeDs>(
+    payload: ParsedPayload,
+    desc: &Descriptor,
+    ads: &'p D,
+    parent: Option<&'p Attribute>,
+    num_values: usize,
+) -> Result<AnyStepper<'p, D>, Err> {
+    Ok(match payload {
+        ParsedPayload::N1(p) => AnyStepper::N1(Stepper::new(p, desc, ads, parent, num_values)?),
+        ParsedPayload::N2(p) => AnyStepper::N2(Stepper::new(p, desc, ads, parent, num_values)?),
+        ParsedPayload::N3(p) => AnyStepper::N3(Stepper::new(p, desc, ads, parent, num_values)?),
+        ParsedPayload::N4(p) => AnyStepper::N4(Stepper::new(p, desc, ads, parent, num_values)?),
+    })
+}
+
+/// A geometric-normal attribute fused into its parent position's walk. The
+/// prediction at a vertex is the sum of its one-ring face normals, which never
+/// reads other normal values, so decode rides the position walk instead of a
+/// second one: during the walk only the point map and per-vertex ranks are
+/// recorded, and once the walk ends (every position decoded by construction)
+/// one sequential face pass computes each cross product exactly once and each
+/// vertex finalizes from its completed sum. The sums equal the eager
+/// full-mesh pass bit for bit (exact i64 sums, order independent).
+struct NormalFuser {
+    att: Attribute,
+    corrections: Vec<NdVector<2, i32>>,
+    flips: Vec<bool>,
+    zigzagged: bool,
+    transform: InverseTransform,
+    dequant: AttributeTransform,
+    /// Index of the parent position attribute within the group's steppers.
+    parent_stepper: usize,
+    /// Traversal rank per vertex, recorded at emit; `usize::MAX` for vertices
+    /// the walk never reaches (phantom ids).
+    rank_of: Vec<usize>,
+}
+
+impl NormalFuser {
+    fn new<D: GenericAttributeDs>(
+        parsed: Parsed<2>,
+        desc: &Descriptor,
+        parent_id: AttributeId,
+        ads: &D,
+        parent_stepper: usize,
+        num_values: usize,
+    ) -> Self {
+        let mut att = Attribute::from_without_removing_duplicates::<NdVector<2, i32>, 2>(
+            AttributeId::new(desc.uid as usize),
+            vec![NdVector::<2, i32>::zero(); num_values],
+            desc.att_type,
+            desc.domain,
+            vec![parent_id],
+        );
+        att.set_point_to_att_val_map(Some(VecPointIdx::from(vec![
+            AttributeValueIdx::from(0);
+            ads.num_points()
+        ])));
+        let zigzagged = parsed.transform.corrections_are_zigzagged();
+        Self {
+            att,
+            corrections: parsed.corrections,
+            flips: parsed.flips,
+            zigzagged,
+            transform: parsed.transform,
+            dequant: parsed.dequant,
+            parent_stepper,
+            rank_of: vec![usize::MAX; ads.vertex_index_bound()],
+        }
+    }
+
+    /// Records the emit of vertex `v` at rank `k`: maps the vertex's `points`
+    /// to `k` and remembers the rank for the end-of-walk finalization.
+    #[inline]
+    fn on_emit(&mut self, v: VertexIdx, k: usize, points: &[PointIdx]) {
+        for &p in points {
+            self.att.set_point_att_val(p, AttributeValueIdx::from(k));
+        }
+        self.rank_of[usize::from(v)] = k;
+    }
+
+    /// Decodes every normal value after the walk: accumulates the face-normal
+    /// sums in one sequential face pass over the completed positions, then
+    /// applies each vertex's flip and correction at its recorded rank.
+    fn finish_walk<D: GenericAttributeDs>(&mut self, ads: &D, pos: &Attribute) {
+        let mut sums = vec![NdVector::<3, i64>::zero(); self.rank_of.len()];
+        for f in 0..ads.num_faces() {
+            let c0 = CornerIdx::from(3 * f);
+            let pos_c0 = pos.get::<NdVector<3, i32>, 3>(ads.point_idx(c0));
+            let face_normal = compute_normal_of_face(ads, pos, c0, pos_c0);
+            for t in 0..3 {
+                let w = ads.vertex_idx(CornerIdx::from(3 * f + t));
+                sums[usize::from(w)] += face_normal;
+            }
+        }
+        for (v, &k) in self.rank_of.iter().enumerate() {
+            if k == usize::MAX {
+                continue;
+            }
+            let mut pred = sum_to_prediction::<2>(sums[v]);
+            if self.flips.get(k).copied().unwrap_or(false) {
+                pred *= -1;
+            }
+            let mut corr = self.corrections[k];
+            if self.zigzagged {
+                for i in 0..2 {
+                    *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
+                }
+            }
+            self.att.unique_vals_as_slice_mut::<NdVector<2, i32>>()[k] =
+                self.transform.compute_original(pred, corr);
+        }
+    }
+
+    fn finish(self) -> (Attribute, AttributeTransform) {
+        (self.att, self.dequant)
+    }
+}
+
+/// Builds the vertex-to-points adjacency of `ads` in CSR form:
+/// `points[offsets[v]..offsets[v + 1]]` are the points of vertex `v`.
+fn vertex_points_csr<D: GenericAttributeDs>(ads: &D) -> (Vec<usize>, Vec<PointIdx>) {
+    let num_vertices = ads.vertex_index_bound();
+    let num_points = ads.num_points();
+    let mut offsets = vec![0usize; num_vertices + 1];
+    for p in 0..num_points {
+        offsets[usize::from(ads.point_to_vertex(PointIdx::from(p))) + 1] += 1;
+    }
+    for v in 0..num_vertices {
+        offsets[v + 1] += offsets[v];
+    }
+    let mut cursor = offsets.clone();
+    let mut points = vec![PointIdx::from(0); num_points];
+    for p in 0..num_points {
+        let v = usize::from(ads.point_to_vertex(PointIdx::from(p)));
+        points[cursor[v]] = PointIdx::from(p);
+        cursor[v] += 1;
+    }
+    (offsets, points)
+}
+
+/// Runs one traversal walk for a group of attributes sharing the same
+/// connectivity, stepping every attribute at each emitted corner. Point-map
+/// entries are filled as vertices are emitted: predictions only read neighbors
+/// of already emitted vertices, whose fan corners are already mapped. When
+/// `record_seq` is given, the emitted corners are recorded so a later wave can
+/// replay the walk without recomputing it. `csr` is the vertex-to-points
+/// adjacency from [`vertex_points_csr`]; `None` means points equal vertices.
+fn decode_group<D: GenericAttributeDs>(
+    ads: &D,
+    walk: impl Iterator<Item = CornerIdx>,
+    steppers: &mut [AnyStepper<'_, D>],
+    fusers: &mut [NormalFuser],
+    num_values: usize,
+    mut record_seq: Option<&mut Vec<CornerIdx>>,
+    csr: Option<&(Vec<usize>, Vec<PointIdx>)>,
+) -> Result<(), Err> {
+    let mut record: Vec<VertexIdx> = Vec::with_capacity(num_values);
+    #[cfg(debug_assertions)]
+    let mut point_mapped = vec![false; ads.num_points()];
+    let mut k = 0;
+    for c in walk {
+        if let Some(seq) = record_seq.as_mut() {
+            seq.push(c);
+        }
+        let v = ads.vertex_idx(c);
+        let own_point;
+        let points: &[PointIdx] = match csr {
+            None => {
+                own_point = [PointIdx::from(usize::from(v))];
+                &own_point
+            }
+            Some((offsets, vertex_points)) => {
+                &vertex_points[offsets[usize::from(v)]..offsets[usize::from(v) + 1]]
+            }
+        };
+        #[cfg(debug_assertions)]
+        for &p in points {
+            point_mapped[usize::from(p)] = true;
+        }
+        for s in steppers.iter_mut() {
+            s.step(c, k, points, &record);
+        }
+        for nf in fusers.iter_mut() {
+            nf.on_emit(v, k, points);
+        }
+        record.push(v);
+        k += 1;
+    }
+    if k != num_values {
         return Err(Err::MalformedAttribute(
-            "geometric prediction requires an already decoded position attribute",
+            "traversal did not reach every attribute vertex",
         ));
     }
-    let parents_ids = if needs_parent {
-        vec![parent.unwrap().get_id()]
-    } else {
-        Vec::new()
-    };
-    let mut att = Attribute::from_without_removing_duplicates::<NdVector<N, i32>, N>(
-        AttributeId::new(desc.uid as usize),
-        vec![NdVector::<N, i32>::zero(); num_values],
-        desc.att_type,
-        desc.domain,
-        parents_ids,
-    );
-
-    let parent_refs: Vec<&Attribute> = parent.into_iter().collect();
-    let mut predictor = Predictor::<N, D>::new(&scheme_ty, &parent_refs, ads, flips, orientations)?;
-
-    // Reverse the prediction in traversal order. Predictions only ever read
-    // values at already visited vertices, so the partially filled attribute is
-    // safe to consult.
-    let zigzagged = transform.corrections_are_zigzagged();
-    let mut record: Vec<VertexIdx> = Vec::with_capacity(num_values);
-    match traversal {
-        Traversal::Materialized {
-            sequence,
-            vertex_rank,
-        } => {
-            // Build the point-to-value map from the completed ranks, then walk
-            // the materialized sequence.
-            let mut point_map = vec![AttributeValueIdx::from(0); ads.num_points()];
-            for c in 0..ads.num_corners() {
-                let c = CornerIdx::from(c);
-                let rank = vertex_rank[usize::from(ads.vertex_idx(c))];
-                if rank == usize::MAX {
-                    return Err(Err::MalformedAttribute(
-                        "traversal did not reach every attribute vertex",
-                    ));
-                }
-                point_map[usize::from(ads.point_idx(c))] = AttributeValueIdx::from(rank);
-            }
-            att.set_point_to_att_val_map(Some(VecPointIdx::from(point_map)));
-
-            for (k, &c) in sequence.iter().enumerate() {
-                let pred = predictor.predict(c, &record, &att);
-                record.push(ads.vertex_idx(c));
-                let mut corr = corrections[k];
-                if zigzagged {
-                    for i in 0..N {
-                        *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
-                    }
-                }
-                att.unique_vals_as_slice_mut::<NdVector<N, i32>>()[k] =
-                    transform.compute_original(pred, corr);
-            }
-        }
-        Traversal::Fused(traverser) => {
-            // Identity fast path: point == vertex, so each emitted corner sets
-            // exactly the one map entry a later predict will read. Filling the
-            // map as the walk proceeds lets the reversal fuse into the traversal.
-            att.set_point_to_att_val_map(Some(VecPointIdx::from(vec![
-                AttributeValueIdx::from(0);
-                ads.num_points()
-            ])));
-            let mut k = 0;
-            for c in traverser {
-                att.set_point_att_val(ads.point_idx(c), AttributeValueIdx::from(k));
-                let pred = predictor.predict(c, &record, &att);
-                record.push(ads.vertex_idx(c));
-                let mut corr = corrections[k];
-                if zigzagged {
-                    for i in 0..N {
-                        *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
-                    }
-                }
-                att.unique_vals_as_slice_mut::<NdVector<N, i32>>()[k] =
-                    transform.compute_original(pred, corr);
-                k += 1;
-            }
-            if k != num_values {
-                return Err(Err::MalformedAttribute(
-                    "traversal did not reach every attribute vertex",
-                ));
-            }
-        }
+    // Every position is decoded once the walk completes, so the fused normals
+    // can run their sequential face pass and finalize.
+    for nf in fusers.iter_mut() {
+        let pos = steppers[nf.parent_stepper].att();
+        nf.finish_walk(ads, pos);
     }
-
-    Ok((att, dequant))
+    // Phantom points (never referenced by a corner) legitimately stay
+    // unmapped; every referenced point must have been covered by some fan.
+    #[cfg(debug_assertions)]
+    for c in 0..ads.num_corners() {
+        let p = usize::from(ads.point_idx(CornerIdx::from(c)));
+        debug_assert!(point_mapped[p], "fan fill left a referenced point unmapped");
+    }
+    Ok(())
 }
 
 /// Parses the portabilization metadata for `port_type` into the dequantization
