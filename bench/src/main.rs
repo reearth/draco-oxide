@@ -9,6 +9,10 @@
 //! Run with `cargo run -p bench --release`. Pass `--local` to also bench the
 //! OBJ files in the git-ignored `tests/data/local/` directory.
 
+// Without libdraco there is nothing to compare against, so `main` exits before
+// reaching the harness and everything below it is unreferenced in that build.
+#![cfg_attr(not(have_libdraco), allow(dead_code, unused_imports))]
+
 mod alloc_track;
 mod chart;
 
