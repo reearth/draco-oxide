@@ -41,10 +41,7 @@ where
             }
             encode_symbols_length_coded(symbols, num_components, bit_lengths, writer)
         }
-        SymbolEncodingMethod::DirectCoded => {
-            let num_symbols = symbols.iter().filter(|&&x| x > 0).count();
-            encode_symbols_direct_coded(symbols, num_symbols, writer)
-        }
+        SymbolEncodingMethod::DirectCoded => encode_symbols_direct_coded(symbols, writer),
     }
 }
 
@@ -77,7 +74,7 @@ where
     }
 
     let mut values = Vec::new();
-    let mut encoder = RansSymbolEncoder::<'_, _, 5, 12>::new(writer, freq_counts, None)?;
+    let mut encoder = RansSymbolEncoder::new(writer, freq_counts, None, 12)?;
     for i in (0..symbols.len() / num_components).rev() {
         let bit_length = bit_lengths[i] as usize;
         encoder.write(bit_length)?;
@@ -99,47 +96,10 @@ where
     Ok(())
 }
 
-fn encode_symbols_direct_coded<W>(
-    symbols: Vec<u64>,
-    num_unique_symbols: usize,
-    writer: &mut W,
-) -> Result<(), Err>
-where
-    W: ByteWriter,
-{
-    let bit_length = (64 - num_unique_symbols.leading_zeros() as usize + 1).clamp(1, 18);
-    writer.write_u8(bit_length as u8);
-    match bit_length {
-        1 => encode_symbols_direct_coded_precision_unwrapped::<W, 1, 12>(symbols, writer),
-        2 => encode_symbols_direct_coded_precision_unwrapped::<W, 2, 12>(symbols, writer),
-        3 => encode_symbols_direct_coded_precision_unwrapped::<W, 3, 12>(symbols, writer),
-        4 => encode_symbols_direct_coded_precision_unwrapped::<W, 4, 12>(symbols, writer),
-        5 => encode_symbols_direct_coded_precision_unwrapped::<W, 5, 12>(symbols, writer),
-        6 => encode_symbols_direct_coded_precision_unwrapped::<W, 6, 12>(symbols, writer),
-        7 => encode_symbols_direct_coded_precision_unwrapped::<W, 7, 12>(symbols, writer),
-        8 => encode_symbols_direct_coded_precision_unwrapped::<W, 8, 12>(symbols, writer),
-        9 => encode_symbols_direct_coded_precision_unwrapped::<W, 9, 13>(symbols, writer),
-        10 => encode_symbols_direct_coded_precision_unwrapped::<W, 10, 15>(symbols, writer),
-        11 => encode_symbols_direct_coded_precision_unwrapped::<W, 11, 16>(symbols, writer),
-        12 => encode_symbols_direct_coded_precision_unwrapped::<W, 12, 18>(symbols, writer),
-        13 => encode_symbols_direct_coded_precision_unwrapped::<W, 13, 19>(symbols, writer),
-        14 => encode_symbols_direct_coded_precision_unwrapped::<W, 14, 20>(symbols, writer),
-        15 => encode_symbols_direct_coded_precision_unwrapped::<W, 15, 20>(symbols, writer),
-        16 => encode_symbols_direct_coded_precision_unwrapped::<W, 16, 20>(symbols, writer),
-        17 => encode_symbols_direct_coded_precision_unwrapped::<W, 17, 20>(symbols, writer),
-        18 => encode_symbols_direct_coded_precision_unwrapped::<W, 18, 20>(symbols, writer),
-        _ => unreachable!("This should never happen, as the  bit length is clamped to a minimum of 1 and a maximum of 18"),
-    }
-}
-
-fn encode_symbols_direct_coded_precision_unwrapped<
-    W,
-    const NUM_SYMBOLS_BIT_LENGTH: usize,
-    const RANS_PRECISION: usize,
->(
-    symbols: Vec<u64>,
-    writer: &mut W,
-) -> Result<(), Err>
+/// Encodes symbols with the raw rANS scheme. The leading bit-length byte is
+/// the bit width of the number of distinct symbol values, matching Google's
+/// encoder; the decoder derives the rANS precision from it.
+fn encode_symbols_direct_coded<W>(symbols: Vec<u64>, writer: &mut W) -> Result<(), Err>
 where
     W: ByteWriter,
 {
@@ -152,13 +112,23 @@ where
         }
         freq_counts[s as usize] += 1;
     }
+    let num_unique_symbols = freq_counts.iter().filter(|&&c| c > 0).count();
 
-    let mut encoder = RansSymbolEncoder::<'_, _, NUM_SYMBOLS_BIT_LENGTH, RANS_PRECISION>::new(
-        writer,
-        freq_counts,
-        None,
-    )?;
-
+    let bit_length = (usize::BITS - num_unique_symbols.leading_zeros()) as usize;
+    let bit_length = bit_length.clamp(1, 18);
+    writer.write_u8(bit_length as u8);
+    // The same bit-length-to-precision mapping the decoder derives
+    // (`clamp(3 * bit_length / 2, 12, 20)`).
+    let precision = match bit_length {
+        1..=8 => 12,
+        9 => 13,
+        10 => 15,
+        11 => 16,
+        12 => 18,
+        13 => 19,
+        _ => 20,
+    };
+    let mut encoder = RansSymbolEncoder::new(writer, freq_counts, None, precision)?;
     for s in symbols.into_iter().rev() {
         encoder.write(s as usize)?;
     }

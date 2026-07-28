@@ -24,8 +24,7 @@ where
 
     for c in 0..num_corners {
         let c = CornerIdx::from(c);
-        let opp_corner = pos_corner_table.opposite(c);
-        if opp_corner.is_none() {
+        let Some(opp_corner) = pos_corner_table.opposite(c) else {
             is_edge_on_seam[c] = true;
             continue;
         };
@@ -80,7 +79,7 @@ fn build_single_attribute_ds<'a>(
     // Safety contract: a point-keyed map is a function only if every point's
     // corners lie in a single seam-separated sector. `sort_mesh` establishes
     // this invariant; the `safety_assert`s below enforce it.
-    let mut point_to_vertex_map = vec![VertexIdx::from(usize::MAX); num_points];
+    let mut point_to_vertex_map = vec![VertexIdx::INVALID; num_points];
     let mut vertex_to_left_most_corner: Vec<CornerIdx> = Vec::new();
     let mut visited = vec![false; num_corners];
 
@@ -91,48 +90,34 @@ fn build_single_attribute_ds<'a>(
         let start = CornerIdx::from(start);
 
         let mut pos_left_most = start;
-        loop {
-            let l = pos_corner_table.swing_left(pos_left_most);
-            if l.is_some() {
-                if l == start {
-                    break;
-                } else {
-                    pos_left_most = l;
-                }
-            } else {
+        while let Some(l) = pos_corner_table.swing_left(pos_left_most) {
+            if l == start {
                 break;
             }
+            pos_left_most = l;
         }
 
         let mut first_c = pos_left_most;
-        loop {
-            let l = corner_table.swing_left(first_c);
-            if l.is_some() {
-                if l == pos_left_most {
-                    break;
-                } else {
-                    first_c = l;
-                }
-            } else {
+        while let Some(l) = corner_table.swing_left(first_c) {
+            if l == pos_left_most {
                 break;
             }
+            first_c = l;
         }
 
         let mut cur_vert_id = VertexIdx::from(vertex_to_left_most_corner.len());
         vertex_to_left_most_corner.push(first_c);
         let p = usize::from(ds.point_idx(first_c));
         safety_assert!(
-            point_to_vertex_map[p] == VertexIdx::from(usize::MAX)
-                || point_to_vertex_map[p] == cur_vert_id,
+            point_to_vertex_map[p] == VertexIdx::INVALID || point_to_vertex_map[p] == cur_vert_id,
             "point {} spans multiple attribute sectors; sort_mesh must have split it",
             p
         );
         point_to_vertex_map[p] = cur_vert_id;
         visited[usize::from(first_c)] = true;
 
-        let mut maybe_curr = pos_corner_table.swing_right(first_c);
-        while maybe_curr.is_some() {
-            let curr = maybe_curr;
+        let mut prev_c = first_c;
+        while let Some(curr) = pos_corner_table.swing_right(prev_c) {
             if curr == first_c {
                 break;
             }
@@ -143,13 +128,13 @@ fn build_single_attribute_ds<'a>(
             }
             let p = usize::from(ds.point_idx(curr));
             safety_assert!(
-                point_to_vertex_map[p] == VertexIdx::from(usize::MAX)
+                point_to_vertex_map[p] == VertexIdx::INVALID
                     || point_to_vertex_map[p] == cur_vert_id,
                 "point {} spans multiple attribute sectors; sort_mesh must have split it",
                 p
             );
             point_to_vertex_map[p] = cur_vert_id;
-            maybe_curr = pos_corner_table.swing_right(curr);
+            prev_c = curr;
         }
     }
 
@@ -337,7 +322,7 @@ fn edge_orientation_consistent(pos_faces: &[[VertexIdx; 3]], c: CornerIdx, opp: 
 fn compute_corner_table(pos_faces: &[[VertexIdx; 3]]) -> CornerTable {
     let num_corners = pos_faces.len() * 3;
 
-    let mut opposite: VecCornerIdx<CornerIdx> = vec![CornerIdx::none(); num_corners].into();
+    let mut opposite: Vec<Option<CornerIdx>> = vec![None; num_corners];
 
     for corners in edge_coboundary(pos_faces).values() {
         if corners.len() != 2 {
@@ -345,13 +330,13 @@ fn compute_corner_table(pos_faces: &[[VertexIdx; 3]]) -> CornerTable {
         }
         let c1 = CornerIdx::from(corners[0]);
         let c2 = CornerIdx::from(corners[1]);
-        opposite[c1] = c2;
-        opposite[c2] = c1;
+        opposite[corners[0]] = Some(c2);
+        opposite[corners[1]] = Some(c1);
     }
 
     cut_orientation_seams(&mut opposite, pos_faces);
 
-    CornerTable::from_raw_data(opposite)
+    CornerTable::from_opposites(opposite)
 }
 
 /// Cuts the opposite relation at every edge whose two incident faces disagree
@@ -360,16 +345,18 @@ fn compute_corner_table(pos_faces: &[[VertexIdx; 3]]) -> CornerTable {
 /// flip a face's geometric normal away from its stored normal attribute,
 /// which normal prediction relies on; a non-orientable input instead falls
 /// apart into oriented patches.
-fn cut_orientation_seams(corner_table: &mut VecCornerIdx<CornerIdx>, pos_faces: &[[VertexIdx; 3]]) {
+fn cut_orientation_seams(corner_table: &mut [Option<CornerIdx>], pos_faces: &[[VertexIdx; 3]]) {
     for c in 0..pos_faces.len() * 3 {
-        let c = CornerIdx::from(c);
-        let opp_c = corner_table[c];
-        if opp_c.is_none() || usize::from(opp_c) < usize::from(c) {
+        let Some(opp_c) = corner_table[c] else {
+            continue;
+        };
+        if usize::from(opp_c) < c {
             continue;
         }
+        let c = CornerIdx::from(c);
         if !edge_orientation_consistent(pos_faces, c, opp_c) {
-            corner_table[c] = CornerIdx::none();
-            corner_table[opp_c] = CornerIdx::none();
+            corner_table[usize::from(c)] = None;
+            corner_table[usize::from(opp_c)] = None;
         }
     }
 }
@@ -475,8 +462,8 @@ mod tests {
         }
 
         // Only corners 0 and 5 (across the shared edge {1,2}) are opposite.
-        assert_eq!(ct.opposite(CornerIdx::from(0)), CornerIdx::from(5));
-        assert_eq!(ct.opposite(CornerIdx::from(5)), CornerIdx::from(0));
+        assert_eq!(ct.opposite(CornerIdx::from(0)), Some(CornerIdx::from(5)));
+        assert_eq!(ct.opposite(CornerIdx::from(5)), Some(CornerIdx::from(0)));
         for c in [1, 2, 3, 4] {
             assert!(ct.opposite(CornerIdx::from(c)).is_none());
         }

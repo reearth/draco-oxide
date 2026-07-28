@@ -1,4 +1,4 @@
 pub mod edgebreaker;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-util"))]
 pub mod eq;
 pub mod sequential;

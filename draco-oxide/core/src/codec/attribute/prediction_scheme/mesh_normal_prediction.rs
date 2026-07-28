@@ -6,12 +6,12 @@ use crate::utils::bit_coder::leb128_write;
 use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
 use crate::attribute::AttributeType;
-use crate::mesh::ds::AttributeDS;
+use crate::mesh::ds::GenericAttributeDs;
 use crate::types::NdVector;
 use crate::types::Vector;
 
-pub struct MeshNormalPrediction<'parents, const N: usize> {
-    ads: &'parents AttributeDS<'parents>,
+pub struct MeshNormalPrediction<'parents, const N: usize, D: GenericAttributeDs> {
+    ads: &'parents D,
     /// Per-vertex precomputed prediction (octahedral, quantized), indexed by
     /// `VertexIdx`. Built once in `new()`; `predict` only looks it up and applies
     /// the sign flip.
@@ -19,81 +19,102 @@ pub struct MeshNormalPrediction<'parents, const N: usize> {
     flips: Vec<bool>,
 }
 
-impl<'parents, const N: usize> MeshNormalPrediction<'parents, N>
+/// Accumulates each face's cross-product normal into per-vertex sums.
+/// The face normal is the cross product of the two edges leaving the face's
+/// first corner; it is computed once per face and added to the sums of all
+/// three of the face's vertices. `pos` must hold `NdVector<3, i32>` values.
+pub fn accumulate_face_normal_sums<D: GenericAttributeDs>(
+    ads: &D,
+    pos: &Attribute,
+    num_vertices: usize,
+) -> Vec<NdVector<3, i64>> {
+    let vals = pos.unique_vals_as_slice::<NdVector<3, i32>>();
+    let map = pos.point_map_as_slice();
+    let pos_of = |c: CornerIdx| -> NdVector<3, i32> {
+        let p = usize::from(ads.point_idx(c));
+        match map {
+            Some(m) => vals[usize::from(m[p])],
+            None => vals[p],
+        }
+    };
+
+    let mut sums = vec![NdVector::<3, i64>::zero(); num_vertices];
+    for f in 0..ads.num_faces() {
+        let c0 = CornerIdx::from(3 * f);
+        let c1 = CornerIdx::from(3 * f + 1);
+        let c2 = CornerIdx::from(3 * f + 2);
+
+        let pos_c = pos_of(c0);
+        let delta_next = pos_of(c1) - pos_c;
+        let delta_prev = pos_of(c2) - pos_c;
+
+        let cross_i32 = delta_next.cross(delta_prev);
+        let mut cross = NdVector::<3, i64>::zero();
+        *cross.get_mut(0) = *cross_i32.get(0) as i64;
+        *cross.get_mut(1) = *cross_i32.get(1) as i64;
+        *cross.get_mut(2) = *cross_i32.get(2) as i64;
+
+        sums[usize::from(ads.vertex_idx(c0))] += cross;
+        sums[usize::from(ads.vertex_idx(c1))] += cross;
+        sums[usize::from(ads.vertex_idx(c2))] += cross;
+    }
+    sums
+}
+
+/// Turn an accumulated per-vertex face-normal sum into the octahedral,
+/// quantized prediction. Pure function of `sum` (matches the old inline
+/// computation in `predict`).
+#[inline]
+pub fn sum_to_prediction<const N: usize>(mut sum: NdVector<3, i64>) -> NdVector<N, i32>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
-    /// Cross-product normal of the face owning corner `c`, with `pos_c` the
-    /// position of `c`'s vertex. For a triangle this area vector is independent
-    /// of which corner is chosen as the apex, so a face's normal can be computed
-    /// once (from any corner) and reused for all three of its vertices.
-    fn compute_normal_of_face(
-        ads: &AttributeDS,
-        pos: &Attribute,
-        c: CornerIdx,
-        pos_c: NdVector<3, i32>,
-    ) -> NdVector<3, i64> {
-        // corners.
-        let c_next = c.next();
-        let c_prev = c.previous();
-
-        let pos_next = pos.get::<NdVector<3, i32>, 3>(ads.global_ds().point_idx(c_next));
-        let pos_prev = pos.get::<NdVector<3, i32>, 3>(ads.global_ds().point_idx(c_prev));
-
-        // Compute the difference to next and prev.
-        let delta_next = pos_next - pos_c;
-        let delta_prev = pos_prev - pos_c;
-
-        // Take the cross product
-        let cross = {
-            let cross_i32 = delta_next.cross(delta_prev);
-            let mut cross = NdVector::<3, i64>::zero();
-            *cross.get_mut(0) = *cross_i32.get(0) as i64;
-            *cross.get_mut(1) = *cross_i32.get(1) as i64;
-            *cross.get_mut(2) = *cross_i32.get(2) as i64;
-            cross
-        };
-        cross
+    let upper_bound = 1 << 29;
+    let abs_sum = sum.get(0).abs() + sum.get(1).abs() + sum.get(2).abs();
+    if abs_sum > upper_bound {
+        let quotient = abs_sum / upper_bound;
+        sum /= quotient;
     }
+    let mut out = NdVector::<3, i32>::zero();
+    *out.get_mut(0) = *sum.get(0) as i32;
+    *out.get_mut(1) = *sum.get(1) as i32;
+    *out.get_mut(2) = *sum.get(2) as i32;
 
-    /// Turn an accumulated per-vertex face-normal sum into the octahedral,
-    /// quantized prediction. Pure function of `sum` (matches the old inline
-    /// computation in `predict`).
-    fn sum_to_prediction(mut sum: NdVector<3, i64>) -> NdVector<N, i32> {
-        let upper_bound = 1 << 29;
-        let abs_sum = sum.get(0).abs() + sum.get(1).abs() + sum.get(2).abs();
-        if abs_sum > upper_bound {
-            let quotient = abs_sum / upper_bound;
-            sum /= quotient;
+    if out == NdVector::<3, i32>::zero() {
+        let mut default_out = NdVector::<N, i32>::zero();
+        *default_out.get_mut(0) = 0;
+        *default_out.get_mut(1) = 0;
+        default_out
+    } else {
+        let val_oct = octahedral_transform(out) + NdVector::<2, f32>::from([1.0, 1.0]);
+        let quantized = val_oct * ((1 << (8 - 1)) - 1) as f32; // TODO: Stop hardcoding the quantization bits.
+        let mut out = NdVector::<2, i32>::zero();
+        for i in 0..2 {
+            *out.get_mut(i) = (*quantized.get(i)) as i32;
         }
-        let mut out = NdVector::<3, i32>::zero();
-        *out.get_mut(0) = *sum.get(0) as i32;
-        *out.get_mut(1) = *sum.get(1) as i32;
-        *out.get_mut(2) = *sum.get(2) as i32;
-
-        if out == NdVector::<3, i32>::zero() {
-            let mut default_out = NdVector::<N, i32>::zero();
-            *default_out.get_mut(0) = 0;
-            *default_out.get_mut(1) = 0;
-            default_out
-        } else {
-            let val_oct = octahedral_transform(out) + NdVector::<2, f32>::from([1.0, 1.0]);
-            let quantized = val_oct * ((1 << (8 - 1)) - 1) as f32; // TODO: Stop hardcoding the quantization bits.
-            let mut out = NdVector::<2, i32>::zero();
-            for i in 0..2 {
-                *out.get_mut(i) = (*quantized.get(i)) as i32;
-            }
-            let quant_out = into_faithful_oct_quantization(out);
-            let mut out = NdVector::<N, i32>::zero();
-            *out.get_mut(0) = *quant_out.get(0);
-            *out.get_mut(1) = *quant_out.get(1);
-            out
-        }
+        let quant_out = into_faithful_oct_quantization(out, 8); // TODO: Stop hardcoding the quantization bits.
+        let mut out = NdVector::<N, i32>::zero();
+        *out.get_mut(0) = *quant_out.get(0);
+        *out.get_mut(1) = *quant_out.get(1);
+        out
     }
 }
 
-impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N>
-    for MeshNormalPrediction<'parents, N>
+impl<'parents, const N: usize, D: GenericAttributeDs> MeshNormalPrediction<'parents, N, D>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    /// The geometry-derived prediction for the vertex at corner `c`, without the
+    /// sign flip. The decoder pairs this with the decoded flip bit to reproduce
+    /// the value `predict` returned on the encoder side.
+    #[inline]
+    pub fn predicted_value(&self, c: CornerIdx) -> NdVector<N, i32> {
+        self.predicted[usize::from(self.ads.vertex_idx(c))]
+    }
+}
+
+impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'parents, N, D>
+    for MeshNormalPrediction<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -101,7 +122,7 @@ where
 
     type AdditionalDataForMetadata = ();
 
-    fn new(parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self {
+    fn new(parents: &[&'parents Attribute], ads: &'parents D) -> Self {
         assert!(parents.len() == 1, "MeshNormalPrediction requires exactly one parent attribute for position. but it has {} parents.", parents.len());
         assert!(
             parents[0].get_attribute_type() == AttributeType::Position,
@@ -109,19 +130,10 @@ where
         );
         let pos = parents[0]; // we made sure that the first parent is the position attribute
 
-        let mut sums = vec![NdVector::<3, i64>::zero(); ads.num_vertices()];
-        for f in 0..ads.global_ds().num_faces() {
-            let c0 = CornerIdx::from(3 * f);
-            let pos_c0 = pos.get::<NdVector<3, i32>, 3>(ads.global_ds().point_idx(c0));
-            let face_normal = Self::compute_normal_of_face(ads, pos, c0, pos_c0);
-            for i in 0..3 {
-                let v = ads.vertex_idx(CornerIdx::from(3 * f + i));
-                sums[usize::from(v)] += face_normal;
-            }
-        }
+        let sums = accumulate_face_normal_sums(ads, pos, ads.vertex_index_bound());
         let predicted = sums
             .into_iter()
-            .map(Self::sum_to_prediction)
+            .map(sum_to_prediction::<N>)
             .collect::<Vec<_>>();
 
         Self {
@@ -147,7 +159,7 @@ where
         let v = self.ads.vertex_idx(c);
         let mut out = self.predicted[usize::from(v)];
 
-        let actual_val = attribute.get::<NdVector<N, i32>, N>(self.ads.global_ds().point_idx(c));
+        let actual_val = attribute.get::<NdVector<N, i32>, N>(self.ads.point_idx(c));
         let diff1 = out - actual_val;
         let diff2 = out * -1 - actual_val;
         if diff1.dot(diff1) > diff2.dot(diff2) {

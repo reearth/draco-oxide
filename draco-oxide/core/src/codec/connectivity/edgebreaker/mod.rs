@@ -1,4 +1,4 @@
-use crate::bit_coder::{ByteReader, ByteWriter, ReaderErr};
+use crate::bit_coder::{ByteWriter, Reader, ReaderErr};
 
 pub mod prediction;
 pub mod symbol_encoder;
@@ -26,10 +26,7 @@ pub enum EdgebreakerKind {
 
 impl EdgebreakerKind {
     #[allow(unused)] // TODO: Remove this function when the decoder is complete
-    pub fn read_from<R>(reader: &mut R) -> Result<Self, Err>
-    where
-        R: ByteReader,
-    {
+    pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, Err> {
         let traversal_type = reader.read_u8()?;
         match traversal_type {
             0 => Ok(Self::Standard),
@@ -65,10 +62,7 @@ pub enum TraversalType {
 
 impl TraversalType {
     #[allow(unused)] // TODO: Remove this function when the decoder is complete
-    pub fn read_from<R>(reader: &mut R) -> Result<Self, Err>
-    where
-        R: ByteReader,
-    {
+    pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, Err> {
         let traversal_type = reader.read_u8()?;
         match traversal_type {
             0 => Ok(Self::DepthFirst),
@@ -105,10 +99,7 @@ pub enum SymbolRansEncodingConfig {
 
 impl SymbolRansEncodingConfig {
     #[allow(unused)] // This function is not used yet, as we only support the default configuration.
-    pub fn read_from<R>(reader: &mut R) -> Result<Self, Err>
-    where
-        R: ByteReader,
-    {
+    pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, Err> {
         let config = reader.read_u8()?;
         match config {
             0 => Ok(Self::LengthCoded),

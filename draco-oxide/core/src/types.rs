@@ -6,17 +6,17 @@ use core::fmt;
 use std::{cmp, mem, ops};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct AttributeValueIdx(usize);
+pub struct AttributeValueIdx(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CornerIdx(usize);
+pub struct CornerIdx(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct EdgeIdx(usize);
+pub struct EdgeIdx(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FaceIdx(usize);
+pub struct FaceIdx(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PointIdx(usize);
+pub struct PointIdx(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct VertexIdx(usize);
+pub struct VertexIdx(u32);
 
 macro_rules! idx_op_impl {
     ($($trait_:ident, $method:ident, $op:tt, $t:ty);*) => {
@@ -123,6 +123,10 @@ macro_rules! vec_with_new_idx {
                     pub fn into_inner(self) -> ::std::vec::Vec<T> { self.inner }
 
                     #[allow(unused)]
+                    /// Borrow the contents as a plain slice.
+                    pub fn as_slice(&self) -> &[T] { &self.inner }
+
+                    #[allow(unused)]
                     pub fn iter(&self) -> impl Iterator<Item = &T> {
                         self.inner.iter()
                     }
@@ -139,6 +143,18 @@ macro_rules! vec_with_new_idx {
 
                     pub fn swap(&mut self, idx1: $Idx, idx2: $Idx) {
                         self.inner.swap(usize::from(idx1), usize::from(idx2));
+                    }
+
+                    /// # Safety
+                    /// `idx` must be less than `self.len()`.
+                    pub unsafe fn get_unchecked(&self, idx: $Idx) -> &T {
+                        self.inner.get_unchecked(usize::from(idx))
+                    }
+
+                    /// # Safety
+                    /// `idx` must be less than `self.len()`.
+                    pub unsafe fn get_unchecked_mut(&mut self, idx: $Idx) -> &mut T {
+                        self.inner.get_unchecked_mut(usize::from(idx))
                     }
                 }
 
@@ -193,15 +209,21 @@ vec_with_new_idx!(
 macro_rules! idx_impl {
     ($($t:ty),*) => {
         $(
+            impl $t {
+                /// Sentinel for an absent entry in index tables.
+                pub const INVALID: $t = Self(u32::MAX);
+            }
+
             impl From<usize> for $t {
                 fn from(idx: usize) -> Self {
-                    Self(idx)
+                    debug_assert!(idx <= u32::MAX as usize);
+                    Self(idx as u32)
                 }
             }
 
             impl From<$t> for usize {
                 fn from(idx: $t) -> Self {
-                    idx.0
+                    idx.0 as usize
                 }
             }
         )*
@@ -219,45 +241,51 @@ idx_impl! {
 
 impl CornerIdx {
     pub fn previous(self) -> CornerIdx {
-        if self.is_none() {
-            return self;
-        }
-        let corner = usize::from(self);
+        let corner = self.0;
         let out = if corner % 3 == 0 {
             corner + 2
         } else {
             corner - 1
         };
-        CornerIdx::from(out)
+        CornerIdx(out)
     }
 
     pub fn next(self) -> CornerIdx {
-        if self.is_none() {
-            return self;
-        }
-        let corner = usize::from(self);
+        let corner = self.0;
         let out = if corner % 3 == 2 {
             corner - 2
         } else {
             corner + 1
         };
-        CornerIdx::from(out)
+        CornerIdx(out)
     }
 
     pub fn face_idx(self) -> FaceIdx {
-        FaceIdx::from(usize::from(self) / 3)
+        FaceIdx(self.0 / 3)
     }
 
-    pub fn is_none(self) -> bool {
-        usize::from(self) == usize::MAX
+    /// Same as [`Self::previous`], but avoids the modulo by taking the corner's
+    /// face index. `face` must equal `self.face_idx()`.
+    pub fn previous_with_face_idx(self, face: FaceIdx) -> CornerIdx {
+        debug_assert_eq!(self.face_idx(), face);
+        let corner = self.0;
+        let base = face.0 * 3;
+        let out = if corner == base {
+            corner + 2
+        } else {
+            corner - 1
+        };
+        CornerIdx(out)
     }
 
-    pub fn none() -> Self {
-        CornerIdx(usize::MAX)
-    }
-
-    pub fn is_some(self) -> bool {
-        !self.is_none()
+    /// Same as [`Self::next`], but avoids the modulo by taking the corner's
+    /// face index. `face` must equal `self.face_idx()`.
+    pub fn next_with_face_idx(self, face: FaceIdx) -> CornerIdx {
+        debug_assert_eq!(self.face_idx(), face);
+        let corner = self.0;
+        let base = face.0 * 3;
+        let out = if corner == base + 2 { base } else { corner + 1 };
+        CornerIdx(out)
     }
 }
 
@@ -467,8 +495,7 @@ macro_rules! impl_data_value {
                     }
                 }
 
-                fn read_from<R>(reader: &mut R) -> Result<Self, ReaderErr>
-                    where R: ByteReader
+                fn read_from(reader: &mut Reader<'_>) -> Result<Self, ReaderErr>
                 {
                     let mut bytes = [0u8; mem::size_of::<Self>()];
                     for i in 0..bytes.len() {
@@ -531,8 +558,7 @@ macro_rules! impl_data_value {
                     }
                 }
 
-                fn read_from<R>(reader: &mut R) -> Result<Self, ReaderErr>
-                    where R: ByteReader
+                fn read_from(reader: &mut Reader<'_>) -> Result<Self, ReaderErr>
                 {
                     let mut bytes = [0u8; mem::size_of::<Self>()];
                     for i in 0..bytes.len() {
@@ -620,7 +646,7 @@ where
     }
 }
 
-use crate::bit_coder::{ByteReader, ByteWriter};
+use crate::bit_coder::{ByteWriter, Reader};
 use crate::codec::attribute::Portable;
 use std::ops::Index;
 use std::ops::IndexMut;

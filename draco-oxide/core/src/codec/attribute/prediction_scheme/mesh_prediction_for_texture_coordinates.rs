@@ -2,15 +2,27 @@ use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
 use crate::bit_coder::ByteWriter;
 use crate::codec::entropy::rans::RabsCoder;
-use crate::mesh::ds::AttributeDS;
+use crate::mesh::ds::GenericAttributeDs;
 use crate::safety_assert_eq;
 use crate::types::NdVector;
 use crate::types::{CornerIdx, PointIdx, VertexIdx};
 use crate::types::{Dot, Vector};
 use crate::utils::bit_coder::leb128_write;
 
-pub struct MeshPredictionForTextureCoordinates<'parents, const N: usize> {
-    ads: &'parents AttributeDS<'parents>,
+/// The outcome of the shared texture-coordinate prediction computation: either
+/// the two orientation candidates of the projected prediction (in i64 texture
+/// space), or a single directly determined value (degenerate and fallback
+/// cases, which consume no orientation bit).
+pub enum TexCoordsPrediction<const N: usize>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    Oriented(NdVector<2, i64>, NdVector<2, i64>),
+    Single(NdVector<N, i32>),
+}
+
+pub struct MeshPredictionForTextureCoordinates<'parents, const N: usize, D: GenericAttributeDs> {
+    ads: &'parents D,
     pos_att: &'parents Attribute,
     orientation: Vec<bool>, // Stores orientation for encoder
     // O(1) "has this vertex been processed yet" membership, replacing a linear
@@ -21,7 +33,8 @@ pub struct MeshPredictionForTextureCoordinates<'parents, const N: usize> {
     synced: usize,
 }
 
-impl<'parents, const N: usize> MeshPredictionForTextureCoordinates<'parents, N>
+impl<'parents, const N: usize, D: GenericAttributeDs>
+    MeshPredictionForTextureCoordinates<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -67,7 +80,7 @@ where
         let next_corner = c.next();
         let next_vertex = self.ads.vertex_idx(next_corner);
         if self.visited[usize::from(next_vertex)] {
-            return attribute.get(self.ads.global_ds().point_idx(next_corner));
+            return attribute.get(self.ads.point_idx(next_corner));
         }
 
         // The following chunk of code is supposed to be there, but it is commented out
@@ -82,69 +95,44 @@ where
 
         // Use the most recently processed vertex
         if let Some(&last_vertex) = vertices_up_till_now.last() {
-            return attribute.get(
-                self.ads
-                    .global_ds()
-                    .point_idx(self.ads.left_most_corner(last_vertex)),
-            );
+            return attribute.get(self.ads.point_idx(self.ads.left_most_corner(last_vertex)));
         }
 
         // If none applies, then this is the first prediction. return zero
         NdVector::<N, i32>::zero()
     }
-}
 
-impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N>
-    for MeshPredictionForTextureCoordinates<'parents, N>
-where
-    NdVector<N, i32>: Vector<N, Component = i32>,
-{
-    const ID: u32 = 2;
-
-    type AdditionalDataForMetadata = ();
-
-    fn new(parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self {
-        Self {
-            ads,
-            pos_att: parents[0],
-            orientation: Vec::new(), // Initialize orientation vector
-            visited: vec![false; ads.num_vertices()],
-            synced: 0,
-        }
-    }
-
-    fn get_values_impossible_to_predict(
-        &mut self,
-        _seq: &mut Vec<std::ops::Range<usize>>,
-    ) -> Vec<std::ops::Range<usize>> {
-        unimplemented!();
-    }
-
-    fn predict(
-        &mut self,
-        i: CornerIdx,
-        vertices_up_till_now: &[VertexIdx],
-        attribute: &Attribute,
-    ) -> NdVector<N, i32> {
-        // This prediction scheme is specifically for texture coordinates (2D)
-        safety_assert_eq!(N, 2, "Texture coordinate prediction is only for 2D vectors");
-
-        // Fold any vertices appended since the last call into the membership set.
-        // `vertices_up_till_now` only ever grows (it is the encoder's running
-        // sequence_record), so its tail beyond `synced` is exactly the new entries.
+    /// Folds any vertices appended since the last call into the visited set.
+    /// `vertices_up_till_now` only ever grows (it is the running sequence
+    /// record), so its tail beyond `synced` is exactly the new entries.
+    fn sync_visited(&mut self, vertices_up_till_now: &[VertexIdx]) {
         for &v in &vertices_up_till_now[self.synced..] {
             self.visited[usize::from(v)] = true;
         }
         self.synced = vertices_up_till_now.len();
+    }
+
+    /// The prediction computation shared by the encoder and the decoder. Reads
+    /// only already-processed attribute values, so it is safe on partially
+    /// decoded data. `sync_visited` must have been called for the current
+    /// sequence before this.
+    fn compute_prediction(
+        &self,
+        i: CornerIdx,
+        vertices_up_till_now: &[VertexIdx],
+        attribute: &Attribute,
+    ) -> TexCoordsPrediction<N> {
+        // This prediction scheme is specifically for texture coordinates (2D)
+        safety_assert_eq!(N, 2, "Texture coordinate prediction is only for 2D vectors");
 
         // Get next and previous corners for the current corner
         let next_corner = i.next();
         let prev_corner = i.previous();
 
         // Get vertex indices from corners
-        let next_pt = self.ads.global_ds().point_idx(next_corner);
-        let prev_pt = self.ads.global_ds().point_idx(prev_corner);
-        let curr_pt = self.ads.global_ds().point_idx(i);
+        let next_pt = self.ads.point_idx(next_corner);
+        let prev_pt = self.ads.point_idx(prev_corner);
+        let curr_pt = self.ads.point_idx(i);
 
         let next_vertex = self.ads.vertex_idx(next_corner);
         let prev_vertex = self.ads.vertex_idx(prev_corner);
@@ -152,9 +140,6 @@ where
         // Check if both neighboring vertices have already been processed
         if self.visited[usize::from(next_vertex)] && self.visited[usize::from(prev_vertex)] {
             // Get texture coordinates for next and previous vertices
-            let curr_uv: NdVector<N, i32> = attribute.get(curr_pt);
-            let curr_uv =
-                NdVector::<2, i64>::from([*curr_uv.get(0) as i64, *curr_uv.get(1) as i64]);
             let next_uv: NdVector<N, i32> = attribute.get(next_pt);
             let next_uv =
                 NdVector::<2, i64>::from([*next_uv.get(0) as i64, *next_uv.get(1) as i64]);
@@ -163,8 +148,7 @@ where
                 NdVector::<2, i64>::from([*prev_uv.get(0) as i64, *prev_uv.get(1) as i64]);
             // If the UV coordinates are identical, return one of them (degenerate case)
             if next_uv == prev_uv {
-                let prev_uv = attribute.get(prev_pt);
-                return prev_uv;
+                return TexCoordsPrediction::Single(attribute.get(prev_pt));
             }
 
             // Get 3D positions for all three vertices
@@ -203,13 +187,21 @@ where
                 let n_uv_absmax = next_uv.get(0).abs().max(next_uv.get(1).abs());
                 if n_uv_absmax > i64::MAX / pn_norm2_squared as i64 {
                     // Overflow would occur, fallback to simple prediction
-                    return self.fallback_predict(i, vertices_up_till_now, attribute);
+                    return TexCoordsPrediction::Single(self.fallback_predict(
+                        i,
+                        vertices_up_till_now,
+                        attribute,
+                    ));
                 }
 
                 let pn_uv_absmax = pn_uv.get(0).abs().max(pn_uv.get(1).abs());
                 if cn_dot_pn.abs() > i64::MAX / pn_uv_absmax {
                     // Overflow would occur, fallback to simple prediction
-                    return self.fallback_predict(i, vertices_up_till_now, attribute);
+                    return TexCoordsPrediction::Single(self.fallback_predict(
+                        i,
+                        vertices_up_till_now,
+                        attribute,
+                    ));
                 }
 
                 // Calculate x_uv = next_uv * pn_norm2_squared + cn_dot_pn * pn_uv
@@ -219,7 +211,11 @@ where
                 let pn_absmax = pn.get(0).abs().max(pn.get(1).abs()).max(pn.get(2).abs());
                 if cn_dot_pn.abs() > i64::MAX / pn_absmax {
                     // Overflow would occur, fallback to simple prediction
-                    return self.fallback_predict(i, vertices_up_till_now, attribute);
+                    return TexCoordsPrediction::Single(self.fallback_predict(
+                        i,
+                        vertices_up_till_now,
+                        attribute,
+                    ));
                 }
 
                 // Calculate x_pos = next_pos + (cn_dot_pn * pn) / pn_norm2_squared
@@ -233,11 +229,89 @@ where
                 let norm_squared = self.int_sqrt(cx_norm2_squared * pn_norm2_squared);
                 cx_uv *= norm_squared as i64;
 
-                // Try both orientations and choose the better one (encoder mode)
+                // Both orientations of the prediction; the caller chooses.
                 let predicted_uv_0 = (x_uv + cx_uv) / (pn_norm2_squared as i64);
                 let predicted_uv_1 = (x_uv - cx_uv) / (pn_norm2_squared as i64);
+                return TexCoordsPrediction::Oriented(predicted_uv_0, predicted_uv_1);
+            }
+        }
 
-                // In encoder mode, we would choose the orientation that gives better prediction
+        // Fallback to simple prediction if complex prediction is not possible
+        TexCoordsPrediction::Single(self.fallback_predict(i, vertices_up_till_now, attribute))
+    }
+
+    /// Decoder-side prediction: like `predict`, but the orientation of the
+    /// projected candidate is taken from `orientations` (popped from the back,
+    /// matching the encoder's traversal order) instead of being chosen against
+    /// the actual value.
+    #[inline]
+    pub fn predict_given_orientation(
+        &mut self,
+        i: CornerIdx,
+        vertices_up_till_now: &[VertexIdx],
+        attribute: &Attribute,
+        orientations: &mut Vec<bool>,
+    ) -> NdVector<N, i32> {
+        self.sync_visited(vertices_up_till_now);
+        match self.compute_prediction(i, vertices_up_till_now, attribute) {
+            TexCoordsPrediction::Single(p) => p,
+            TexCoordsPrediction::Oriented(p0, p1) => {
+                let chosen = if orientations.pop().unwrap_or(true) {
+                    p0
+                } else {
+                    p1
+                };
+                let mut out = NdVector::<N, i32>::zero();
+                *out.get_mut(0) = *chosen.get(0) as i32;
+                *out.get_mut(1) = *chosen.get(1) as i32;
+                out
+            }
+        }
+    }
+}
+
+impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'parents, N, D>
+    for MeshPredictionForTextureCoordinates<'parents, N, D>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    const ID: u32 = 2;
+
+    type AdditionalDataForMetadata = ();
+
+    fn new(parents: &[&'parents Attribute], ads: &'parents D) -> Self {
+        Self {
+            ads,
+            pos_att: parents[0],
+            orientation: Vec::new(), // Initialize orientation vector
+            visited: vec![false; ads.vertex_index_bound()],
+            synced: 0,
+        }
+    }
+
+    fn get_values_impossible_to_predict(
+        &mut self,
+        _seq: &mut Vec<std::ops::Range<usize>>,
+    ) -> Vec<std::ops::Range<usize>> {
+        unimplemented!();
+    }
+
+    fn predict(
+        &mut self,
+        i: CornerIdx,
+        vertices_up_till_now: &[VertexIdx],
+        attribute: &Attribute,
+    ) -> NdVector<N, i32> {
+        self.sync_visited(vertices_up_till_now);
+        match self.compute_prediction(i, vertices_up_till_now, attribute) {
+            TexCoordsPrediction::Single(p) => p,
+            TexCoordsPrediction::Oriented(predicted_uv_0, predicted_uv_1) => {
+                // Choose the orientation that gives the better prediction and
+                // record it for the decoder.
+                let curr_pt = self.ads.point_idx(i);
+                let curr_uv: NdVector<N, i32> = attribute.get(curr_pt);
+                let curr_uv =
+                    NdVector::<2, i64>::from([*curr_uv.get(0) as i64, *curr_uv.get(1) as i64]);
                 let predicted_uv = if (curr_uv - predicted_uv_0).dot(curr_uv - predicted_uv_0)
                     < (curr_uv - predicted_uv_1).dot(curr_uv - predicted_uv_1)
                 {
@@ -251,12 +325,9 @@ where
                 let mut out = NdVector::<N, i32>::zero();
                 *out.get_mut(0) = *predicted_uv.get(0) as i32;
                 *out.get_mut(1) = *predicted_uv.get(1) as i32;
-                return out;
+                out
             }
         }
-
-        // Fallback to simple prediction if complex prediction is not possible
-        self.fallback_predict(i, vertices_up_till_now, attribute)
     }
 
     fn encode_prediction_metadtata<W>(&self, writer: &mut W) -> Result<(), super::Err>

@@ -1,7 +1,5 @@
 use crate::bit_coder::ByteWriter;
-use crate::codec::entropy::{
-    rans_build_tables, RansSymbol, DEFAULT_RABS_PRECISION, DEFAULT_RANS_PRECISION, L_RANS_BASE,
-};
+use crate::codec::entropy::{rans_symbol_table, RansSymbol, DEFAULT_RABS_PRECISION, L_RANS_BASE};
 use crate::safety_assert;
 use crate::utils::bit_coder::leb128_write;
 
@@ -10,18 +8,23 @@ const SECOND_POW_14: usize = 1 << 14;
 const SECOND_POW_22: usize = 1 << 22;
 const SECOND_POW_30: usize = 1 << 30;
 
-pub struct RansCoder<const RANS_PRECISION: usize = DEFAULT_RANS_PRECISION> {
+pub struct RansCoder {
     state: usize,
     writer: Vec<u8>,
     l_rans_base: usize,
     rans_symbols: Vec<RansSymbol>,
+    precision: usize,
 }
 
-impl<const RANS_PRECISION: usize> RansCoder<RANS_PRECISION> {
-    pub fn new(freq_counts: Vec<usize>, l_rans_base: Option<usize>) -> Result<Self, Err> {
-        let l_rans_base = l_rans_base.unwrap_or((1 << RANS_PRECISION) << 2);
+impl RansCoder {
+    pub fn new(
+        freq_counts: Vec<usize>,
+        l_rans_base: Option<usize>,
+        precision: usize,
+    ) -> Result<Self, Err> {
+        let l_rans_base = l_rans_base.unwrap_or((1 << precision) << 2);
 
-        let (_slot_table, rans_symbols) = rans_build_tables::<RANS_PRECISION>(&freq_counts)?;
+        let rans_symbols = rans_symbol_table(&freq_counts, precision)?;
 
         let writer: Vec<u8> = Vec::new();
         Ok(RansCoder {
@@ -29,6 +32,7 @@ impl<const RANS_PRECISION: usize> RansCoder<RANS_PRECISION> {
             writer,
             l_rans_base,
             rans_symbols,
+            precision,
         })
     }
 
@@ -38,14 +42,14 @@ impl<const RANS_PRECISION: usize> RansCoder<RANS_PRECISION> {
         }
 
         let symbol = &self.rans_symbols[idx];
-        let freq_count = symbol.freq_count;
-        while self.state >= ((self.l_rans_base >> RANS_PRECISION) * freq_count) << 8 {
+        let freq_count = symbol.freq_count as usize;
+        while self.state >= ((self.l_rans_base >> self.precision) * freq_count) << 8 {
             self.writer.write_u8((self.state & 0xFF) as u8);
             self.state >>= 8;
         }
-        self.state = ((self.state / freq_count) << RANS_PRECISION)
+        self.state = ((self.state / freq_count) << self.precision)
             + self.state % freq_count
-            + symbol.freq_cumulative;
+            + symbol.freq_cumulative as usize;
         Ok(())
     }
 
@@ -73,14 +77,14 @@ impl<const RANS_PRECISION: usize> RansCoder<RANS_PRECISION> {
     }
 }
 
-pub struct RabsCoder<const RABS_PRECISION: usize = DEFAULT_RABS_PRECISION> {
+pub struct RabsCoder {
     state: usize,
     freq_count_0: usize,
     writer: Vec<u8>,
     l_rabs_base: usize,
 }
 
-impl<const RABS_PRECISION: usize> RabsCoder<RABS_PRECISION> {
+impl RabsCoder {
     pub fn new(freq_count_0: usize, l_rabs_base: Option<usize>) -> Self {
         let l_rabs_base = l_rabs_base.unwrap_or(L_RANS_BASE);
         let writer = Vec::new();
@@ -93,19 +97,19 @@ impl<const RABS_PRECISION: usize> RabsCoder<RABS_PRECISION> {
     }
 
     pub fn write(&mut self, value: u8) -> Result<(), Err> {
-        let freq_count_1 = (1 << RABS_PRECISION) - self.freq_count_0;
+        let freq_count_1 = (1 << DEFAULT_RABS_PRECISION) - self.freq_count_0;
         let freq_count = if value > 0 {
             freq_count_1
         } else {
             self.freq_count_0
         };
-        if self.state >= ((self.l_rabs_base >> RABS_PRECISION) * freq_count) << 8 {
+        if self.state >= ((self.l_rabs_base >> DEFAULT_RABS_PRECISION) * freq_count) << 8 {
             self.writer.write_u8((self.state & 0xFF) as u8);
             self.state >>= 8;
         }
         let q = self.state / freq_count;
         let r = self.state % freq_count;
-        self.state = (q << RABS_PRECISION) + r + (if value > 0 { 0 } else { freq_count_1 });
+        self.state = (q << DEFAULT_RABS_PRECISION) + r + (if value > 0 { 0 } else { freq_count_1 });
         Ok(())
     }
 
@@ -133,19 +137,13 @@ impl<const RABS_PRECISION: usize> RabsCoder<RABS_PRECISION> {
     }
 }
 
-pub struct RansSymbolEncoder<
-    'writer,
-    W,
-    const NUM_SYMBOLS_BIT_LENGTH: usize,
-    const RANS_PRECISION: usize,
-> {
-    rans_coder: RansCoder<RANS_PRECISION>,
+pub struct RansSymbolEncoder<'writer, W> {
+    rans_coder: RansCoder,
     num_symbols: usize,
     writer: &'writer mut W,
 }
 
-impl<'writer, W, const NUM_SYMBOLS_BIT_LENGTH: usize, const RANS_PRECISION: usize>
-    RansSymbolEncoder<'writer, W, NUM_SYMBOLS_BIT_LENGTH, RANS_PRECISION>
+impl<'writer, W> RansSymbolEncoder<'writer, W>
 where
     W: ByteWriter,
 {
@@ -153,12 +151,14 @@ where
     /// If the `l_rans_base` is `None`, it defaults to `L_RANS_BASE`.
     /// # Arguments
     /// * `writer` - A mutable reference to the byte writer.
-    /// * `freq_counts` - A vector of frequency counts for each symbol. This need not be normalized to match RANS_PRECISION.
+    /// * `freq_counts` - A vector of frequency counts for each symbol. This need not be normalized to match `precision`.
     /// * `l_rans_base` - An optional base for the RANS coder.
+    /// * `precision` - The rANS precision (log2 of the normalized total frequency).
     pub fn new(
         writer: &'writer mut W,
         freq_counts: Vec<usize>,
         l_rans_base: Option<usize>,
+        precision: usize,
     ) -> Result<Self, Err> {
         let total_freq = freq_counts.iter().sum::<usize>() as f64;
 
@@ -173,7 +173,7 @@ where
         safety_assert!((num_symbols..freq_counts.len()).all(|i| freq_counts[i] == 0));
 
         let mut distribution = Vec::with_capacity(num_symbols);
-        let rans_precision = 1 << RANS_PRECISION;
+        let rans_precision = 1 << precision;
         let mut total_rans_prob = 0;
         for freq in freq_counts.iter().take(num_symbols).copied() {
             let prob = freq as f64 / total_freq;
@@ -255,12 +255,11 @@ where
         }
 
         // return encoder
-        let out: RansSymbolEncoder<'_, W, NUM_SYMBOLS_BIT_LENGTH, RANS_PRECISION> =
-            RansSymbolEncoder {
-                rans_coder: RansCoder::<RANS_PRECISION>::new(distribution, l_rans_base)?,
-                num_symbols,
-                writer,
-            };
+        let out: RansSymbolEncoder<'_, W> = RansSymbolEncoder {
+            rans_coder: RansCoder::new(distribution, l_rans_base, precision)?,
+            num_symbols,
+            writer,
+        };
         Ok(out)
     }
 

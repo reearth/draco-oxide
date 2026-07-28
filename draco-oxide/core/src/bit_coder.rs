@@ -1,5 +1,4 @@
 use crate::safety_assert;
-use std::{iter::Rev, vec};
 
 use super::buffer::{MsbFirst, OrderConfig};
 
@@ -201,154 +200,61 @@ impl<'buffer, Buffer: ByteWriter, Order: OrderConfig> Drop for BitWriter<'buffer
     }
 }
 
-pub trait ByteReader {
-    type Rev: ReverseByteReader;
-    fn read_u8(&mut self) -> Result<u8, ReaderErr>;
-    fn read_u16(&mut self) -> Result<u16, ReaderErr> {
-        let out = [self.read_u8()?, self.read_u8()?];
-        Ok(u16::from_le_bytes(out))
-    }
-    fn read_u24(&mut self) -> Result<u32, ReaderErr> {
-        let out = [self.read_u8()?, self.read_u8()?, self.read_u8()?];
-        Ok(u32::from_le_bytes([out[0], out[1], out[2], 0]))
-    }
-    fn read_u32(&mut self) -> Result<u32, ReaderErr> {
-        let out = [
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-        ];
-        Ok(u32::from_le_bytes(out))
-    }
-    fn read_u64(&mut self) -> Result<u64, ReaderErr> {
-        let out = [
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-        ];
-        Ok(u64::from_le_bytes(out))
-    }
-
-    fn spown_reverse_reader_at(&mut self, offset: usize) -> Result<Self::Rev, ReaderErr>;
+/// A zero-copy forward cursor over a borrowed byte slice. Reads advance the
+/// cursor by reslicing; [`Reader::read_bytes`] hands back sub-slices that borrow
+/// the original data, so no part of the buffer is copied while reading.
+pub struct Reader<'a> {
+    data: &'a [u8],
 }
 
-impl ByteReader for vec::IntoIter<u8> {
-    fn read_u8(&mut self) -> Result<u8, ReaderErr> {
-        self.next().ok_or(ReaderErr::NotEnoughData)
+impl<'a> Reader<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data }
     }
 
-    fn read_u16(&mut self) -> Result<u16, ReaderErr> {
-        let out = [
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-        ];
-        Ok(u16::from_le_bytes(out))
+    /// Number of unread bytes remaining.
+    pub fn remaining(&self) -> usize {
+        self.data.len()
     }
 
-    fn read_u32(&mut self) -> Result<u32, ReaderErr> {
-        let out = [
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-        ];
-        Ok(u32::from_le_bytes(out))
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
     }
 
-    fn read_u64(&mut self) -> Result<u64, ReaderErr> {
-        let out = [
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-            self.next().ok_or(ReaderErr::NotEnoughData)?,
-        ];
-        Ok(u64::from_le_bytes(out))
-    }
-
-    type Rev = Rev<vec::IntoIter<u8>>;
-    fn spown_reverse_reader_at(&mut self, offset: usize) -> Result<Self::Rev, ReaderErr> {
-        let mut vec: Vec<_> = self.collect();
-        if offset > vec.len() {
+    /// Consumes the next `n` bytes and returns them as a borrowed sub-slice.
+    pub fn read_bytes(&mut self, n: usize) -> Result<&'a [u8], ReaderErr> {
+        if n > self.data.len() {
             return Err(ReaderErr::NotEnoughData);
         }
-        let rest = vec.split_off(offset);
-        let rev = vec.into_iter().rev();
-        *self = rest.into_iter();
-        Ok(rev)
+        let (head, rest) = self.data.split_at(n);
+        self.data = rest;
+        Ok(head)
+    }
+
+    pub fn read_u8(&mut self) -> Result<u8, ReaderErr> {
+        Ok(self.read_bytes(1)?[0])
+    }
+
+    pub fn read_u16(&mut self) -> Result<u16, ReaderErr> {
+        Ok(u16::from_le_bytes(self.read_bytes(2)?.try_into().unwrap()))
+    }
+
+    pub fn read_u24(&mut self) -> Result<u32, ReaderErr> {
+        let b = self.read_bytes(3)?;
+        Ok(u32::from_le_bytes([b[0], b[1], b[2], 0]))
+    }
+
+    pub fn read_u32(&mut self) -> Result<u32, ReaderErr> {
+        Ok(u32::from_le_bytes(self.read_bytes(4)?.try_into().unwrap()))
+    }
+
+    pub fn read_u64(&mut self) -> Result<u64, ReaderErr> {
+        Ok(u64::from_le_bytes(self.read_bytes(8)?.try_into().unwrap()))
     }
 }
 
-/// A special byte reader that is provided by draco-oxide that allows users to build
-/// custom byte readers using a cloure.
-pub struct FunctionalByteReader<R> {
-    read_fn: R,
-}
-
-impl<R: FnMut() -> Result<u8, ReaderErr>> ByteReader for FunctionalByteReader<R> {
-    fn read_u8(&mut self) -> Result<u8, ReaderErr> {
-        (self.read_fn)()
-    }
-
-    fn read_u16(&mut self) -> Result<u16, ReaderErr> {
-        let out = [self.read_u8()?, self.read_u8()?];
-        Ok(u16::from_le_bytes(out))
-    }
-
-    fn read_u32(&mut self) -> Result<u32, ReaderErr> {
-        let out = [
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-        ];
-        Ok(u32::from_le_bytes(out))
-    }
-
-    fn read_u64(&mut self) -> Result<u64, ReaderErr> {
-        let out = [
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-            self.read_u8()?,
-        ];
-        Ok(u64::from_le_bytes(out))
-    }
-
-    type Rev = Rev<vec::IntoIter<u8>>;
-
-    fn spown_reverse_reader_at(&mut self, offset: usize) -> Result<Self::Rev, ReaderErr> {
-        let mut vec = Vec::new();
-        for _ in 0..offset {
-            vec.push(self.read_u8()?);
-        }
-        let rest = vec.into_iter().rev();
-        Ok(rest)
-    }
-}
-
-impl<R: FnMut() -> Result<u8, ReaderErr>> FunctionalByteReader<R> {
-    pub fn new(read_fn: R) -> Self {
-        FunctionalByteReader { read_fn }
-    }
-}
-
-#[allow(unused)] // will be used in the decoder
-pub struct BitReader<'buffer, Buffer, Order: OrderConfig = MsbFirst> {
-    buffer: &'buffer mut Buffer,
+pub struct BitReader<'buffer, 'a, Order: OrderConfig = MsbFirst> {
+    buffer: &'buffer mut Reader<'a>,
 
     /// The position in the current byte where the next bit will be read.
     /// It is always less than 8.
@@ -360,11 +266,10 @@ pub struct BitReader<'buffer, Buffer, Order: OrderConfig = MsbFirst> {
     phantom: std::marker::PhantomData<Order>,
 }
 
-#[allow(unused)] // will be used in the decoder
-impl<'buffer, Buffer: ByteReader, Order: OrderConfig> BitReader<'buffer, Buffer, Order> {
+impl<'buffer, 'a, Order: OrderConfig> BitReader<'buffer, 'a, Order> {
     /// Spowns a new BitReader from the given buffer if the buffer is not empty.
     /// If the buffer is empty then it returns 'None'.
-    pub fn spown_from(buffer: &'buffer mut Buffer) -> Option<BitReader<'buffer, Buffer, Order>> {
+    pub fn spown_from(buffer: &'buffer mut Reader<'a>) -> Option<BitReader<'buffer, 'a, Order>> {
         Some(BitReader {
             buffer,
             pos_in_curr_byte: 0,
@@ -459,60 +364,14 @@ pub enum ReaderErr {
     NotEnoughData,
 }
 
-#[allow(unused)] // will be used in the decoder
-pub trait ReverseByteReader {
-    fn read_u8_back(&mut self) -> Result<u8, ReaderErr>;
-    fn read_u16_back(&mut self) -> Result<u16, ReaderErr> {
-        let mut out = [self.read_u8_back()?, self.read_u8_back()?];
-        out.reverse();
-        Ok(u16::from_le_bytes(out))
-    }
-    fn read_u24_back(&mut self) -> Result<u32, ReaderErr> {
-        let mut out = [
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-        ];
-        out.reverse();
-        Ok(u32::from_le_bytes([out[0], out[1], out[2], 0]))
-    }
-    fn read_u32_back(&mut self) -> Result<u32, ReaderErr> {
-        let mut out = [
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-        ];
-        out.reverse();
-        Ok(u32::from_le_bytes(out))
-    }
-    fn read_u64_back(&mut self) -> Result<u64, ReaderErr> {
-        let mut out = [
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-            self.read_u8_back()?,
-        ];
-        out.reverse();
-        Ok(u64::from_le_bytes(out))
-    }
-}
-
-impl<I: DoubleEndedIterator<Item = u8>> ReverseByteReader for Rev<I> {
-    fn read_u8_back(&mut self) -> Result<u8, ReaderErr> {
-        self.next().ok_or(ReaderErr::NotEnoughData)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::BitWriter;
     use crate::bit_coder::ByteWriter;
-    use crate::{bit_coder::BitReader, buffer::*};
+    use crate::{
+        bit_coder::{BitReader, Reader},
+        buffer::*,
+    };
 
     #[test]
     fn test_writer_reader_msb_first() {
@@ -522,8 +381,8 @@ mod tests {
         writer.write_bits((3, 0b011));
         drop(writer); // drop the bit writer to end bit-writing
         assert_eq!(buffer.len(), 1);
-        let mut reader = buffer.into_iter();
-        let mut reader = BitReader::<_, MsbFirst>::spown_from(&mut reader).unwrap();
+        let mut reader = Reader::new(&buffer);
+        let mut reader = BitReader::<'_, '_, MsbFirst>::spown_from(&mut reader).unwrap();
         assert_eq!(reader.read_bits(2).unwrap(), 0b10);
         assert_eq!(reader.read_bits(3).unwrap(), 0b011);
 
@@ -532,8 +391,8 @@ mod tests {
         writer.write_bits((7, 0b0111010));
         drop(writer); // drop the bit writer to end bit-writing
         assert_eq!(buffer.len(), 1);
-        let mut reader = buffer.into_iter();
-        let mut reader = BitReader::<_, MsbFirst>::spown_from(&mut reader).unwrap();
+        let mut reader = Reader::new(&buffer);
+        let mut reader = BitReader::<'_, '_, MsbFirst>::spown_from(&mut reader).unwrap();
         assert_eq!(reader.read_bits(7).unwrap(), 0b0111010);
 
         let mut buffer = Vec::new();
@@ -541,8 +400,8 @@ mod tests {
         writer.write_bits((8, 0b10111010));
         drop(writer); // drop the bit writer to end bit-writing
         assert_eq!(buffer[0], 0b10111010);
-        let mut reader = buffer.into_iter();
-        let mut reader: BitReader<_> = BitReader::spown_from(&mut reader).unwrap();
+        let mut reader = Reader::new(&buffer);
+        let mut reader: BitReader<'_, '_> = BitReader::spown_from(&mut reader).unwrap();
         assert_eq!(reader.read_bits(8).unwrap(), 0b10111010);
 
         let mut buffer = Vec::new();
@@ -552,8 +411,8 @@ mod tests {
         assert_eq!(buffer.len(), 2);
         assert_eq!(buffer[0], 0b11011101);
         assert_eq!(buffer[1], 0b10000000);
-        let mut reader = buffer.into_iter();
-        let mut reader: BitReader<_> = BitReader::spown_from(&mut reader).unwrap();
+        let mut reader = Reader::new(&buffer);
+        let mut reader: BitReader<'_, '_> = BitReader::spown_from(&mut reader).unwrap();
         assert_eq!(reader.read_bits(9).unwrap(), 0b110111011);
 
         let mut buffer = Vec::new();
@@ -571,8 +430,8 @@ mod tests {
         assert_eq!(buffer[2], 0b00101010);
         assert_eq!(buffer[3], 0b11110000);
         assert_eq!(buffer[4], 0b00111000);
-        let mut reader = buffer.into_iter();
-        let mut reader: BitReader<_> = BitReader::spown_from(&mut reader).unwrap();
+        let mut reader = Reader::new(&buffer);
+        let mut reader: BitReader<'_, '_> = BitReader::spown_from(&mut reader).unwrap();
         assert_eq!(reader.read_bits(9).unwrap(), 0b101010100);
         assert_eq!(reader.read_bits(8).unwrap(), 0b10101110);
         assert_eq!(reader.read_bits(7).unwrap(), 0b0101010);
@@ -585,8 +444,8 @@ mod tests {
         writer.write_bits((11, 0b10111010110));
         drop(writer); // drop the bit writer to end bit-writing
         assert_eq!(buffer.len(), 2);
-        let mut reader = buffer.into_iter();
-        let mut reader: BitReader<_> = BitReader::spown_from(&mut reader).unwrap();
+        let mut reader = Reader::new(&buffer);
+        let mut reader: BitReader<'_, '_> = BitReader::spown_from(&mut reader).unwrap();
         assert_eq!(reader.read_bits(2).unwrap(), 0b10);
         assert_eq!(reader.read_bits(1).unwrap(), 0b1);
         assert_eq!(reader.read_bits(3).unwrap(), 0b110);
@@ -607,8 +466,8 @@ mod tests {
             writer.write_bits((4, 0b1100));
         }
         assert_eq!(buffer.len(), (9 + 8 + 7 + 6 + 5 + 4) / 8 + 1);
-        let mut reader = buffer.into_iter();
-        let mut reader = BitReader::<_, LsbFirst>::spown_from(&mut reader).unwrap();
+        let mut reader = Reader::new(&buffer);
+        let mut reader = BitReader::<'_, '_, LsbFirst>::spown_from(&mut reader).unwrap();
         assert_eq!(reader.read_bits(9).unwrap(), 0b101010100);
         assert_eq!(reader.read_bits(8).unwrap(), 0b10101010);
         assert_eq!(reader.read_bits(7).unwrap(), 0b0101010);
@@ -622,45 +481,27 @@ mod tests {
             writer.write_bits((10, 0b1010101010));
         }
         assert_eq!(buffer.len(), 2);
-        let mut reader = buffer.into_iter();
-        let mut reader = BitReader::<_, LsbFirst>::spown_from(&mut reader).unwrap();
+        let mut reader = Reader::new(&buffer);
+        let mut reader = BitReader::<'_, '_, LsbFirst>::spown_from(&mut reader).unwrap();
         for _ in 0..5 {
             assert_eq!(reader.read_bits(2).unwrap(), 0b10);
         }
     }
 
-    use crate::bit_coder::ByteReader;
-    use crate::bit_coder::ReaderErr::NotEnoughData;
-    use crate::bit_coder::ReverseByteReader;
     #[test]
-    fn test_reverse_reader1() {
-        let buffer = vec![1_u8, 2, 3, 4, 5];
-        let mut reader = buffer.into_iter();
-        let mut reverse_reader = reader.spown_reverse_reader_at(2).unwrap();
-        assert_eq!(reverse_reader.read_u8_back().unwrap(), 2);
-        assert_eq!(reverse_reader.read_u8_back().unwrap(), 1);
-        assert_eq!(reverse_reader.read_u8_back(), Err(NotEnoughData));
-        assert!(reader.next().unwrap() == 3);
-        assert!(reader.next().unwrap() == 4);
-        assert!(reader.next().unwrap() == 5);
-        assert!(reader.next().is_none());
-    }
-
-    #[test]
-    fn test_reverse_reader2() {
+    fn reader_reads_little_endian_widths() {
         let mut buffer = Vec::new();
         buffer.write_u8(200);
         buffer.write_u16(201);
         buffer.write_u24(202);
         buffer.write_u32(203);
-        assert!(buffer.len() == 10);
-        let mut reader = buffer.into_iter();
-        let mut reverse_reader = reader.spown_reverse_reader_at(10).unwrap();
-        assert_eq!(reverse_reader.read_u32_back().unwrap(), 203);
-        assert_eq!(reverse_reader.read_u24_back().unwrap(), 202);
-        assert_eq!(reverse_reader.read_u16_back().unwrap(), 201);
-        assert_eq!(reverse_reader.read_u8_back().unwrap(), 200);
-        assert_eq!(reverse_reader.read_u8_back(), Err(NotEnoughData));
-        assert!(reader.next().is_none());
+        assert_eq!(buffer.len(), 10);
+        let mut reader = Reader::new(&buffer);
+        assert_eq!(reader.read_u8().unwrap(), 200);
+        assert_eq!(reader.read_u16().unwrap(), 201);
+        assert_eq!(reader.read_u24().unwrap(), 202);
+        assert_eq!(reader.read_u32().unwrap(), 203);
+        assert!(reader.is_empty());
+        assert_eq!(reader.read_u8(), Err(super::ReaderErr::NotEnoughData));
     }
 }

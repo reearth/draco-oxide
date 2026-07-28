@@ -5,7 +5,7 @@ use kiddo::immutable::float::kdtree::ImmutableKdTree;
 use kiddo::SquaredEuclidean;
 
 use super::buffer;
-use crate::bit_coder::{ByteReader, ByteWriter};
+use crate::bit_coder::{ByteWriter, Reader};
 use crate::types::DataValue;
 use crate::types::{AttributeValueIdx, PointIdx, VecPointIdx, Vector};
 
@@ -204,6 +204,41 @@ impl Attribute {
 
     pub fn take_point_to_att_val_map(self) -> Option<VecPointIdx<AttributeValueIdx>> {
         self.point_to_att_val_map
+    }
+
+    /// The point-to-value map as a plain slice, if the attribute has one.
+    #[inline]
+    pub fn point_map_as_slice(&self) -> Option<&[AttributeValueIdx]> {
+        self.point_to_att_val_map.as_ref().map(|m| m.as_slice())
+    }
+
+    /// Assigns the attribute-value index of a single point. The point-to-value
+    /// map must already be present (see [`Self::set_point_to_att_val_map`]); this
+    /// fills it entry by entry as a traversal visits each point.
+    #[inline]
+    pub fn set_point_att_val(&mut self, p_idx: PointIdx, val_idx: AttributeValueIdx) {
+        self.point_to_att_val_map
+            .as_mut()
+            .expect("point-to-value map must be initialized before per-point assignment")[p_idx] =
+            val_idx;
+    }
+
+    /// [`Self::set_point_att_val`] without the presence and bound checks.
+    ///
+    /// # Safety
+    /// The point-to-value map must be present and `p_idx` must be less than its
+    /// length.
+    #[inline]
+    pub unsafe fn set_point_att_val_unchecked(
+        &mut self,
+        p_idx: PointIdx,
+        val_idx: AttributeValueIdx,
+    ) {
+        match self.point_to_att_val_map.as_mut() {
+            Some(map) => *map.get_unchecked_mut(p_idx) = val_idx,
+            // Safety contract violated; unreachable per the caller's guarantee.
+            None => core::hint::unreachable_unchecked(),
+        }
     }
 
     #[inline]
@@ -727,7 +762,7 @@ impl ComponentDataType {
 
     /// Reads the data type from the reader.
     #[inline]
-    pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+    pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, Err> {
         let id = reader.read_u8()?;
         Self::from_id(id as usize).ok_or(Err::InvalidDataTypeId(id))
     }
@@ -805,7 +840,7 @@ impl AttributeType {
 
     /// Reads the attribute type from the reader.
     #[inline]
-    pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+    pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, Err> {
         let id = reader.read_u8()?;
         Self::from_id(id)
     }
@@ -830,7 +865,7 @@ impl AttributeDomain {
     }
 
     /// Reads the attribute domain from the reader.
-    pub fn read_from<R: ByteReader>(reader: &mut R) -> Result<Self, Err> {
+    pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, Err> {
         let id = reader.read_u8()?;
         match id {
             0 => Ok(Self::Position),

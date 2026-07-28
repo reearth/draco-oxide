@@ -5,7 +5,7 @@ pub mod attribute;
 pub mod entropy;
 
 pub mod header {
-    use crate::bit_coder::{ByteReader, ByteWriter, ReaderErr};
+    use crate::bit_coder::{ByteWriter, Reader, ReaderErr};
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub enum EncoderMethod {
@@ -17,10 +17,7 @@ pub mod header {
     impl EncoderMethod {
         #[inline]
         #[allow(unused)]
-        pub fn read_from<R>(reader: &mut R) -> Result<Self, ReaderErr>
-        where
-            R: ByteReader,
-        {
+        pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, ReaderErr> {
             match reader.read_u8()? {
                 0 => Ok(EncoderMethod::Sequential),
                 1 => Ok(EncoderMethod::Edgebreaker),

@@ -1,10 +1,6 @@
-use crate::bit_coder::{ByteReader, ByteWriter, ReaderErr};
+use crate::bit_coder::{ByteWriter, Reader, ReaderErr};
 
-#[allow(unused)]
-pub fn leb128_read<W>(reader: &mut W) -> Result<u64, ReaderErr>
-where
-    W: ByteReader,
-{
+pub fn leb128_read(reader: &mut Reader<'_>) -> Result<u64, ReaderErr> {
     let mut result: u64 = 0;
     let mut shift = 0;
     loop {
@@ -44,7 +40,7 @@ mod tests {
         leb128_write(300, &mut buffer);
         assert_eq!(buffer, vec![172, 2]);
 
-        let mut reader = buffer.into_iter();
+        let mut reader = Reader::new(&buffer);
         let value = leb128_read(&mut reader).unwrap();
         assert_eq!(value, 300);
     }
@@ -56,13 +52,13 @@ mod tests {
         for &value in &testdata {
             leb128_write(value, &mut buffer);
         }
-        let mut reader = buffer.into_iter();
+        let mut reader = Reader::new(&buffer);
         for &expected in &testdata {
             let value = leb128_read(&mut reader).unwrap();
             assert_eq!(value, expected);
         }
         assert!(
-            reader.next().is_none(),
+            reader.is_empty(),
             "Reader should be empty after reading all values"
         );
     }

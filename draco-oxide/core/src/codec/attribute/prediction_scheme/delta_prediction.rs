@@ -1,15 +1,16 @@
 use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
-use crate::mesh::ds::AttributeDS;
+use crate::mesh::ds::GenericAttributeDs;
 use crate::types::{CornerIdx, NdVector, Vector, VertexIdx};
 use std::mem;
 
-pub struct DeltaPrediction<'parents, const N: usize> {
+pub struct DeltaPrediction<'parents, const N: usize, D: GenericAttributeDs> {
     faces: &'parents [[usize; 3]],
-    ads: &'parents AttributeDS<'parents>,
+    ads: &'parents D,
 }
 
-impl<'parents, const N: usize> PredictionSchemeImpl<'parents, N> for DeltaPrediction<'parents, N>
+impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'parents, N, D>
+    for DeltaPrediction<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
@@ -17,7 +18,7 @@ where
 
     type AdditionalDataForMetadata = ();
 
-    fn new(_parents: &[&'parents Attribute], ads: &'parents AttributeDS<'parents>) -> Self {
+    fn new(_parents: &[&'parents Attribute], ads: &'parents D) -> Self {
         // Note: Connectivity is now passed via conn_att parameter instead of parent attributes
         // For now, use an empty slice as this prediction scheme needs to be updated for the new architecture
         let faces: &[[usize; 3]] = &[];
@@ -53,6 +54,7 @@ where
         into_ranges(out)
     }
 
+    #[inline]
     fn predict(
         &mut self,
         _i: CornerIdx,
@@ -65,10 +67,7 @@ where
             // If there are no previous vertices, we cannot predict the value.
             return NdVector::zero();
         };
-        let prev_pt = self
-            .ads
-            .global_ds()
-            .point_idx(self.ads.left_most_corner(prev_v));
+        let prev_pt = self.ads.point_idx(self.ads.left_most_corner(prev_v));
         att.get(prev_pt)
     }
 }

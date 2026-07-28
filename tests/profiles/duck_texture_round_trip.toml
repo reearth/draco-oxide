@@ -1,0 +1,55 @@
+# Textured round-trip through Google's reference decoder: encodes Duck with
+# draco-oxide and decodes with draco_decoder, once per texcoord prediction
+# scheme (parallelogram, the default, and the geometric texture scheme as a
+# per-attribute override). The Uv comparisons guard that both produced
+# bitstreams reconstruct texture coordinates at reference parity.
+#
+# Data: Khronos glTF Sample Models; see Duck.obj for the source citation.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "Duck.obj"
+output = "parallelogram.drc"
+
+[[operations]]
+op = "DracoDecode"
+input = "parallelogram.drc"
+output = "parallelogram.obj"
+
+[[operations]]
+op = "Validation"
+input = "parallelogram.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "Duck.obj"
+input2 = "parallelogram.obj"
+methods = [
+    { method = "Ssim", min = 0.98, color_by = "Geometry" },
+    { method = "Ssim", min = 0.98, color_by = "Uv" },
+]
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "Duck.obj"
+output = "geometric.drc"
+cfg = { attributes = { TextureCoordinate = { prediction = "MeshPredictionForTextureCoordinates" } } }
+
+[[operations]]
+op = "DracoDecode"
+input = "geometric.drc"
+output = "geometric.obj"
+
+[[operations]]
+op = "Validation"
+input = "geometric.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "Duck.obj"
+input2 = "geometric.obj"
+methods = [
+    { method = "Ssim", min = 0.98, color_by = "Uv" },
+]

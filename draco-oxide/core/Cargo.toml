@@ -16,14 +16,22 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.12"
 paste = "1.0"
+# Used by code the `draco-nd-vector` proc-macro expands into this crate, not by
+# any source file here.
 seq-macro = "0.3.6"
 kiddo = "5.2.4"
+# Enabled only by the `test-util` feature (for the Laplacian connectivity check).
+faer = { version = "0.22.6", optional = true }
 
 [dev-dependencies]
 faer = "0.22.6"
 
 [features]
 default = ["safety_assertions"]
+# Exposes cross-crate test utilities (`codec::connectivity::eq`), used by the
+# decoder round-trip tests in the `draco-oxide` crate. Not part of any shipping
+# build; pulls in `faer` for the Laplacian spectrum comparison.
+test-util = ["dep:faer"]
 # Gates the `debug_write!` / `debug_expect!` macros (defined in `utils/debug`).
 # Resolved at each macro call site, so every crate that invokes them must
 # declare this feature; the `draco-oxide` encoder forwards into it.

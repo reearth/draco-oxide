@@ -76,8 +76,6 @@ where
     gds: &'ads DS,
 
     /// configurations for the encoder
-    #[allow(unused)]
-    // TODO: This field is not used yet, as we only support the default configuration.
     config: Config,
 }
 
@@ -90,7 +88,7 @@ pub struct Config {
 impl ConfigType for Config {
     fn default() -> Self {
         Self {
-            traversal: EdgebreakerKind::Standard,
+            traversal: EdgebreakerKind::Valence,
             use_single_connectivity: false,
         }
     }
@@ -191,10 +189,8 @@ where
 
     fn process_boundary(&mut self, start_corner: CornerIdx, encode_first_vertex: bool) -> usize {
         let mut corner = start_corner.previous();
-        let mut opp = self.pos_corner_table.opposite(corner);
-        while opp.is_some() {
+        while let Some(opp) = self.pos_corner_table.opposite(corner) {
             corner = opp.next();
-            opp = self.pos_corner_table.opposite(corner);
         } // 'corner' now faces the hole
 
         let start_v = self.posds.vertex_idx(start_corner);
@@ -211,10 +207,8 @@ where
             self.visited_vertices[curr_v] = true;
             num_encoded_hole_verts += 1;
             corner = corner.next();
-            let mut opp = self.pos_corner_table.opposite(corner);
-            while opp.is_some() {
+            while let Some(opp) = self.pos_corner_table.opposite(corner) {
                 corner = opp.next();
-                opp = self.pos_corner_table.opposite(corner);
             }
             curr_v = self.posds.vertex_idx(corner.previous());
         }
@@ -408,10 +402,8 @@ where
             }
             if self.vertex_hole_id[self.posds.vertex_idx(corner_index)].is_some() {
                 // The corner is on a boundary.
-                let mut maybe_right_corner = corner_index;
-                while maybe_right_corner.is_some() {
-                    corner_index = maybe_right_corner;
-                    maybe_right_corner = self.posds.corner_table().swing_right(maybe_right_corner);
+                while let Some(right_corner) = self.posds.corner_table().swing_right(corner_index) {
+                    corner_index = right_corner;
                 }
                 let start_corner = corner_index.previous();
                 return (false, start_corner);
@@ -464,7 +456,7 @@ where
     {
         debug_write!("Init Decoder", writer);
         // encode the traversal decoder type
-        EdgebreakerKind::Standard.write_to(writer);
+        self.config.traversal.write_to(writer);
         debug_write!("Init Decoder Done", writer);
 
         self.compute_boundaries()?;
@@ -503,7 +495,7 @@ where
 
                 self.init_face_connectivity_corners
                     .push(corner_index.next());
-                let corner_opp = self.pos_corner_table.opposite(corner_index.next());
+                let corner_opp = self.pos_corner_table.opposite(corner_index.next()).unwrap(); // the face is interior, so every edge has an opposite corner
                 self.edgebreaker_from(corner_opp)?;
             } else {
                 // if the face is on the boundary, then we start from the boundary.
@@ -615,88 +607,114 @@ impl Traversal for DefaultTraversal {
             final_writer.write_u8(byte);
         }
 
-        // encode the start face configurations.
-        let freq_count_0 = self.interior_cfg.iter().filter(|&&cfg| !cfg).count();
-        // the probability of zero in [0,1] is scaled to [0,256], and clamped to [1,255] as the rans does not accept the zero probability.
-        let zero_prob = (((freq_count_0 as f32 / self.interior_cfg.len() as f32) * 256.0 + 0.5)
-            as u16)
-            .clamp(1, 255) as u8;
-        final_writer.write_u8(zero_prob);
-        {
-            let mut writer: RabsCoder = RabsCoder::new(zero_prob as usize, None);
-            for &cfg in self.interior_cfg.iter().rev() {
-                writer.write(if cfg { 1 } else { 0 })?;
-            }
-            let buffer = writer.flush()?;
-            leb128_write(buffer.len() as u64, final_writer);
-            for byte in buffer {
-                final_writer.write_u8(byte);
-            }
-        }
-
-        // compute the attribute seams
-        //
-        // Seams are encoded per non-position attribute only: the position
-        // attribute defines the base connectivity and carries no seams. This
-        // must match the `adss.len() - 1` attribute count written in
-        // `encode_connectivity`; including the position attribute here would
-        // emit one extra seam stream and desync the decoder.
-        let seam_atts = att_data
-            .iter()
-            .filter(|ads| ads.att_data().get_attribute_type() != AttributeType::Position)
-            .collect::<Vec<_>>();
-        let mut visited_faces = vec![false; gds.num_faces()];
-        let mut seams_data = (0..seam_atts.len())
-            .map(|_| Vec::with_capacity(gds.num_corners() >> 1))
-            .collect::<Vec<_>>();
-        for c in self.processed_connectivity_corners.into_iter().rev() {
-            let corners = [c, c.next(), c.previous()];
-            let f_idx = c.face_idx();
-            visited_faces[usize::from(f_idx)] = true;
-            for corner in &corners {
-                let opp_corner = pos_corner_table.opposite(*corner);
-                if opp_corner.is_some() {
-                    let opp_face = opp_corner.face_idx();
-                    if visited_faces[usize::from(opp_face)] {
-                        // if the opposite face is already visited, then we do not need to record the attribute seam.
-                        continue;
-                    }
-                } else {
-                    // if the edge opposite to the corner is on a boundary, then we do not need to record the attribute seam.
-                    continue;
-                }
-
-                for (j, ads) in seam_atts.iter().enumerate() {
-                    // store true if the corner is on an attribute seam, false otherwise.
-                    seams_data[j].push(ads.corner_table().opposite(*corner).is_none());
-                }
-            }
-        }
-        // encode the attribute seams.
-        for seams_data in seams_data {
-            let freq_count_0 = seams_data.iter().filter(|&&s| !s).count();
-            let prob_zero = (((freq_count_0 as f32 / seams_data.len() as f32) * 256.0 + 0.5) as u16)
-                .clamp(1, 255) as u8;
-            final_writer.write_u8(prob_zero);
-            {
-                let mut writer: RabsCoder = RabsCoder::new(prob_zero as usize, None);
-                for &s in seams_data.iter().rev() {
-                    writer.write(if s { 1 } else { 0 })?;
-                }
-                let buffer = writer.flush()?;
-                leb128_write(buffer.len() as u64, final_writer);
-                for byte in buffer {
-                    final_writer.write_u8(byte);
-                }
-            }
-        }
-
-        Ok(())
+        encode_start_faces(&self.interior_cfg, final_writer)?;
+        encode_attribute_seams(
+            self.processed_connectivity_corners,
+            att_data,
+            pos_corner_table,
+            gds,
+            final_writer,
+        )
     }
 }
 
+/// Encodes the start-face interior flags as a rabs sub-stream
+/// (`[prob_zero | leb128 len | bytes]`), bits written in reverse.
+fn encode_start_faces<W>(interior_cfg: &[bool], final_writer: &mut W) -> Result<(), Err>
+where
+    W: ByteWriter,
+{
+    let freq_count_0 = interior_cfg.iter().filter(|&&cfg| !cfg).count();
+    // the probability of zero in [0,1] is scaled to [0,256], and clamped to [1,255] as the rans does not accept the zero probability.
+    let zero_prob = (((freq_count_0 as f32 / interior_cfg.len() as f32) * 256.0 + 0.5) as u16)
+        .clamp(1, 255) as u8;
+    final_writer.write_u8(zero_prob);
+    let mut writer: RabsCoder = RabsCoder::new(zero_prob as usize, None);
+    for &cfg in interior_cfg.iter().rev() {
+        writer.write(if cfg { 1 } else { 0 })?;
+    }
+    let buffer = writer.flush()?;
+    leb128_write(buffer.len() as u64, final_writer);
+    for byte in buffer {
+        final_writer.write_u8(byte);
+    }
+    Ok(())
+}
+
+/// Encodes the per-attribute seam bits, one rabs sub-stream per non-position
+/// attribute, in the face order the decoder reconstructs (the processed corners
+/// reversed).
+///
+/// Seams are encoded per non-position attribute only: the position attribute
+/// defines the base connectivity and carries no seams. This must match the
+/// `adss.len() - 1` attribute count written in `encode_connectivity`; including
+/// the position attribute here would emit one extra seam stream and desync the
+/// decoder.
+fn encode_attribute_seams<W>(
+    processed_connectivity_corners: Vec<CornerIdx>,
+    att_data: &[AttributeDS<'_>],
+    pos_corner_table: &CornerTable,
+    gds: &DS,
+    final_writer: &mut W,
+) -> Result<(), Err>
+where
+    W: ByteWriter,
+{
+    let seam_atts = att_data
+        .iter()
+        .filter(|ads| ads.att_data().get_attribute_type() != AttributeType::Position)
+        .collect::<Vec<_>>();
+    let mut visited_faces = vec![false; gds.num_faces()];
+    let mut seams_data = (0..seam_atts.len())
+        .map(|_| Vec::with_capacity(gds.num_corners() >> 1))
+        .collect::<Vec<_>>();
+    for c in processed_connectivity_corners.into_iter().rev() {
+        let corners = [c, c.next(), c.previous()];
+        let f_idx = c.face_idx();
+        visited_faces[usize::from(f_idx)] = true;
+        for corner in &corners {
+            if let Some(opp_corner) = pos_corner_table.opposite(*corner) {
+                let opp_face = opp_corner.face_idx();
+                if visited_faces[usize::from(opp_face)] {
+                    // if the opposite face is already visited, then we do not need to record the attribute seam.
+                    continue;
+                }
+            } else {
+                // if the edge opposite to the corner is on a boundary, then we do not need to record the attribute seam.
+                continue;
+            }
+
+            for (j, ads) in seam_atts.iter().enumerate() {
+                // store true if the corner is on an attribute seam, false otherwise.
+                seams_data[j].push(ads.corner_table().opposite(*corner).is_none());
+            }
+        }
+    }
+    // encode the attribute seams.
+    for seams_data in seams_data {
+        let freq_count_0 = seams_data.iter().filter(|&&s| !s).count();
+        let prob_zero = (((freq_count_0 as f32 / seams_data.len() as f32) * 256.0 + 0.5) as u16)
+            .clamp(1, 255) as u8;
+        final_writer.write_u8(prob_zero);
+        let mut writer: RabsCoder = RabsCoder::new(prob_zero as usize, None);
+        for &s in seams_data.iter().rev() {
+            writer.write(if s { 1 } else { 0 })?;
+        }
+        let buffer = writer.flush()?;
+        leb128_write(buffer.len() as u64, final_writer);
+        for byte in buffer {
+            final_writer.write_u8(byte);
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) struct ValenceTraversal<'pos_ds> {
-    vertex_valences: VecVertexIdx<usize>,
+    /// Valence of the not-yet-encoded part of the mesh per vertex. Signed to
+    /// tolerate transient negative values on malformed inputs, as in Google's
+    /// reference implementation.
+    vertex_valences: VecVertexIdx<isize>,
     pos_ds: &'pos_ds AttributeDS<'pos_ds>,
     diff_corner_to_vertex_map: BTreeMap<CornerIdx, VertexIdx>,
     context_symbols: Vec<Vec<Symbol>>,
@@ -704,6 +722,7 @@ pub(crate) struct ValenceTraversal<'pos_ds> {
     prev_symbol: Option<Symbol>,
     interior_cfg: Vec<bool>,
     num_symbols: usize,
+    processed_connectivity_corners: Vec<CornerIdx>,
 }
 impl<'pos_ds> ValenceTraversal<'pos_ds> {
     fn vertex_idx(&self, corner: CornerIdx) -> VertexIdx {
@@ -715,11 +734,11 @@ impl<'pos_ds> ValenceTraversal<'pos_ds> {
     }
 
     pub(crate) fn new(pos_ds: &'pos_ds AttributeDS) -> Self {
-        let mut vertex_valences: VecVertexIdx<usize> =
+        let mut vertex_valences: VecVertexIdx<isize> =
             Vec::with_capacity(pos_ds.num_vertices()).into();
         for i in 0..pos_ds.num_vertices() {
             let v = VertexIdx::from(i);
-            vertex_valences.push(pos_ds.vertex_valence(v));
+            vertex_valences.push(pos_ds.vertex_valence(v) as isize);
         }
 
         let num_unique_valences = MAX_VALENCE - MIN_VALENCE + 1;
@@ -730,10 +749,11 @@ impl<'pos_ds> ValenceTraversal<'pos_ds> {
             pos_ds,
             diff_corner_to_vertex_map: BTreeMap::new(),
             context_symbols,
-            last_corner: CornerIdx::from(usize::MAX), // This will be set to a valid corner index in `new_corner_reached` before the first call to record symbol.
+            last_corner: CornerIdx::INVALID, // This will be set to a valid corner index in `new_corner_reached` before the first call to record symbol.
             prev_symbol: None,
             interior_cfg: Vec::new(),
             num_symbols: 0,
+            processed_connectivity_corners: Vec::new(),
         }
     }
 }
@@ -756,38 +776,9 @@ impl<'pos_ds> Traversal for ValenceTraversal<'pos_ds> {
 
         let active_valence = self.vertex_valences[v_next];
         match symbol {
-            Symbol::C => {}
-            Symbol::S => {
+            Symbol::C | Symbol::S => {
                 self.vertex_valences[v_next] -= 1;
                 self.vertex_valences[v_prev] -= 1;
-
-                let mut num_left_faces = 0;
-                let mut maybe_act_c = corner_table.opposite(prev);
-                while maybe_act_c.is_some() {
-                    let act_c = maybe_act_c;
-                    if visited_faces[act_c.face_idx()] {
-                        break;
-                    }
-                    num_left_faces += 1;
-                    maybe_act_c = corner_table.opposite(act_c.next());
-                }
-                self.vertex_valences[v_last] = num_left_faces + 1;
-
-                let new_vertex = self.vertex_valences.len();
-                let mut num_right_faces = 0;
-
-                maybe_act_c = corner_table.opposite(next);
-                while maybe_act_c.is_some() {
-                    let act_c = maybe_act_c;
-                    if visited_faces[act_c.face_idx()] {
-                        break;
-                    }
-                    num_right_faces += 1;
-                    self.diff_corner_to_vertex_map
-                        .insert(act_c.next(), new_vertex.into());
-                    maybe_act_c = corner_table.opposite(act_c.previous());
-                }
-                self.vertex_valences.push(num_right_faces + 1);
             }
             Symbol::R => {
                 // Update valences.
@@ -806,11 +797,43 @@ impl<'pos_ds> Traversal for ValenceTraversal<'pos_ds> {
                 self.vertex_valences[v_prev] -= 2;
             }
         }
+        if symbol == Symbol::S {
+            // The decoder merges the split vertex only when it processes the S
+            // symbol (it decodes in reverse), so the vertex is split here: the
+            // left side keeps the vertex with the valence of the still
+            // unencoded left fan, and the corners of the right fan are
+            // remapped to a fresh vertex carrying the right-fan valence.
+            let mut num_left_faces = 0;
+            let mut maybe_act_c = corner_table.opposite(prev);
+            while let Some(act_c) = maybe_act_c {
+                if visited_faces[act_c.face_idx()] {
+                    break;
+                }
+                num_left_faces += 1;
+                maybe_act_c = corner_table.opposite(act_c.next());
+            }
+            self.vertex_valences[v_last] = num_left_faces + 1;
+
+            let new_vertex = self.vertex_valences.len();
+            let mut num_right_faces = 0;
+
+            maybe_act_c = corner_table.opposite(next);
+            while let Some(act_c) = maybe_act_c {
+                if visited_faces[act_c.face_idx()] {
+                    break;
+                }
+                num_right_faces += 1;
+                self.diff_corner_to_vertex_map
+                    .insert(act_c.next(), new_vertex.into());
+                maybe_act_c = corner_table.opposite(act_c.previous());
+            }
+            self.vertex_valences.push(num_right_faces + 1);
+        }
 
         if let Some(prev_symbol) = self.prev_symbol {
-            let clamped_valence = active_valence.clamp(MIN_VALENCE, MAX_VALENCE);
+            let clamped_valence = active_valence.clamp(MIN_VALENCE as isize, MAX_VALENCE as isize);
 
-            let context = clamped_valence - MIN_VALENCE;
+            let context = (clamped_valence - MIN_VALENCE as isize) as usize;
             self.context_symbols[context].push(prev_symbol);
         }
 
@@ -823,6 +846,7 @@ impl<'pos_ds> Traversal for ValenceTraversal<'pos_ds> {
 
     fn new_corner_reached(&mut self, c: CornerIdx) {
         self.last_corner = c;
+        self.processed_connectivity_corners.push(c);
     }
 
     fn num_symbols(&self) -> usize {
@@ -832,19 +856,28 @@ impl<'pos_ds> Traversal for ValenceTraversal<'pos_ds> {
     fn encode<W>(
         self,
         writer: &mut W,
-        _: &[AttributeDS<'_>],
-        _: &CornerTable,
-        _: &DS,
+        att_data: &[AttributeDS<'_>],
+        pos_corner_table: &CornerTable,
+        gds: &DS,
     ) -> Result<(), Err>
     where
         W: ByteWriter,
     {
-        // self.encode_start_faces();
-        // self.encode_attribute_seams();
+        encode_start_faces(&self.interior_cfg, writer)?;
+        encode_attribute_seams(
+            self.processed_connectivity_corners,
+            att_data,
+            pos_corner_table,
+            gds,
+            writer,
+        )?;
 
         // Store the contexts.
         for context in self.context_symbols {
             leb128_write(context.len() as u64, writer);
+            if context.is_empty() {
+                continue;
+            }
             let context = context
                 .iter()
                 .map(|&s| s.get_id() as u64)

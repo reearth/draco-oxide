@@ -7,8 +7,9 @@
 //! Google's Draco decoder in the field, so they must stay byte-identical
 //! across these optimizations.
 //!
-//! The fingerprints were captured from the pre-optimization implementation and
-//! confirmed byte-identical on the full 930-tile HighPoly corpus.
+//! The fingerprints are captured from the default configuration (valence
+//! edgebreaker traversal) and verified against Google's Draco decoder by the
+//! `draco_decode` round-trip test.
 
 use draco_oxide::core::types::ConfigType;
 use draco_oxide::{
@@ -36,8 +37,9 @@ fn encode_fingerprint(obj: &str) -> (usize, u64) {
 #[test]
 fn encode_output_is_byte_stable() {
     // (obj, expected_len, expected_fnv1a). tetrahedron carries position +
-    // normal + texcoord attributes, exercising all three mesh prediction
-    // schemes; sphere/torus/bunny exercise position (parallelogram) at scale
+    // normal + texcoord attributes, exercising the default prediction scheme
+    // of each (parallelogram for position and texcoord, normal prediction for
+    // normal); sphere/torus/bunny exercise position (parallelogram) at scale
     // and over handle topology (torus).
     let cases: &[(&str, usize, u64)] = &[
         ("data/tetrahedron.obj", EXPECT_TETRA_LEN, EXPECT_TETRA_HASH),
@@ -60,11 +62,11 @@ fn encode_output_is_byte_stable() {
     }
 }
 
-const EXPECT_TETRA_LEN: usize = 846;
-const EXPECT_TETRA_HASH: u64 = 620833109304232433;
-const EXPECT_SPHERE_LEN: usize = 1962;
-const EXPECT_SPHERE_HASH: u64 = 11855373330842349000;
-const EXPECT_TORUS_LEN: usize = 4181;
-const EXPECT_TORUS_HASH: u64 = 8060327790296598891;
-const EXPECT_BUNNY_LEN: usize = 78933;
-const EXPECT_BUNNY_HASH: u64 = 6236277559521459486;
+const EXPECT_TETRA_LEN: usize = 1156;
+const EXPECT_TETRA_HASH: u64 = 18074224272254933968;
+const EXPECT_SPHERE_LEN: usize = 1966;
+const EXPECT_SPHERE_HASH: u64 = 17293669947149617272;
+const EXPECT_TORUS_LEN: usize = 3238;
+const EXPECT_TORUS_HASH: u64 = 3309000085711741209;
+const EXPECT_BUNNY_LEN: usize = 67023;
+const EXPECT_BUNNY_HASH: u64 = 3920234943324541898;

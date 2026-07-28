@@ -48,6 +48,7 @@ impl AttributeBuffer {
         self.data.as_ptr()
     }
 
+    #[inline]
     pub fn get<Data, const N: usize>(&self, idx: AttributeValueIdx) -> Data
     where
         Data: Vector<N>,

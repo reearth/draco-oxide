@@ -82,9 +82,7 @@ pub enum Operation {
         #[serde(default = "default_oxide_cfg")]
         cfg: oxide_encode::Config,
     },
-    /// Decode a `.drc` with draco-oxide. Currently stubbed in the library
-    /// itself, so this op deliberately errors with a clear message rather
-    /// than silently producing garbage.
+    /// Decode a `.drc` with draco-oxide's own decoder, writing Wavefront OBJ.
     DracoOxideDecode { input: String, output: String },
     /// Encode with Google Draco's `draco_encoder` CLI.
     DracoEncode {
@@ -101,8 +99,8 @@ pub enum Operation {
         cfg: GoogleDecodeConfig,
     },
     /// Confirm an artifact parses as the named format. `.drc` cannot be
-    /// validated here — its only validation is "Google's decoder accepts it",
-    /// which is covered by [`Operation::DracoDecode`].
+    /// validated here; it is validated by being decoded, via
+    /// [`Operation::DracoDecode`] or [`Operation::DracoOxideDecode`].
     Validation { input: String, fmt: FormatName },
     /// Compare two artifacts under one or more comparison methods. Each
     /// method asserts its own pass/fail predicate (e.g. a distance threshold).
@@ -319,11 +317,15 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                     panic!("{label}: writing {} failed: {e}", out_path.display())
                 });
             }
-            Operation::DracoOxideDecode { .. } => {
-                panic!(
-                    "{label}: DracoOxideDecode is not implemented yet — draco-oxide's decoder \
-                     is still stubbed (see draco-oxide/src/decode/mod.rs)."
-                );
+            Operation::DracoOxideDecode { input, output } => {
+                let in_path = resolve_input(input);
+                let out_path = resolve_output(output);
+                draco_oxide::io::obj::decode_drc_to_obj(&in_path, &out_path).unwrap_or_else(|e| {
+                    panic!(
+                        "{label}: draco-oxide decode of {} failed: {e}",
+                        in_path.display()
+                    )
+                });
             }
             Operation::DracoEncode { input, output, cfg } => {
                 let bin = google_encoder.as_ref().expect("pre-scan guarantees this");
