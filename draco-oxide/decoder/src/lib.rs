@@ -7,7 +7,7 @@
 //! consumer (e.g. a GPU shader) needs to reconstruct floats itself. [`decode`],
 //! gated behind the default `dequantize` feature, additionally applies those
 //! transforms and returns a [`Mesh`] with original-format (float) attributes.
-//!
+
 use draco_oxide_core::bit_coder::{Reader, ReaderErr};
 use draco_oxide_core::mesh::Mesh;
 
@@ -17,8 +17,6 @@ pub mod entropy;
 pub mod header;
 mod metadata;
 mod reader;
-#[cfg(feature = "simd")]
-mod simd;
 
 /// Errors produced while decoding a draco stream.
 #[remain::sorted]

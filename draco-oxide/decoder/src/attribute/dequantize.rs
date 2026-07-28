@@ -80,7 +80,7 @@ fn dequantize_octahedral(att: Attribute, bits: u8) -> Result<Attribute, Err> {
             *q.get(0) as f32 / scale - 1.0,
             *q.get(1) as f32 / scale - 1.0,
         ]);
-        // Safety: the output type is three dimensional.
+        // SAFETY: the output type is three dimensional.
         let normal: NdVector<3, f32> = unsafe { octahedral_inverse_transform(oct) };
         values.push(normal);
     }

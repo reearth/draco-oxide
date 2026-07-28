@@ -74,7 +74,7 @@ where
     }
 
     let mut values = Vec::new();
-    let mut encoder = RansSymbolEncoder::<'_, _, 5, 12>::new(writer, freq_counts, None)?;
+    let mut encoder = RansSymbolEncoder::new(writer, freq_counts, None, 12)?;
     for i in (0..symbols.len() / num_components).rev() {
         let bit_length = bit_lengths[i] as usize;
         encoder.write(bit_length)?;
@@ -117,47 +117,18 @@ where
     let bit_length = (usize::BITS - num_unique_symbols.leading_zeros()) as usize;
     let bit_length = bit_length.clamp(1, 18);
     writer.write_u8(bit_length as u8);
-    match bit_length {
-        1 => encode_symbols_direct_coded_precision_unwrapped::<W, 1, 12>(symbols, freq_counts, writer),
-        2 => encode_symbols_direct_coded_precision_unwrapped::<W, 2, 12>(symbols, freq_counts, writer),
-        3 => encode_symbols_direct_coded_precision_unwrapped::<W, 3, 12>(symbols, freq_counts, writer),
-        4 => encode_symbols_direct_coded_precision_unwrapped::<W, 4, 12>(symbols, freq_counts, writer),
-        5 => encode_symbols_direct_coded_precision_unwrapped::<W, 5, 12>(symbols, freq_counts, writer),
-        6 => encode_symbols_direct_coded_precision_unwrapped::<W, 6, 12>(symbols, freq_counts, writer),
-        7 => encode_symbols_direct_coded_precision_unwrapped::<W, 7, 12>(symbols, freq_counts, writer),
-        8 => encode_symbols_direct_coded_precision_unwrapped::<W, 8, 12>(symbols, freq_counts, writer),
-        9 => encode_symbols_direct_coded_precision_unwrapped::<W, 9, 13>(symbols, freq_counts, writer),
-        10 => encode_symbols_direct_coded_precision_unwrapped::<W, 10, 15>(symbols, freq_counts, writer),
-        11 => encode_symbols_direct_coded_precision_unwrapped::<W, 11, 16>(symbols, freq_counts, writer),
-        12 => encode_symbols_direct_coded_precision_unwrapped::<W, 12, 18>(symbols, freq_counts, writer),
-        13 => encode_symbols_direct_coded_precision_unwrapped::<W, 13, 19>(symbols, freq_counts, writer),
-        14 => encode_symbols_direct_coded_precision_unwrapped::<W, 14, 20>(symbols, freq_counts, writer),
-        15 => encode_symbols_direct_coded_precision_unwrapped::<W, 15, 20>(symbols, freq_counts, writer),
-        16 => encode_symbols_direct_coded_precision_unwrapped::<W, 16, 20>(symbols, freq_counts, writer),
-        17 => encode_symbols_direct_coded_precision_unwrapped::<W, 17, 20>(symbols, freq_counts, writer),
-        18 => encode_symbols_direct_coded_precision_unwrapped::<W, 18, 20>(symbols, freq_counts, writer),
-        _ => unreachable!("This should never happen, as the  bit length is clamped to a minimum of 1 and a maximum of 18"),
-    }
-}
-
-fn encode_symbols_direct_coded_precision_unwrapped<
-    W,
-    const NUM_SYMBOLS_BIT_LENGTH: usize,
-    const RANS_PRECISION: usize,
->(
-    symbols: Vec<u64>,
-    freq_counts: Vec<usize>,
-    writer: &mut W,
-) -> Result<(), Err>
-where
-    W: ByteWriter,
-{
-    let mut encoder = RansSymbolEncoder::<'_, _, NUM_SYMBOLS_BIT_LENGTH, RANS_PRECISION>::new(
-        writer,
-        freq_counts,
-        None,
-    )?;
-
+    // The same bit-length-to-precision mapping the decoder derives
+    // (`clamp(3 * bit_length / 2, 12, 20)`).
+    let precision = match bit_length {
+        1..=8 => 12,
+        9 => 13,
+        10 => 15,
+        11 => 16,
+        12 => 18,
+        13 => 19,
+        _ => 20,
+    };
+    let mut encoder = RansSymbolEncoder::new(writer, freq_counts, None, precision)?;
     for s in symbols.into_iter().rev() {
         encoder.write(s as usize)?;
     }

@@ -25,7 +25,8 @@ image = { version = "0.25", features = ["webp"] }
 
 [dev-dependencies]
 # Round-trip tests use core's Laplacian connectivity check (`codec::connectivity::eq`),
-# gated behind core's `test-util` feature. Dev-only; stripped on publish.
+# gated behind core's `test-util` feature. Dev-only: it never reaches a consumer's
+# build, but it does mean the core version published alongside must expose the feature.
 draco-oxide-core = { workspace = true, features = ["test-util"] }
 
 [features]

@@ -244,6 +244,7 @@ where
     /// projected candidate is taken from `orientations` (popped from the back,
     /// matching the encoder's traversal order) instead of being chosen against
     /// the actual value.
+    #[inline]
     pub fn predict_given_orientation(
         &mut self,
         i: CornerIdx,

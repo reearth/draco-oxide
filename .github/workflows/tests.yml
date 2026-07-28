@@ -50,6 +50,43 @@ jobs:
       - name: clippy (evaluation feature)
         run: cargo clippy -p draco-oxide --features evaluation --all-targets -- -D warnings
 
+  wasm:
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      # The decoder is the WASM/embedded unit; every feature tier must stay
+      # green on wasm32. The size probe builds the linked cdylib per tier and
+      # prints the module sizes for the job log.
+      - name: decoder on wasm32 (default tier)
+        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release
+
+      - name: decoder on wasm32 (portable tier)
+        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release --no-default-features
+
+      - name: size probe (full)
+        run: |
+          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown
+          cp target/wasm32-unknown-unknown/wasm-size/wasm_size_probe.wasm probe-full.wasm
+
+      - name: size probe (portable)
+        run: |
+          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --no-default-features
+          cp target/wasm32-unknown-unknown/wasm-size/wasm_size_probe.wasm probe-portable.wasm
+
+      - name: report module sizes
+        run: |
+          gzip -k -9 probe-full.wasm probe-portable.wasm
+          ls -la probe-*.wasm probe-*.wasm.gz
+
   tests:
     runs-on: ubuntu-latest
     env:

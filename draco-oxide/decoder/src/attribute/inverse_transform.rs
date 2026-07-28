@@ -64,6 +64,7 @@ impl InverseTransform {
 
     /// Reconstructs the original value from the prediction and the (already
     /// unzigzagged where applicable) correction.
+    #[inline]
     pub(crate) fn compute_original<const N: usize>(
         &self,
         pred: NdVector<N, i32>,

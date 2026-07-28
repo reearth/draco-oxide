@@ -38,56 +38,88 @@ fn read_state_init(rev: &mut RevReader<'_>, l_base: usize) -> Result<usize, Err>
     Ok(state + l_base)
 }
 
-/// Non-binary rANS decoder over a fixed symbol distribution. `RANS_PRECISION` is the
-/// log2 of the total frequency count and must match the value the encoder used.
-///
-/// The slot-to-symbol lookup is either a `2^RANS_PRECISION`-entry table (O(1) per
-/// symbol, but the build cost dominates short streams) or a binary search over the
-/// cumulative frequencies; the caller picks via `use_lut`.
-pub struct RansDecoder<'a, const RANS_PRECISION: usize> {
-    rev: RevReader<'a>,
-    state: usize,
-    slot_table: Option<Vec<u32>>,
-    rans_symbols: Vec<RansSymbol>,
+/// Slot-to-symbol lookup strategy. The table entry width follows the alphabet
+/// size so the `2^RANS_PRECISION`-entry table stays as small as possible; the
+/// table is walked at a random slot per symbol, so its cache footprint is paid
+/// on every decode.
+enum SlotTable {
+    U16(Vec<u16>),
+    U32(Vec<u32>),
+    BinarySearch,
 }
 
-impl<'a, const RANS_PRECISION: usize> RansDecoder<'a, RANS_PRECISION> {
-    const RANS_PRECISION_VALUE: usize = 1 << RANS_PRECISION;
-    const L_RANS_BASE: usize = (1 << RANS_PRECISION) << 2;
+/// Non-binary rANS decoder over a fixed symbol distribution. `precision` is the
+/// log2 of the total frequency count and must match the value the encoder used.
+///
+/// The slot-to-symbol lookup is either a `2^precision`-entry table (O(1) per
+/// symbol, but the build cost dominates short streams) or a binary search over the
+/// cumulative frequencies; the caller picks via `use_lut`.
+pub struct RansDecoder<'a> {
+    rev: RevReader<'a>,
+    state: usize,
+    slot_table: SlotTable,
+    rans_symbols: Vec<RansSymbol>,
+    /// Renormalization strategy, fixed per stream: the branchless fold wins on
+    /// high-entropy streams where the refill byte count is unpredictable, the
+    /// byte loop on low-entropy streams where it is almost always zero.
+    refill_branchless: bool,
+    precision: u32,
+    /// `4 << precision`, the renormalization threshold.
+    l_base: usize,
+}
 
+impl<'a> RansDecoder<'a> {
     /// Initializes the decoder from the reversed buffer and a symbol distribution
     /// (as produced by [`rans_symbol_table`]).
     pub fn new(
         mut rev: RevReader<'a>,
         rans_symbols: Vec<RansSymbol>,
         use_lut: bool,
+        refill_branchless: bool,
+        precision: usize,
     ) -> Result<Self, Err> {
-        let state = read_state_init(&mut rev, Self::L_RANS_BASE)?;
-        let slot_table = use_lut.then(|| rans_slot_table(&rans_symbols));
+        let l_base = 4usize << precision;
+        let state = read_state_init(&mut rev, l_base)?;
+        let slot_table = if !use_lut {
+            SlotTable::BinarySearch
+        } else if rans_symbols.len() <= 1 << 16 {
+            SlotTable::U16(rans_slot_table(&rans_symbols))
+        } else {
+            SlotTable::U32(rans_slot_table(&rans_symbols))
+        };
         Ok(RansDecoder {
             rev,
             state,
             slot_table,
             rans_symbols,
+            refill_branchless,
+            precision: precision as u32,
+            l_base,
         })
     }
 
     /// Decodes the next symbol index.
+    #[inline]
     pub fn read(&mut self) -> usize {
-        while self.state < Self::L_RANS_BASE {
-            match self.rev.read_u8_back() {
-                Ok(byte) => self.state = (self.state << 8) | byte as usize,
-                Err(_) => break,
+        if self.refill_branchless {
+            self.state = self.rev.rans_refill(self.state, self.l_base);
+        } else {
+            while self.state < self.l_base {
+                match self.rev.read_u8_back() {
+                    Ok(byte) => self.state = (self.state << 8) | byte as usize,
+                    Err(_) => break,
+                }
             }
         }
-        let quo = self.state >> RANS_PRECISION;
-        let rem = self.state & (Self::RANS_PRECISION_VALUE - 1);
+        let quo = self.state >> self.precision;
+        let rem = self.state & ((self.l_base >> 2) - 1);
         let symbol = match &self.slot_table {
-            Some(table) => table[rem] as usize,
+            SlotTable::U16(table) => table[rem] as usize,
+            SlotTable::U32(table) => table[rem] as usize,
             // The last symbol whose cumulative start is <= rem. Ties from
             // zero-frequency symbols resolve to the last of the group, which is
             // the one whose range actually contains rem.
-            None => {
+            SlotTable::BinarySearch => {
                 self.rans_symbols
                     .partition_point(|s| s.freq_cumulative as usize <= rem)
                     - 1
@@ -145,16 +177,20 @@ impl<'a> RabsDecoder<'a> {
 /// parses the leb128 alphabet size and per-symbol frequency table (with zero-run
 /// flags), rebuilds the decode tables, and drives a [`RansDecoder`] over the
 /// length-prefixed rANS payload.
-pub struct RansSymbolDecoder<'a, const RANS_PRECISION: usize> {
-    decoder: RansDecoder<'a, RANS_PRECISION>,
+pub struct RansSymbolDecoder<'a> {
+    decoder: RansDecoder<'a>,
 }
 
-impl<'a, const RANS_PRECISION: usize> RansSymbolDecoder<'a, RANS_PRECISION> {
+impl<'a> RansSymbolDecoder<'a> {
     /// Parses the frequency table and rANS payload from `reader`, leaving `reader`
     /// positioned immediately after the payload. `num_symbols_to_decode` sizes the
-    /// lookup strategy: long streams amortize the `2^RANS_PRECISION`-entry slot
+    /// lookup strategy: long streams amortize the `2^precision`-entry slot
     /// table, short ones decode faster with a binary search per symbol.
-    pub fn new(reader: &mut Reader<'a>, num_symbols_to_decode: usize) -> Result<Self, Err> {
+    pub fn new(
+        reader: &mut Reader<'a>,
+        num_symbols_to_decode: usize,
+        precision: usize,
+    ) -> Result<Self, Err> {
         let num_symbols = leb128_read(reader)? as usize;
         let mut freq_counts = vec![0usize; num_symbols];
 
@@ -179,16 +215,20 @@ impl<'a, const RANS_PRECISION: usize> RansSymbolDecoder<'a, RANS_PRECISION> {
             i += 1;
         }
 
-        let rans_symbols = rans_symbol_table::<RANS_PRECISION>(&freq_counts)?;
-        let use_lut = num_symbols_to_decode >= (1 << RANS_PRECISION) >> 6;
+        let rans_symbols = rans_symbol_table(&freq_counts, precision)?;
+        let use_lut = num_symbols_to_decode >= (1 << precision) >> 6;
 
         let payload_len = leb128_read(reader)? as usize;
+        // Branchless refill pays off once the refill byte count is unpredictable,
+        // which the stream's average bytes per symbol proxies well.
+        let refill_branchless = payload_len * 5 >= num_symbols_to_decode * 2;
         let rev = RevReader::new(reader.read_bytes(payload_len)?);
-        let decoder = RansDecoder::new(rev, rans_symbols, use_lut)?;
+        let decoder = RansDecoder::new(rev, rans_symbols, use_lut, refill_branchless, precision)?;
         Ok(RansSymbolDecoder { decoder })
     }
 
     /// Decodes the next symbol.
+    #[inline]
     pub fn decode(&mut self) -> usize {
         self.decoder.read()
     }
@@ -218,19 +258,22 @@ mod tests {
         assert_eq!(freq.iter().sum::<usize>(), 1 << 12);
         let symbols = vec![0usize, 1, 1, 2, 0, 1, 2, 2, 1, 0, 2, 1, 0, 0, 1];
 
-        let mut enc = RansCoder::<12>::new(freq.clone(), None).unwrap();
+        let mut enc = RansCoder::new(freq.clone(), None, 12).unwrap();
         for &s in symbols.iter().rev() {
             enc.write(s).unwrap();
         }
         let buffer = enc.flush().unwrap();
 
         for use_lut in [true, false] {
-            let rans_symbols = rans_symbol_table::<12>(&freq).unwrap();
-            let rev = RevReader::new(&buffer);
-            let mut dec = RansDecoder::<'_, 12>::new(rev, rans_symbols, use_lut).unwrap();
+            for refill_branchless in [true, false] {
+                let rans_symbols = rans_symbol_table(&freq, 12).unwrap();
+                let rev = RevReader::new(&buffer);
+                let mut dec =
+                    RansDecoder::new(rev, rans_symbols, use_lut, refill_branchless, 12).unwrap();
 
-            let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.read()).collect();
-            assert_eq!(decoded, symbols);
+                let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.read()).collect();
+                assert_eq!(decoded, symbols);
+            }
         }
     }
 
@@ -238,16 +281,14 @@ mod tests {
     fn rans_symbol_decoder_round_trip() {
         let symbols = vec![0usize, 1, 2, 1, 0, 3, 3, 2, 1, 0, 0, 1, 2, 3, 0, 3, 3, 1];
         let mut buf: Vec<u8> = Vec::new();
-        let mut enc =
-            RansSymbolEncoder::<'_, Vec<u8>, 5, 12>::new(&mut buf, histogram(&symbols), None)
-                .unwrap();
+        let mut enc = RansSymbolEncoder::new(&mut buf, histogram(&symbols), None, 12).unwrap();
         for &s in symbols.iter().rev() {
             enc.write(s).unwrap();
         }
         enc.flush().unwrap();
 
         let mut reader = Reader::new(&buf);
-        let mut dec = RansSymbolDecoder::<'_, 12>::new(&mut reader, symbols.len()).unwrap();
+        let mut dec = RansSymbolDecoder::new(&mut reader, symbols.len(), 12).unwrap();
         let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
         assert_eq!(decoded, symbols);
     }
@@ -257,16 +298,14 @@ mod tests {
         // A sparse alphabet exercises the zero-run flag in the frequency table.
         let symbols = vec![0usize, 9, 9, 0, 0, 9, 3, 3, 9, 0, 9, 9, 0, 3, 9];
         let mut buf: Vec<u8> = Vec::new();
-        let mut enc =
-            RansSymbolEncoder::<'_, Vec<u8>, 5, 12>::new(&mut buf, histogram(&symbols), None)
-                .unwrap();
+        let mut enc = RansSymbolEncoder::new(&mut buf, histogram(&symbols), None, 12).unwrap();
         for &s in symbols.iter().rev() {
             enc.write(s).unwrap();
         }
         enc.flush().unwrap();
 
         let mut reader = Reader::new(&buf);
-        let mut dec = RansSymbolDecoder::<'_, 12>::new(&mut reader, symbols.len()).unwrap();
+        let mut dec = RansSymbolDecoder::new(&mut reader, symbols.len(), 12).unwrap();
         let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
         assert_eq!(decoded, symbols);
     }
@@ -282,16 +321,14 @@ mod tests {
             symbols.push(x);
         }
         let mut buf: Vec<u8> = Vec::new();
-        let mut enc =
-            RansSymbolEncoder::<'_, Vec<u8>, 13, 20>::new(&mut buf, histogram(&symbols), None)
-                .unwrap();
+        let mut enc = RansSymbolEncoder::new(&mut buf, histogram(&symbols), None, 20).unwrap();
         for &s in symbols.iter().rev() {
             enc.write(s).unwrap();
         }
         enc.flush().unwrap();
 
         let mut reader = Reader::new(&buf);
-        let mut dec = RansSymbolDecoder::<'_, 20>::new(&mut reader, symbols.len()).unwrap();
+        let mut dec = RansSymbolDecoder::new(&mut reader, symbols.len(), 20).unwrap();
         let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
         assert_eq!(decoded, symbols);
     }
@@ -301,16 +338,14 @@ mod tests {
         // Every value identical: one symbol takes the whole probability mass.
         let symbols = vec![0usize; 20];
         let mut buf: Vec<u8> = Vec::new();
-        let mut enc =
-            RansSymbolEncoder::<'_, Vec<u8>, 5, 12>::new(&mut buf, histogram(&symbols), None)
-                .unwrap();
+        let mut enc = RansSymbolEncoder::new(&mut buf, histogram(&symbols), None, 12).unwrap();
         for &s in symbols.iter().rev() {
             enc.write(s).unwrap();
         }
         enc.flush().unwrap();
 
         let mut reader = Reader::new(&buf);
-        let mut dec = RansSymbolDecoder::<'_, 12>::new(&mut reader, symbols.len()).unwrap();
+        let mut dec = RansSymbolDecoder::new(&mut reader, symbols.len(), 12).unwrap();
         let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
         assert_eq!(decoded, symbols);
     }

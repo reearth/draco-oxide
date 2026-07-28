@@ -1,6 +1,6 @@
 # Geometric round-trip test: encode the Stanford bunny with draco-oxide, then
-# decode the same stream twice — once with Google Draco's reference decoder and
-# once with draco-oxide's own decoder — and measure how far each decoded surface
+# decode the same stream twice, once with Google Draco's reference decoder and
+# once with draco-oxide's own decoder, and measure how far each decoded surface
 # drifted from the original with the area-weighted symmetric surface-L2 (RMS)
 # metric (`L2Norm`).
 #

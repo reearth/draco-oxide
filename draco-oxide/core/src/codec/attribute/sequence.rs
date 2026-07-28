@@ -170,6 +170,7 @@ impl<'a, D: GenericAttributeDs> Traverser<'a, D> {
 impl<D: GenericAttributeDs> Iterator for Traverser<'_, D> {
     type Item = CornerIdx;
 
+    #[inline]
     fn next(&mut self) -> Option<CornerIdx> {
         if let Some(c) = self.pending.take() {
             return Some(c);

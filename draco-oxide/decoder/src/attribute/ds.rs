@@ -391,28 +391,55 @@ fn fan_vertices_general(
     let mut corner_to_point = UninitCornerMap::new(input.num_corners);
     let mut num_points = 0usize;
 
+    // The union of all seam sets, so classifying an edge is a single load
+    // instead of a scan over every set.
+    let mut union_seam: Vec<bool> = vec![false; input.num_corners];
+    for s in seam_sets {
+        for (u, &b) in union_seam.iter_mut().zip(s.iter()) {
+            *u |= b;
+        }
+    }
+
     let nav = FanNav::new(input.pos_ct, input.num_corners);
     let mut crossed_edge: Vec<usize> = Vec::new();
     let mut is_point_boundary: Vec<bool> = Vec::new();
     let mut point_of: Vec<usize> = Vec::new();
-    let mut starts: Vec<usize> = vec![0; num_outputs];
 
     for_each_fan(input, &nav, |fan, closed| {
         let m = fan.len();
+        // The sector-left-most corner of a fan no seam splits: the encoder's
+        // walk starts one right of the position-left-most corner on a closed
+        // fan (see `sector_start`), at the boundary corner on an open one.
+        let unsplit_start = if closed && m > 1 { 1 } else { 0 };
+
+        // Seam-free fan (the common case away from atlas cuts and creases):
+        // one point, and one whole-fan vertex for every attribute.
+        if fan.iter().all(|&c| !union_seam[usize::from(c.next())]) {
+            let pt = PointIdx::from(num_points);
+            num_points += 1;
+            for &c in fan {
+                // SAFETY: `fan` holds corner-table corners, all less than
+                // `num_corners`.
+                unsafe { corner_to_point.set(c, pt) };
+            }
+            for out in outputs.iter_mut() {
+                out.point_to_vertex
+                    .push(VertexIdx::from(out.vertex_to_left_most_corner.len()));
+                out.vertex_to_left_most_corner.push(fan[unsplit_start]);
+            }
+            return;
+        }
+
         crossed_edge.clear();
         crossed_edge.extend(fan.iter().map(|&c| usize::from(c.next())));
         is_point_boundary.clear();
-        is_point_boundary.extend(crossed_edge.iter().map(|&e| seam_sets.iter().any(|s| s[e])));
+        is_point_boundary.extend(crossed_edge.iter().map(|&e| union_seam[e]));
 
         // On an open fan every sector numbering starts at the
         // position-left-most corner itself.
         let union_start = if !closed {
-            starts.iter_mut().for_each(|s| *s = 0);
             0
         } else {
-            for (k, s) in starts.iter_mut().enumerate() {
-                *s = sector_start(|j| seam_sets[k][crossed_edge[j]], m);
-            }
             sector_start(|j| is_point_boundary[j], m)
         };
 
@@ -432,17 +459,27 @@ fn fan_vertices_general(
             // `num_corners`.
             unsafe { corner_to_point.set(fan[idx], PointIdx::from(cur_pt)) };
         }
-        for out in outputs.iter_mut() {
-            out.point_to_vertex.resize(num_points, VertexIdx::INVALID);
-        }
 
         // Attribute passes: number this attribute's sectors from its own start
         // and record the vertex once per point (point boundaries subsume every
-        // attribute's seams, so the vertex is constant between them).
+        // attribute's seams, so the vertex is constant between them). An
+        // attribute with no seam in this fan keeps one vertex across all of the
+        // fan's points and skips the sector walk.
         for (k, out) in outputs.iter_mut().enumerate() {
             let seams = seam_sets[k];
-            let s = starts[k];
-            let mut vert = VertexIdx::from(out.vertex_to_left_most_corner.len());
+            let vert = VertexIdx::from(out.vertex_to_left_most_corner.len());
+            if !crossed_edge.iter().any(|&e| seams[e]) {
+                out.vertex_to_left_most_corner.push(fan[unsplit_start]);
+                out.point_to_vertex.resize(num_points, vert);
+                continue;
+            }
+            let s = if !closed {
+                0
+            } else {
+                sector_start(|j| seams[crossed_edge[j]], m)
+            };
+            out.point_to_vertex.resize(num_points, VertexIdx::INVALID);
+            let mut vert = vert;
             out.vertex_to_left_most_corner.push(fan[s]);
             out.point_to_vertex[point_of[s]] = vert;
             for jj in 1..m {

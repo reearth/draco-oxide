@@ -1,5 +1,5 @@
 //! Connectivity decoding, dispatched on the encoder method. Only edgebreaker is
-//! handled for now; sequential connectivity arrives with Google interop.
+//! handled; sequential connectivity is not implemented.
 
 mod edgebreaker;
 

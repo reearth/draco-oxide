@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["draco-oxide", "draco-oxide/core", "draco-oxide/decoder", "cli", "analyzer", "tests", "bench"]
+members = ["draco-oxide", "draco-oxide/core", "draco-oxide/decoder", "cli", "analyzer", "tests", "bench", "wasm-size-probe"]
 
 # Shared metadata for the version-locked draco-oxide library crates
 # (draco-oxide, draco-oxide-core, draco-oxide-decoder). Bump `version` in one
@@ -19,3 +19,21 @@ repository = "https://github.com/reearth/draco-oxide"
 draco-oxide-core = { path = "draco-oxide/core", version = "0.1.0-alpha.8" }
 draco-oxide-decoder = { path = "draco-oxide/decoder", version = "0.1.0-alpha.8" }
 draco-nd-vector = { path = "draco-oxide/macros/draco-nd-vector", version = "0.0.0" }
+
+# Size-oriented profile for measuring (and shipping) the decoder's WASM
+# bundle: optimize for size, single codegen unit, fat LTO, no unwinding.
+[profile.wasm-size]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Speed-oriented WASM profile for the wasm decode benchmark: same shape but
+# optimized for speed, so measured times reflect a deployment built for speed.
+[profile.wasm-speed]
+inherits = "release"
+lto = true
+codegen-units = 1
+panic = "abort"

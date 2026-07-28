@@ -49,6 +49,39 @@ impl<'a> RevReader<'a> {
         Ok(u32::from_le_bytes(out))
     }
 
+    /// Renormalizes a rANS state: folds in tail bytes until `state >= l_base`
+    /// or the buffer runs dry, exactly as repeated [`Self::read_u8_back`] calls
+    /// would. `l_base` must be a power of two. The common case (at least 4
+    /// bytes left) computes the byte count from the state's bit length and
+    /// folds with a single 4-byte load instead of a data-dependent byte loop.
+    #[inline]
+    pub fn rans_refill(&mut self, state: usize, l_base: usize) -> usize {
+        let n = self.data.len();
+        if n >= 4 {
+            let l_bits = l_base.trailing_zeros() as usize;
+            // `state | 1` guards the (malformed-stream-only) state == 0 case;
+            // it never changes the bit length of a live state, which is >= 4
+            // whenever bytes remain.
+            let msb = 63 - (state | 1).leading_zeros() as usize;
+            // Smallest k with the refilled bit length reaching l_bits; k <= 3
+            // because states stay below l_base << 8 = 2^(l_bits + 8).
+            let k = (l_bits.saturating_sub(msb) + 7) >> 3;
+            let w = u32::from_le_bytes(self.data[n - 4..n].try_into().unwrap()) as u64;
+            let pulled = (w >> (32 - 8 * k)) as usize;
+            self.data = &self.data[..n - k];
+            (state << (8 * k)) | pulled
+        } else {
+            let mut state = state;
+            while state < l_base {
+                match self.read_u8_back() {
+                    Ok(byte) => state = (state << 8) | byte as usize,
+                    Err(_) => break,
+                }
+            }
+            state
+        }
+    }
+
     pub fn read_u64_back(&mut self) -> Result<u64, ReaderErr> {
         let mut out = [
             self.read_u8_back()?,

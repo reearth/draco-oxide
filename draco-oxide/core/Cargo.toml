@@ -16,6 +16,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.12"
 paste = "1.0"
+# Used by code the `draco-nd-vector` proc-macro expands into this crate, not by
+# any source file here.
 seq-macro = "0.3.6"
 kiddo = "5.2.4"
 # Enabled only by the `test-util` feature (for the Laplacian connectivity check).

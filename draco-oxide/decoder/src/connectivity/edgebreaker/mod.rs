@@ -8,7 +8,6 @@ use super::Connectivity;
 use crate::Err;
 use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::mesh::ds::CornerTable;
-use draco_oxide_core::types::CornerIdx;
 use draco_oxide_core::utils::bit_coder::leb128_read;
 
 use reconstruct::reconstruct;
@@ -31,7 +30,8 @@ struct Counts {
 }
 
 /// Decodes edgebreaker connectivity from `reader`, positioned just after the header
-/// (and metadata). Leaves the reader at the start of the attribute section.
+/// (and metadata). Leaves the reader at the start of the attribute section. Handles
+/// the standard and valence traversals; any other traversal id is unimplemented.
 pub fn decode(reader: &mut Reader<'_>) -> Result<Connectivity, Err> {
     let traversal_type = reader.read_u8()?;
 
@@ -61,7 +61,6 @@ pub fn decode(reader: &mut Reader<'_>) -> Result<Connectivity, Err> {
             )?;
             decode_with(traversal, &counts, splits)
         }
-        // Predictive traversal decode arrives with Google interop.
         _ => Err(Err::Unimplemented),
     }
 }
@@ -84,12 +83,7 @@ fn decode_with<T: TraversalDecoder>(
         splits,
     )?;
 
-    let attribute_seams = decode_attribute_seams(
-        &recon.opposite,
-        counts.num_faces,
-        counts.num_attribute_data,
-        &mut traversal,
-    );
+    let attribute_seams = traversal.decode_attribute_seams(&recon.opposite, counts.num_faces);
 
     Ok(Connectivity {
         corner_table: CornerTable::from_opposite_sentinels(recon.opposite),
@@ -102,56 +96,4 @@ fn decode_with<T: TraversalDecoder>(
         init_corners: recon.init_corners,
         attribute_seams,
     })
-}
-
-/// Decodes the per-attribute seam edges (port of Google's
-/// `DecodeAttributeConnectivitiesOnFace`, run over every face in order). Returns,
-/// per attribute, the `is_edge_on_seam` flag for each corner: a boundary edge is an
-/// automatic seam for every attribute and reads no bit; an interior edge decodes one
-/// seam bit per attribute, processed once from its lower-id face. Both corners of a
-/// seam edge are marked, matching `AddSeamEdge`.
-fn decode_attribute_seams(
-    opposite: &[CornerIdx],
-    num_faces: usize,
-    num_attribute_data: usize,
-    traversal: &mut impl TraversalDecoder,
-) -> Vec<Vec<bool>> {
-    let num_corners = num_faces * 3;
-    let mut is_seam = vec![vec![false; num_corners]; num_attribute_data];
-    if num_attribute_data == 0 {
-        return is_seam;
-    }
-
-    let mark = |seam: &mut [bool], c: CornerIdx| {
-        seam[usize::from(c)] = true;
-        let opp = opposite[usize::from(c)];
-        if opp != CornerIdx::INVALID {
-            seam[usize::from(opp)] = true;
-        }
-    };
-
-    for f in 0..num_faces {
-        let corner = CornerIdx::from(3 * f);
-        for c in [corner, corner.next(), corner.previous()] {
-            let opp = opposite[usize::from(c)];
-            if opp == CornerIdx::INVALID {
-                // Boundary edge: an automatic seam for every attribute, no bit.
-                for seam in is_seam.iter_mut() {
-                    mark(seam, c);
-                }
-                continue;
-            }
-            // Each shared edge is decoded once, from its lower-id face.
-            if usize::from(opp.face_idx()) < f {
-                continue;
-            }
-            for (i, seam) in is_seam.iter_mut().enumerate() {
-                if traversal.decode_attribute_seam(i) {
-                    mark(seam, c);
-                }
-            }
-        }
-    }
-
-    is_seam
 }

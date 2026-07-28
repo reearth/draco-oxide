@@ -7,24 +7,10 @@ default-run = "bench"
 
 [dependencies]
 draco-oxide = { path = "../draco-oxide" }
-pprof = { version = "0.13", features = ["flamegraph"], optional = true }
-
-[features]
-profiling = ["dep:pprof"]
 
 [[bin]]
 name = "bench"
 path = "src/main.rs"
-
-[[bin]]
-name = "profile-decode"
-path = "src/bin/profile_decode.rs"
-required-features = ["profiling"]
-
-[[bin]]
-name = "profile-decode-draco"
-path = "src/bin/profile_decode_draco.rs"
-required-features = ["profiling"]
 
 [build-dependencies]
 cc = "1"

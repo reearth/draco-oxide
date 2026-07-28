@@ -119,6 +119,7 @@ impl<'a> AttributeDS<'a> {
         &self.corner_table
     }
 
+    #[inline]
     pub fn is_on_boundary(&self, vertex: VertexIdx) -> bool {
         let left_most_corner = self.left_most_corner(vertex);
         self.corner_table.swing_left(left_most_corner).is_none()
@@ -230,6 +231,7 @@ pub trait GenericAttributeDs {
 
     /// Whether `vertex` lies on an open (boundary) fan, i.e. swinging left from
     /// its left-most corner reaches the fan's boundary.
+    #[inline]
     fn is_on_boundary(&self, vertex: VertexIdx) -> bool {
         let left_most_corner = self.left_most_corner(vertex);
         self.corner_table().swing_left(left_most_corner).is_none()
@@ -501,24 +503,29 @@ where
 pub trait GenericCornerTable {
     fn opposite(&self, corner: CornerIdx) -> Option<CornerIdx>;
 
+    #[inline]
     fn swing_right(&self, corner: CornerIdx) -> Option<CornerIdx> {
         self.opposite(corner.previous()).map(CornerIdx::previous)
     }
 
+    #[inline]
     fn swing_left(&self, corner: CornerIdx) -> Option<CornerIdx> {
         self.opposite(corner.next()).map(CornerIdx::next)
     }
 
+    #[inline]
     fn get_left_corner(&self, corner: CornerIdx) -> Option<CornerIdx> {
         self.opposite(corner.previous())
     }
 
+    #[inline]
     fn get_right_corner(&self, corner: CornerIdx) -> Option<CornerIdx> {
         self.opposite(corner.next())
     }
 
     /// Same as [`Self::swing_right`], but takes the corner's face index.
     /// `face` must equal `corner.face_idx()`.
+    #[inline]
     fn swing_right_with_face_idx(&self, corner: CornerIdx, face: FaceIdx) -> Option<CornerIdx> {
         self.opposite(corner.previous_with_face_idx(face))
             .map(CornerIdx::previous)
@@ -526,6 +533,7 @@ pub trait GenericCornerTable {
 
     /// Same as [`Self::swing_left`], but takes the corner's face index.
     /// `face` must equal `corner.face_idx()`.
+    #[inline]
     fn swing_left_with_face_idx(&self, corner: CornerIdx, face: FaceIdx) -> Option<CornerIdx> {
         self.opposite(corner.next_with_face_idx(face))
             .map(CornerIdx::next)
@@ -533,12 +541,14 @@ pub trait GenericCornerTable {
 
     /// Same as [`Self::get_left_corner`], but takes the corner's face index.
     /// `face` must equal `corner.face_idx()`.
+    #[inline]
     fn get_left_corner_with_face_idx(&self, corner: CornerIdx, face: FaceIdx) -> Option<CornerIdx> {
         self.opposite(corner.previous_with_face_idx(face))
     }
 
     /// Same as [`Self::get_right_corner`], but takes the corner's face index.
     /// `face` must equal `corner.face_idx()`.
+    #[inline]
     fn get_right_corner_with_face_idx(
         &self,
         corner: CornerIdx,

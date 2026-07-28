@@ -1,55 +1,55 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="462" viewBox="0 0 760 462" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12">
-<rect width="760" height="462" fill="#fcfcfb"/>
-<text x="16" y="24" font-size="15" font-weight="600" fill="#1a1a19">Encode speed</text>
-<text x="16" y="42" fill="#5f5e56">input MB/s (raw geometry consumed per second) — higher is better</text>
-<rect x="588.0" y="16" width="10" height="10" rx="2" fill="#2a78d6"/>
-<text x="602.0" y="25" fill="#1a1a19">draco-oxide</text>
-<rect x="687.0" y="16" width="10" height="10" rx="2" fill="#008300"/>
-<text x="701.0" y="25" fill="#1a1a19">Draco</text>
-<line x1="178" y1="58.0" x2="178" y2="448.0" stroke="#d9d8d0" stroke-width="1"/>
-<text x="170.0" y="83.0" text-anchor="end" fill="#1a1a19">ABeautifulGame (P, N, T)</text>
-<path d="M178.0 64.0 h24.9 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-24.9 Z" fill="#2a78d6"/>
-<text x="212.9" y="75.0" fill="#5f5e56">11.4</text>
-<path d="M178.0 80.0 h130.6 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-130.6 Z" fill="#008300"/>
-<text x="318.6" y="91.0" fill="#5f5e56">53.0</text>
-<text x="170.0" y="127.0" text-anchor="end" fill="#1a1a19">DragonAttenuation (P, N, T)</text>
-<path d="M178.0 108.0 h75.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-75.2 Z" fill="#2a78d6"/>
-<text x="263.2" y="119.0" fill="#5f5e56">31.2</text>
-<path d="M178.0 124.0 h159.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-159.2 Z" fill="#008300"/>
-<text x="347.2" y="135.0" fill="#5f5e56">64.2</text>
-<text x="170.0" y="171.0" text-anchor="end" fill="#1a1a19">bunny (P, N)</text>
-<path d="M178.0 152.0 h74.6 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-74.6 Z" fill="#2a78d6"/>
-<text x="262.6" y="163.0" fill="#5f5e56">30.9</text>
-<path d="M178.0 168.0 h215.8 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-215.8 Z" fill="#008300"/>
-<text x="403.8" y="179.0" fill="#5f5e56">86.5</text>
-<text x="170.0" y="215.0" text-anchor="end" fill="#1a1a19">Duck (P, N, T)</text>
-<path d="M178.0 196.0 h104.7 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-104.7 Z" fill="#2a78d6"/>
-<text x="292.7" y="207.0" fill="#5f5e56">42.8</text>
-<path d="M178.0 212.0 h210.7 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-210.7 Z" fill="#008300"/>
-<text x="398.7" y="223.0" fill="#5f5e56">84.5</text>
-<text x="170.0" y="259.0" text-anchor="end" fill="#1a1a19">torus (P)</text>
-<path d="M178.0 240.0 h98.6 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-98.6 Z" fill="#2a78d6"/>
-<text x="286.6" y="251.0" fill="#5f5e56">40.4</text>
-<path d="M178.0 256.0 h498.0 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-498.0 Z" fill="#008300"/>
-<text x="686.0" y="267.0" fill="#5f5e56">198</text>
-<text x="170.0" y="303.0" text-anchor="end" fill="#1a1a19">bldg_894e93d9 (P, N)</text>
-<path d="M178.0 284.0 h73.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-73.2 Z" fill="#2a78d6"/>
-<text x="261.2" y="295.0" fill="#5f5e56">30.4</text>
-<path d="M178.0 300.0 h200.9 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-200.9 Z" fill="#008300"/>
-<text x="388.9" y="311.0" fill="#5f5e56">80.7</text>
-<text x="170.0" y="347.0" text-anchor="end" fill="#1a1a19">sphere (P, N)</text>
-<path d="M178.0 328.0 h73.4 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-73.4 Z" fill="#2a78d6"/>
-<text x="261.4" y="339.0" fill="#5f5e56">30.5</text>
-<path d="M178.0 344.0 h160.4 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-160.4 Z" fill="#008300"/>
-<text x="348.4" y="355.0" fill="#5f5e56">64.7</text>
-<text x="170.0" y="391.0" text-anchor="end" fill="#1a1a19">punctured_sphere (P, N)</text>
-<path d="M178.0 372.0 h78.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-78.3 Z" fill="#2a78d6"/>
-<text x="266.3" y="383.0" fill="#5f5e56">32.4</text>
-<path d="M178.0 388.0 h159.5 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-159.5 Z" fill="#008300"/>
-<text x="347.5" y="399.0" fill="#5f5e56">64.4</text>
-<text x="170.0" y="435.0" text-anchor="end" fill="#1a1a19">cube_quads (P, N, T)</text>
-<path d="M178.0 416.0 h68.7 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-68.7 Z" fill="#2a78d6"/>
-<text x="256.7" y="427.0" fill="#5f5e56">28.6</text>
-<path d="M178.0 432.0 h80.9 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-80.9 Z" fill="#008300"/>
-<text x="268.9" y="443.0" fill="#5f5e56">33.4</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="398" viewBox="0 0 760 398" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12">
+<defs>
+<linearGradient id="bar0" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#58a6ff" stop-opacity="0.55"/><stop offset="1" stop-color="#58a6ff"/></linearGradient>
+<linearGradient id="bar1" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3fb950" stop-opacity="0.55"/><stop offset="1" stop-color="#3fb950"/></linearGradient>
+</defs>
+<rect x="0.5" y="0.5" width="759" height="397" rx="10" fill="#0d1117" stroke="#30363d"/>
+<text x="16" y="24" font-size="15" font-weight="600" fill="#e6edf3">Encode speed</text>
+<text x="16" y="42" fill="#9198a1">input MB/s (raw geometry consumed per second) — higher is better</text>
+<rect x="588.0" y="16" width="10" height="10" rx="2" fill="#58a6ff"/>
+<text x="602.0" y="25" fill="#e6edf3">draco-oxide</text>
+<rect x="687.0" y="16" width="10" height="10" rx="2" fill="#3fb950"/>
+<text x="701.0" y="25" fill="#e6edf3">Draco</text>
+<line x1="311.9" y1="58.0" x2="311.9" y2="364.0" stroke="#21262d" stroke-width="1"/>
+<text x="311.9" y="379.0" text-anchor="middle" fill="#9198a1">50</text>
+<line x1="445.9" y1="58.0" x2="445.9" y2="364.0" stroke="#21262d" stroke-width="1"/>
+<text x="445.9" y="379.0" text-anchor="middle" fill="#9198a1">100</text>
+<line x1="579.8" y1="58.0" x2="579.8" y2="364.0" stroke="#21262d" stroke-width="1"/>
+<text x="579.8" y="379.0" text-anchor="middle" fill="#9198a1">150</text>
+<line x1="178" y1="58.0" x2="178" y2="364.0" stroke="#3d444d" stroke-width="1"/>
+<text x="170.0" y="83.0" text-anchor="end" fill="#e6edf3">DragonAttenuation (P, N, T)</text>
+<path d="M178.0 64.0 h73.9 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-73.9 Z" fill="url(#bar0)"/>
+<text x="261.9" y="75.0" fill="#9198a1">29.1</text>
+<path d="M178.0 80.0 h161.6 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-161.6 Z" fill="url(#bar1)"/>
+<text x="349.6" y="91.0" fill="#9198a1">61.8</text>
+<text x="170.0" y="127.0" text-anchor="end" fill="#e6edf3">bunny (P, N)</text>
+<path d="M178.0 108.0 h87.9 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-87.9 Z" fill="url(#bar0)"/>
+<text x="275.9" y="119.0" fill="#9198a1">34.3</text>
+<path d="M178.0 124.0 h233.0 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-233.0 Z" fill="url(#bar1)"/>
+<text x="421.0" y="135.0" fill="#9198a1">88.5</text>
+<text x="170.0" y="171.0" text-anchor="end" fill="#e6edf3">Duck (P, N, T)</text>
+<path d="M178.0 152.0 h109.1 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-109.1 Z" fill="url(#bar0)"/>
+<text x="297.1" y="163.0" fill="#9198a1">42.2</text>
+<path d="M178.0 168.0 h213.0 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-213.0 Z" fill="url(#bar1)"/>
+<text x="401.0" y="179.0" fill="#9198a1">81.0</text>
+<text x="170.0" y="215.0" text-anchor="end" fill="#e6edf3">torus (P)</text>
+<path d="M178.0 196.0 h97.6 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-97.6 Z" fill="url(#bar0)"/>
+<text x="285.6" y="207.0" fill="#9198a1">37.9</text>
+<path d="M178.0 212.0 h498.0 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-498.0 Z" fill="url(#bar1)"/>
+<text x="686.0" y="223.0" fill="#9198a1">187</text>
+<text x="170.0" y="259.0" text-anchor="end" fill="#e6edf3">bldg_894e93d9 (P, N)</text>
+<path d="M178.0 240.0 h71.1 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-71.1 Z" fill="url(#bar0)"/>
+<text x="259.1" y="251.0" fill="#9198a1">28.1</text>
+<path d="M178.0 256.0 h199.5 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-199.5 Z" fill="url(#bar1)"/>
+<text x="387.5" y="267.0" fill="#9198a1">76.0</text>
+<text x="170.0" y="303.0" text-anchor="end" fill="#e6edf3">sphere (P, N)</text>
+<path d="M178.0 284.0 h69.7 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-69.7 Z" fill="url(#bar0)"/>
+<text x="257.7" y="295.0" fill="#9198a1">27.5</text>
+<path d="M178.0 300.0 h156.9 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-156.9 Z" fill="url(#bar1)"/>
+<text x="344.9" y="311.0" fill="#9198a1">60.1</text>
+<text x="170.0" y="347.0" text-anchor="end" fill="#e6edf3">cube_quads (P, N, T)</text>
+<path d="M178.0 328.0 h65.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-65.3 Z" fill="url(#bar0)"/>
+<text x="253.3" y="339.0" fill="#9198a1">25.9</text>
+<path d="M178.0 344.0 h75.9 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-75.9 Z" fill="url(#bar1)"/>
+<text x="263.9" y="355.0" fill="#9198a1">29.8</text>
 </svg>

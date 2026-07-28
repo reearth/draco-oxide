@@ -1,12 +1,15 @@
 //! Benchmark of draco-oxide against Google Draco over the meshes in
-//! `tests/data`, measuring encode/decode speed and compression ratio. Writes a
-//! single markdown report (`bench/report.md`) with SVG charts (`bench/assets/`).
+//! `tests/data`, measuring encode/decode speed and compression ratio. Renders
+//! SVG charts into `bench/assets/` and splices a markdown report into
+//! `bench/README.md`.
 //!
 //! Both codecs run in-process and are timed with the same harness: Google Draco
 //! is linked as `libdraco` through the C shim in `shim.cc` (built by
 //! `scripts/build-draco.sh`; override with `DRACO_SRC_DIR`/`DRACO_BUILD_DIR`).
-//! Run with `cargo run -p bench --release`.
+//! Run with `cargo run -p bench --release`. Pass `--local` to also bench the
+//! OBJ files in the git-ignored `tests/data/local/` directory.
 
+mod alloc_track;
 mod chart;
 
 use draco_oxide::core::attribute::AttributeType;
@@ -17,11 +20,24 @@ use draco_oxide::io::obj::load_obj;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+#[global_allocator]
+static ALLOC: alloc_track::TrackingAlloc = alloc_track::TrackingAlloc;
+
 /// Per-codec measurements for one mesh, in milliseconds.
 struct CodecResult {
     encode_ms: f64,
     decode_ms: f64,
     compressed_bytes: usize,
+    /// Exact heap-byte stats of one encode (tracking allocator); oxide only,
+    /// the C++ side does not allocate through the Rust allocator. Relative to
+    /// the input mesh, which is held before the window opens.
+    encode_heap: Option<alloc_track::HeapStats>,
+    /// Peak additional RSS of one encode in a fresh subprocess, in bytes.
+    encode_peak_rss: Option<usize>,
+    /// Exact heap-byte stats of one decode (tracking allocator); oxide only.
+    decode_heap: Option<alloc_track::HeapStats>,
+    /// Peak additional RSS of one decode in a fresh subprocess, in bytes.
+    decode_peak_rss: Option<usize>,
 }
 
 struct MeshBench {
@@ -124,8 +140,16 @@ mod draco_ffi {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 4 && args[1] == "--mem-child" {
+        mem_child(&args[2], Path::new(&args[3]));
+        return;
+    }
+    let include_local = args.iter().skip(1).any(|a| a == "--local");
+
     #[cfg(not(have_libdraco))]
     {
+        let _ = include_local;
         eprintln!(
             "bench was built without libdraco. Run scripts/build-draco.sh (or set \
              DRACO_SRC_DIR / DRACO_BUILD_DIR) and rebuild."
@@ -134,11 +158,86 @@ fn main() {
     }
 
     #[cfg(have_libdraco)]
+    run(include_local);
+}
+
+/// Subprocess mode for the peak-RSS measurement: runs one decode (input is a
+/// compressed stream) or one encode (input is an OBJ) in this fresh process and
+/// prints its additional peak RSS in bytes. The input is loaded before the
+/// high-water mark is reset, so only what the measured operation adds counts.
+fn mem_child(codec: &str, input: &Path) {
+    let run: Box<dyn FnOnce()> = match codec {
+        "oxide" => {
+            let bytes = std::fs::read(input).expect("read drc");
+            Box::new(move || {
+                let decoded = draco_oxide::decode::decode(&bytes).expect("oxide decode");
+                std::hint::black_box(&decoded);
+            })
+        }
+        "oxide-enc" => {
+            let mesh = load_obj(input.to_str().expect("obj path")).expect("obj load");
+            Box::new(move || {
+                let mut out = Vec::new();
+                encode(mesh, &mut out, Config::default()).expect("oxide encode");
+                std::hint::black_box(&out);
+            })
+        }
+        #[cfg(have_libdraco)]
+        "draco" => {
+            let bytes = std::fs::read(input).expect("read drc");
+            Box::new(move || assert!(draco_ffi::decode(&bytes), "draco decode failed"))
+        }
+        #[cfg(have_libdraco)]
+        "draco-enc" => {
+            let mesh = draco_ffi::load_obj(input).expect("obj load");
+            Box::new(move || assert!(draco_ffi::encode_discard(&mesh), "draco encode failed"))
+        }
+        other => panic!("unknown mem-child codec: {other}"),
+    };
+    // Resetting the kernel's RSS high-water mark makes VmHWM track only what
+    // the operation below adds.
+    std::fs::write("/proc/self/clear_refs", "5").expect("reset VmHWM");
+    let baseline = read_vm_hwm_bytes().expect("read VmHWM");
     run();
+    let peak = read_vm_hwm_bytes().expect("read VmHWM");
+    println!("{}", peak.saturating_sub(baseline));
+}
+
+/// The process's RSS high-water mark (`VmHWM`) in bytes.
+fn read_vm_hwm_bytes() -> Option<usize> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
+    let kb: usize = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb * 1024)
+}
+
+/// Runs a `--mem-child` subprocess over `input` and returns the printed peak
+/// additional RSS in bytes.
+fn mem_child_rss(codec: &str, input: &Path) -> Option<usize> {
+    let exe = std::env::current_exe().ok()?;
+    let out = std::process::Command::new(exe)
+        .arg("--mem-child")
+        .arg(codec)
+        .arg(input)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// `mem_child_rss` over an in-memory compressed stream (the decode modes).
+fn peak_rss_via_child(codec: &str, drc_bytes: &[u8]) -> Option<usize> {
+    let path = std::env::temp_dir().join(format!("draco-bench-mem-{}.drc", std::process::id()));
+    std::fs::write(&path, drc_bytes).ok()?;
+    let rss = mem_child_rss(codec, &path);
+    let _ = std::fs::remove_file(&path);
+    rss
 }
 
 #[cfg(have_libdraco)]
-fn run() {
+fn run(include_local: bool) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -148,30 +247,49 @@ fn run() {
     let assets_dir = bench_dir.join("assets");
     std::fs::create_dir_all(&assets_dir).expect("create bench/assets");
 
-    // Excluded: pathological_* are timeout regression fixtures, not
-    // representative inputs; mobius is not encoded correctly by Draco (a
-    // non-orientable comparison would be meaningless); the cube_flat, open_box,
-    // tetrahedron, and groove_fan meshes are too small to time meaningfully.
-    let excluded = [
-        "mobius",
-        "cube_flat",
-        "cube_flat_random_normals",
-        "open_box",
-        "tetrahedron",
-        "groove_fan",
+    // The benched subset of tests/data. The rest of the directory is
+    // regression fixtures (pathological_*, tiny synthetic shapes) or meshes
+    // Draco cannot encode for a fair comparison (mobius, non-orientable).
+    let included = [
+        "DragonAttenuation",
+        "Duck",
+        "bldg_894e93d9",
+        "bunny",
+        "cube_quads",
+        "sphere",
+        "torus",
     ];
-    let mut objs: Vec<PathBuf> = std::fs::read_dir(&data_dir)
-        .expect("read tests/data")
-        .filter_map(|e| {
-            let p = e.ok()?.path();
-            if p.extension()? != "obj" {
+    let mut objs: Vec<PathBuf> = included
+        .iter()
+        .filter_map(|name| {
+            let p = data_dir.join(format!("{name}.obj"));
+            if !p.exists() {
+                eprintln!("skipping {name}: {} not found", p.display());
                 return None;
             }
-            let stem = p.file_stem()?.to_string_lossy().into_owned();
-            (!stem.starts_with("pathological") && !excluded.contains(&stem.as_str())).then_some(p)
+            Some(p)
         })
         .collect();
-    objs.sort();
+    if include_local {
+        let local_dir = data_dir.join("local");
+        if let Ok(entries) = std::fs::read_dir(&local_dir) {
+            let stems: Vec<_> = objs
+                .iter()
+                .filter_map(|p| Some(p.file_stem()?.to_os_string()))
+                .collect();
+            objs.extend(entries.filter_map(|e| {
+                let p = e.ok()?.path();
+                if p.extension()? != "obj" {
+                    return None;
+                }
+                let stem = p.file_stem()?.to_os_string();
+                (!stems.contains(&stem)).then_some(p)
+            }));
+        } else {
+            eprintln!("--local: no {} directory, skipping", local_dir.display());
+        }
+    }
+    objs.sort_by_key(|p| p.file_stem().map(|s| s.to_os_string()));
 
     let mut results: Vec<MeshBench> = Vec::new();
     for obj in &objs {
@@ -188,7 +306,7 @@ fn run() {
         let raw_bytes = raw_geometry_bytes(&mesh);
         let attrs = attr_summary(&mesh);
 
-        let oxide = bench_oxide(&mesh);
+        let oxide = bench_oxide(&mesh, obj);
         let draco = match bench_draco(obj) {
             Ok(d) => d,
             Err(e) => {
@@ -211,10 +329,39 @@ fn run() {
     results.sort_by_key(|r| std::cmp::Reverse(r.faces));
 
     write_charts(&assets_dir, &results);
-    let report = render_report(&results);
-    let report_path = bench_dir.join("report.md");
-    std::fs::write(&report_path, report).expect("write report");
-    eprintln!("report written to {}", report_path.display());
+    let report = render_report(&results, include_local);
+    splice_report_into_readme(&bench_dir, &report);
+}
+
+/// Replaces the region between the report markers in `bench/README.md` with
+/// the freshly generated report, so the README always shows the latest run.
+fn splice_report_into_readme(bench_dir: &Path, report: &str) {
+    const START: &str = "<!-- report:start -->";
+    const END: &str = "<!-- report:end -->";
+    let path = bench_dir.join("README.md");
+    let Ok(readme) = std::fs::read_to_string(&path) else {
+        eprintln!("{} not found; skipping README update", path.display());
+        return;
+    };
+    let (Some(start), Some(end)) = (readme.find(START), readme.find(END)) else {
+        eprintln!("report markers missing in {}; skipping", path.display());
+        return;
+    };
+    if end < start {
+        eprintln!(
+            "report markers out of order in {}; skipping",
+            path.display()
+        );
+        return;
+    }
+    let updated = format!(
+        "{}\n{}{}",
+        &readme[..start + START.len()],
+        report,
+        &readme[end..]
+    );
+    std::fs::write(&path, updated).expect("write bench/README.md");
+    eprintln!("report spliced into {}", path.display());
 }
 
 /// The uncompressed size of the geometry both codecs start from: every
@@ -244,7 +391,7 @@ fn time_median_ms<F: FnMut()>(mut f: F) -> f64 {
     samples[samples.len() / 2]
 }
 
-fn bench_oxide(mesh: &Mesh) -> CodecResult {
+fn bench_oxide(mesh: &Mesh, obj: &Path) -> CodecResult {
     let mut buffer = Vec::new();
     encode(mesh.clone(), &mut buffer, Config::default()).expect("draco-oxide encode");
     let compressed_bytes = buffer.len();
@@ -260,10 +407,28 @@ fn bench_oxide(mesh: &Mesh) -> CodecResult {
         draco_oxide::decode::decode(&buffer).expect("draco-oxide decode");
     });
 
+    // The input clone happens before the window opens, so the stats are memory
+    // on top of the held input mesh, matching the subprocess RSS delta.
+    let mesh_for_heap = mesh.clone();
+    alloc_track::start_window();
+    let mut encoded = Vec::new();
+    encode(mesh_for_heap, &mut encoded, Config::default()).expect("draco-oxide encode");
+    let encode_heap = alloc_track::end_window();
+    drop(encoded);
+
+    alloc_track::start_window();
+    let decoded = draco_oxide::decode::decode(&buffer).expect("draco-oxide decode");
+    let decode_heap = alloc_track::end_window();
+    drop(decoded);
+
     CodecResult {
         encode_ms,
         decode_ms,
         compressed_bytes,
+        encode_heap: Some(encode_heap),
+        encode_peak_rss: mem_child_rss("oxide-enc", obj),
+        decode_heap: Some(decode_heap),
+        decode_peak_rss: peak_rss_via_child("oxide", &buffer),
     }
 }
 
@@ -287,11 +452,15 @@ fn bench_draco(obj: &Path) -> Result<CodecResult, String> {
         encode_ms,
         decode_ms,
         compressed_bytes,
+        encode_heap: None,
+        encode_peak_rss: mem_child_rss("draco-enc", obj),
+        decode_heap: None,
+        decode_peak_rss: peak_rss_via_child("draco", &encoded),
     })
 }
 
-const OXIDE_COLOR: &str = "#2a78d6";
-const DRACO_COLOR: &str = "#008300";
+const OXIDE_COLOR: &str = "#58a6ff";
+const DRACO_COLOR: &str = "#3fb950";
 
 fn write_charts(assets_dir: &Path, results: &[MeshBench]) {
     let categories: Vec<String> = results.iter().map(|r| r.label()).collect();
@@ -368,6 +537,50 @@ fn write_charts(assets_dir: &Path, results: &[MeshBench]) {
         ),
     );
     std::fs::write(assets_dir.join("decode-speed.svg"), decode_chart).unwrap();
+
+    // Peak-RSS is the one memory metric measured identically for both codecs
+    // (fresh subprocess per decode), so it is the comparable chart. Normalized
+    // by the decoded output size so meshes share an axis. Peaks under 5 MB are
+    // dropped from the chart: there the ~1 MB process-baseline RSS noise
+    // dominates the ratio (the table still lists them).
+    let ratio = |bytes: Option<usize>, raw: usize| {
+        bytes
+            .filter(|&b| b >= 5_000_000)
+            .map(|b| b as f64 / raw as f64)
+    };
+    let memory_chart = chart::grouped_bar_svg(
+        "Decode memory",
+        "peak additional RSS of one decode / decoded geometry bytes — lower is better",
+        &categories,
+        &two_series(
+            results
+                .iter()
+                .map(|r| ratio(r.oxide.decode_peak_rss, r.raw_bytes))
+                .collect(),
+            results
+                .iter()
+                .map(|r| ratio(r.draco.decode_peak_rss, r.raw_bytes))
+                .collect(),
+        ),
+    );
+    std::fs::write(assets_dir.join("decode-memory.svg"), memory_chart).unwrap();
+
+    let encode_memory_chart = chart::grouped_bar_svg(
+        "Encode memory",
+        "peak additional RSS of one encode / raw geometry bytes — lower is better",
+        &categories,
+        &two_series(
+            results
+                .iter()
+                .map(|r| ratio(r.oxide.encode_peak_rss, r.raw_bytes))
+                .collect(),
+            results
+                .iter()
+                .map(|r| ratio(r.draco.encode_peak_rss, r.raw_bytes))
+                .collect(),
+        ),
+    );
+    std::fs::write(assets_dir.join("encode-memory.svg"), encode_memory_chart).unwrap();
 }
 
 fn fmt_ms(ms: f64) -> String {
@@ -386,19 +599,55 @@ fn fmt_kb(bytes: usize) -> String {
     format!("{:.1}", bytes as f64 / 1024.0)
 }
 
-fn render_report(results: &[MeshBench]) -> String {
-    let mut md = String::new();
-    md.push_str("# draco-oxide vs Google Draco — benchmark\n\n");
-    md.push_str(&format!(
-        "Generated by `cargo run -p bench --release` on {}.\n\n",
-        hostname_summary()
-    ));
+/// Appends one memory table (heap stats for oxide, peak RSS for both codecs),
+/// with every value normalized by the mesh's raw geometry size. `row` selects
+/// the encode or decode fields.
+fn push_memory_table<F>(md: &mut String, results: &[MeshBench], row: F)
+where
+    F: Fn(
+        &MeshBench,
+    ) -> (
+        Option<&alloc_track::HeapStats>,
+        Option<usize>,
+        Option<usize>,
+    ),
+{
     md.push_str(
-        "Both codecs run in-process with the same timing harness and matching \
-         settings: edgebreaker connectivity, 11-bit positions, 10-bit texture \
-         coordinates, 8-bit octahedral normals (Draco at compression level 7, its \
-         CLI default).\n\n",
+        "| mesh | oxide heap peak | oxide heap avg | oxide heap RMS | \
+         oxide peak RSS | Draco peak RSS |\n",
     );
+    md.push_str("|---|--:|--:|--:|--:|--:|\n");
+    for r in results {
+        let (heap, oxide_rss, draco_rss) = row(r);
+        let norm = |bytes: f64| format!("{:.2}", bytes / r.raw_bytes as f64);
+        let heap_cols = heap.map_or("n/a | n/a | n/a".into(), |h| {
+            format!(
+                "{} | {} | {}",
+                norm(h.peak as f64),
+                norm(h.avg),
+                norm(h.rms)
+            )
+        });
+        let rss_col = |rss: Option<usize>| rss.map_or("n/a".into(), |b| norm(b as f64));
+        md.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            r.label(),
+            heap_cols,
+            rss_col(oxide_rss),
+            rss_col(draco_rss),
+        ));
+    }
+    md.push('\n');
+}
+
+fn render_report(results: &[MeshBench], include_local: bool) -> String {
+    let mut md = String::new();
+    if include_local {
+        md.push_str(
+            "This run was generated with `--local`, so it also includes the OBJ \
+             files in the git-ignored `tests/data/local/` directory.\n\n",
+        );
+    }
 
     md.push_str("## Compression\n\n");
     md.push_str("![Compression ratio](assets/compression-ratio.svg)\n\n");
@@ -406,6 +655,45 @@ fn render_report(results: &[MeshBench]) -> String {
     md.push_str("## Speed\n\n");
     md.push_str("![Encode speed](assets/encode-speed.svg)\n\n");
     md.push_str("![Decode speed](assets/decode-speed.svg)\n\n");
+
+    md.push_str("## Encode memory\n\n");
+    md.push_str("![Encode memory](assets/encode-memory.svg)\n\n");
+    md.push_str(
+        "All values are normalized by the raw geometry size (the raw KB column of \
+         the results table) and measure memory on top of the already-loaded input \
+         mesh: memory bytes per input byte. Peak RSS is measured the same way for \
+         both codecs (one encode in a fresh subprocess that has loaded the OBJ, \
+         `VmHWM` delta) and is directly comparable. The heap columns are exact \
+         allocation-event byte counts from a tracking allocator (oxide only): peak, \
+         time-weighted average, and RMS of live encode-window bytes; they exclude \
+         allocator overhead, so they read below RSS.\n\n",
+    );
+    push_memory_table(&mut md, results, |r| {
+        (
+            r.oxide.encode_heap.as_ref(),
+            r.oxide.encode_peak_rss,
+            r.draco.encode_peak_rss,
+        )
+    });
+
+    md.push_str("## Decode memory\n\n");
+    md.push_str("![Decode memory](assets/decode-memory.svg)\n\n");
+    md.push_str(
+        "All values are normalized by the decoded geometry size (the raw KB column \
+         of the results table): memory bytes per output byte. Peak RSS is measured \
+         the same way for both codecs (one decode in a fresh subprocess, `VmHWM` \
+         delta) and is directly comparable. The heap columns are exact \
+         allocation-event byte counts from a tracking allocator (oxide only): peak, \
+         time-weighted average, and RMS of live decode-window bytes; they exclude \
+         allocator overhead, so they read below RSS.\n\n",
+    );
+    push_memory_table(&mut md, results, |r| {
+        (
+            r.oxide.decode_heap.as_ref(),
+            r.oxide.decode_peak_rss,
+            r.draco.decode_peak_rss,
+        )
+    });
 
     md.push_str("## Results\n\n");
     md.push_str(
@@ -435,36 +723,6 @@ fn render_report(results: &[MeshBench]) -> String {
     }
     md.push('\n');
 
-    md.push_str("## Method\n\n");
-    md.push_str(
-        "- Input meshes are the OBJ files in `tests/data/`; \"raw\" is the \
-         uncompressed geometry both codecs start from (unique attribute values plus \
-         32-bit face indices).\n\
-         - Both codecs are timed in-process on in-memory data: median wall time over \
-         repeated runs after a warmup, same harness for both.\n\
-         - draco-oxide: `encode()` with `Config::default()`; decode is `decode()` \
-         back to original-format floats.\n\
-         - Google Draco: `libdraco` (the checkout built by `scripts/build-draco.sh`) \
-         called through a C shim; encode is `Encoder::EncodeMeshToBuffer` with the \
-         CLI-default options, decode is `Decoder::DecodeMeshFromBuffer`. Each codec \
-         encodes its own parse of the same OBJ.\n\
-         - Speed is throughput over the raw geometry size: MB/s consumed by the \
-         encoder and MB/s produced by the decoder (1 MB = 10^6 bytes).\n\
-         - Compression ratio = raw bytes / compressed bytes, same raw baseline for \
-         both codecs.\n",
-    );
+    md.push_str("Measurement details are in the [Method](#method) section above.\n");
     md
-}
-
-fn hostname_summary() -> String {
-    let cpu = std::fs::read_to_string("/proc/cpuinfo")
-        .ok()
-        .and_then(|s| {
-            s.lines()
-                .find(|l| l.starts_with("model name"))
-                .and_then(|l| l.split(':').nth(1))
-                .map(|m| m.trim().to_string())
-        })
-        .unwrap_or_else(|| std::env::consts::ARCH.to_string());
-    format!("{} ({})", cpu, std::env::consts::OS)
 }

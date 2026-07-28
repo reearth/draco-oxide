@@ -99,7 +99,7 @@ pub enum Operation {
         cfg: GoogleDecodeConfig,
     },
     /// Confirm an artifact parses as the named format. `.drc` cannot be
-    /// validated here — it is validated by being decoded, via
+    /// validated here; it is validated by being decoded, via
     /// [`Operation::DracoDecode`] or [`Operation::DracoOxideDecode`].
     Validation { input: String, fmt: FormatName },
     /// Compare two artifacts under one or more comparison methods. Each

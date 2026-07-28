@@ -135,6 +135,7 @@ where
     }
 
     /// Predicts the value at corner `c` from the already decoded data.
+    #[inline]
     pub(crate) fn predict(
         &mut self,
         c: CornerIdx,

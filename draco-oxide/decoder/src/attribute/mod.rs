@@ -11,14 +11,14 @@ mod sequence;
 pub(crate) mod dequantize;
 
 use crate::connectivity::Connectivity;
-use crate::entropy::{decode_symbols, unzigzag};
+use crate::entropy::{rans::RansSymbolDecoder, start_symbol_decoder, unzigzag, AnySymbolDecoder};
 use crate::{AttributeTransform, Err};
 use draco_oxide_core::attribute::{
     Attribute, AttributeDomain, AttributeId, AttributeType, ComponentDataType,
 };
 use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::attribute::prediction_scheme::mesh_normal_prediction::{
-    compute_normal_of_face, sum_to_prediction,
+    accumulate_face_normal_sums, sum_to_prediction,
 };
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
@@ -48,8 +48,8 @@ pub(crate) struct DecodedAttributes {
 /// One attribute's wire descriptor.
 struct Descriptor {
     att_type: AttributeType,
-    /// The original component type; the portable representation is always I32.
-    /// Consumed once dequantization restores non-f32 original formats.
+    /// The original component type. Unread: the portable representation is
+    /// always I32 and dequantization reconstructs f32.
     #[allow(dead_code)]
     component_type: ComponentDataType,
     num_components: usize,
@@ -422,14 +422,14 @@ fn decode_payloads<D: GroupWalkDs>(
 /// descriptor, and the decoded parent position when the scheme predicts from
 /// one.
 struct GroupMember<'p> {
-    payload: ParsedPayload,
+    payload: ParsedPayload<'p>,
     desc: &'p Descriptor,
     parent: Option<&'p Attribute>,
 }
 
 /// One fused normal attribute's inputs to a group walk (see [`NormalFuser`]).
 struct FusedNormal<'p> {
-    payload: Parsed<2>,
+    payload: Parsed<'p, 2>,
     desc: &'p Descriptor,
     parent_id: AttributeId,
     parent_stepper: usize,
@@ -612,13 +612,69 @@ fn run_group_impl<'p, D: GenericAttributeDs>(
     })
 }
 
+/// One attribute's correction stream: DirectCoded corrections stay behind a
+/// live decoder popped in walk order (the walk consumes ranks sequentially,
+/// which is exactly the decoder's output order); raw and LengthCoded ones are
+/// rank-indexed vectors read before the walk.
+enum Corrections<'a, const N: usize>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    Eager(Vec<NdVector<N, i32>>),
+    Lazy(RansSymbolDecoder<'a>),
+}
+
+impl<const N: usize> Corrections<'_, N>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    /// The correction of rank `k`. Lazy streams require the calls to arrive
+    /// with consecutive `k`, which the group walk guarantees.
+    ///
+    /// # Safety
+    /// `k` must be less than the stream's value count.
+    #[inline]
+    unsafe fn next_unchecked(&mut self, k: usize) -> NdVector<N, i32> {
+        match self {
+            Corrections::Eager(v) => *v.get_unchecked(k),
+            Corrections::Lazy(d) => {
+                let mut v = NdVector::<N, i32>::zero();
+                for i in 0..N {
+                    *v.get_mut(i) = d.decode() as u32 as i32;
+                }
+                v
+            }
+        }
+    }
+
+    /// Drains the stream into a rank-indexed vector, for consumers that read
+    /// corrections out of walk order.
+    fn materialize(self, num_values: usize) -> Vec<NdVector<N, i32>> {
+        match self {
+            Corrections::Eager(v) => v,
+            Corrections::Lazy(mut d) => (0..num_values)
+                .map(|_| {
+                    let mut v = NdVector::<N, i32>::zero();
+                    for i in 0..N {
+                        *v.get_mut(i) = d.decode() as u32 as i32;
+                    }
+                    v
+                })
+                .collect(),
+        }
+    }
+}
+
 /// One attribute's parsed wire payload: prediction/transform ids, the
 /// correction stream, the scheme and transform metadata (in the
 /// scheme-dependent order the encoder writes them), and the portabilization
 /// parameters. Everything the reversal walk consumes.
-struct Parsed<const N: usize> {
+struct Parsed<'a, const N: usize>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
     scheme_ty: PredictionSchemeType,
-    corrections: Vec<NdVector<N, i32>>,
+    corrections: Corrections<'a, N>,
     flips: Vec<bool>,
     orientations: Vec<bool>,
     transform: InverseTransform,
@@ -626,14 +682,14 @@ struct Parsed<const N: usize> {
 }
 
 /// [`Parsed`] behind the component-count dispatch.
-enum ParsedPayload {
-    N1(Parsed<1>),
-    N2(Parsed<2>),
-    N3(Parsed<3>),
-    N4(Parsed<4>),
+enum ParsedPayload<'a> {
+    N1(Parsed<'a, 1>),
+    N2(Parsed<'a, 2>),
+    N3(Parsed<'a, 3>),
+    N4(Parsed<'a, 4>),
 }
 
-impl ParsedPayload {
+impl ParsedPayload<'_> {
     fn scheme_ty(&self) -> &PredictionSchemeType {
         match self {
             ParsedPayload::N1(p) => &p.scheme_ty,
@@ -655,11 +711,11 @@ impl ParsedPayload {
 }
 
 /// Parses one attribute's contiguous payload block off the wire.
-fn parse_payload<const N: usize>(
-    reader: &mut Reader<'_>,
+fn parse_payload<'a, const N: usize>(
+    reader: &mut Reader<'a>,
     num_values: usize,
     desc: &Descriptor,
-) -> Result<Parsed<N>, Err>
+) -> Result<Parsed<'a, N>, Err>
 where
     NdVector<N, i32>: Vector<N, Component = i32> + Portable,
     NdVector<N, f32>: Vector<N, Component = f32> + Portable,
@@ -667,26 +723,33 @@ where
     let scheme_ty = prediction::read_scheme_id(reader)?;
     let transform_id = reader.read_u8()?;
 
-    // The correction stream: rANS-coded symbols or raw values.
+    // The correction stream: DirectCoded symbols stay behind a live decoder
+    // drained during the walk (the payload is length-prefixed, so parsing
+    // continues past it), raw values are read eagerly. LengthCoded symbols are
+    // drained here instead, which keeps the walk's per-symbol pop monomorphic
+    // over the DirectCoded decoder.
     let rans_flag = reader.read_u8()?;
-    let corrections: Vec<NdVector<N, i32>> = if rans_flag != 0 {
-        let symbols = decode_symbols(reader, num_values, N)?;
-        symbols
-            .chunks_exact(N)
-            .map(|chunk| {
-                let mut v = NdVector::<N, i32>::zero();
-                for (i, &sym) in chunk.iter().enumerate() {
-                    *v.get_mut(i) = sym as u32 as i32;
+    let corrections: Corrections<'a, N> = if rans_flag != 0 {
+        match start_symbol_decoder(reader, num_values * N, N)? {
+            AnySymbolDecoder::Direct(decoder) => Corrections::Lazy(decoder),
+            AnySymbolDecoder::Tagged(mut decoder) => {
+                let mut out = Vec::with_capacity(num_values);
+                for _ in 0..num_values {
+                    let mut v = NdVector::<N, i32>::zero();
+                    for i in 0..N {
+                        *v.get_mut(i) = decoder.decode() as u32 as i32;
+                    }
+                    out.push(v);
                 }
-                v
-            })
-            .collect()
+                Corrections::Eager(out)
+            }
+        }
     } else {
         let mut out = Vec::with_capacity(num_values);
         for _ in 0..num_values {
             out.push(NdVector::<N, i32>::read_from(reader)?);
         }
-        out
+        Corrections::Eager(out)
     };
 
     // Scheme and transform metadata, in the order the encoder writes them.
@@ -728,7 +791,7 @@ where
     att: Attribute,
     predictor: Predictor<'p, N, D>,
     transform: InverseTransform,
-    corrections: Vec<NdVector<N, i32>>,
+    corrections: Corrections<'p, N>,
     zigzagged: bool,
     dequant: AttributeTransform,
 }
@@ -738,7 +801,7 @@ where
     NdVector<N, i32>: Vector<N, Component = i32> + Portable,
 {
     fn new(
-        parsed: Parsed<N>,
+        parsed: Parsed<'p, N>,
         desc: &Descriptor,
         ads: &'p D,
         parent: Option<&'p Attribute>,
@@ -779,20 +842,31 @@ where
     /// after mapping the corner's fan `points` to `k`.
     #[inline]
     fn step(&mut self, c: CornerIdx, k: usize, points: &[PointIdx], record: &[VertexIdx]) {
+        // SAFETY: the walk emits at most one corner per distinct vertex, so
+        // k < num_values, the length of both the value buffer and any eager
+        // correction vector; `points` holds point ids of the walked structure,
+        // all below the map length the stepper was constructed with.
         for &p in points {
-            self.att.set_point_att_val(p, AttributeValueIdx::from(k));
+            unsafe {
+                self.att
+                    .set_point_att_val_unchecked(p, AttributeValueIdx::from(k));
+            }
         }
         // Predictions only ever read values at already visited vertices, so
         // the partially filled attribute is safe to consult.
         let pred = self.predictor.predict(c, record, &self.att);
-        let mut corr = self.corrections[k];
+        let mut corr = unsafe { self.corrections.next_unchecked(k) };
         if self.zigzagged {
             for i in 0..N {
                 *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
             }
         }
-        self.att.unique_vals_as_slice_mut::<NdVector<N, i32>>()[k] =
-            self.transform.compute_original(pred, corr);
+        unsafe {
+            *self
+                .att
+                .unique_vals_as_slice_unchecked_mut::<NdVector<N, i32>>()
+                .get_unchecked_mut(k) = self.transform.compute_original(pred, corr);
+        }
     }
 }
 
@@ -836,7 +910,7 @@ impl<'p, D: GenericAttributeDs> AnyStepper<'p, D> {
 }
 
 fn build_stepper<'p, D: GenericAttributeDs>(
-    payload: ParsedPayload,
+    payload: ParsedPayload<'p>,
     desc: &Descriptor,
     ads: &'p D,
     parent: Option<&'p Attribute>,
@@ -874,7 +948,7 @@ struct NormalFuser {
 
 impl NormalFuser {
     fn new<D: GenericAttributeDs>(
-        parsed: Parsed<2>,
+        parsed: Parsed<'_, 2>,
         desc: &Descriptor,
         parent_id: AttributeId,
         ads: &D,
@@ -895,7 +969,9 @@ impl NormalFuser {
         let zigzagged = parsed.transform.corrections_are_zigzagged();
         Self {
             att,
-            corrections: parsed.corrections,
+            // The end-of-walk finalization reads corrections in vertex order,
+            // not rank order, so the stream cannot stay lazy here.
+            corrections: parsed.corrections.materialize(num_values),
             flips: parsed.flips,
             zigzagged,
             transform: parsed.transform,
@@ -919,16 +995,7 @@ impl NormalFuser {
     /// sums in one sequential face pass over the completed positions, then
     /// applies each vertex's flip and correction at its recorded rank.
     fn finish_walk<D: GenericAttributeDs>(&mut self, ads: &D, pos: &Attribute) {
-        let mut sums = vec![NdVector::<3, i64>::zero(); self.rank_of.len()];
-        for f in 0..ads.num_faces() {
-            let c0 = CornerIdx::from(3 * f);
-            let pos_c0 = pos.get::<NdVector<3, i32>, 3>(ads.point_idx(c0));
-            let face_normal = compute_normal_of_face(ads, pos, c0, pos_c0);
-            for t in 0..3 {
-                let w = ads.vertex_idx(CornerIdx::from(3 * f + t));
-                sums[usize::from(w)] += face_normal;
-            }
-        }
+        let sums = accumulate_face_normal_sums(ads, pos, self.rank_of.len());
         for (v, &k) in self.rank_of.iter().enumerate() {
             if k == usize::MAX {
                 continue;
@@ -1006,9 +1073,14 @@ fn decode_group<D: GenericAttributeDs>(
                 own_point = [PointIdx::from(usize::from(v))];
                 &own_point
             }
-            Some((offsets, vertex_points)) => {
-                &vertex_points[offsets[usize::from(v)]..offsets[usize::from(v) + 1]]
-            }
+            // SAFETY: the CSR is built from the same `ads` as the walk, so
+            // v < vertex_index_bound = offsets.len() - 1, and the offsets are
+            // monotone prefix sums bounded by vertex_points.len().
+            Some((offsets, vertex_points)) => unsafe {
+                let start = *offsets.get_unchecked(usize::from(v));
+                let end = *offsets.get_unchecked(usize::from(v) + 1);
+                vertex_points.get_unchecked(start..end)
+            },
         };
         #[cfg(debug_assertions)]
         for &p in points {

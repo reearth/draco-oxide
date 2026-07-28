@@ -54,6 +54,7 @@ where
         into_ranges(out)
     }
 
+    #[inline]
     fn predict(
         &mut self,
         _i: CornerIdx,

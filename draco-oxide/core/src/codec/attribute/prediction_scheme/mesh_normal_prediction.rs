@@ -19,42 +19,52 @@ pub struct MeshNormalPrediction<'parents, const N: usize, D: GenericAttributeDs>
     flips: Vec<bool>,
 }
 
-/// Cross-product normal of the face owning corner `c`, with `pos_c` the
-/// position of `c`'s vertex. For a triangle this area vector is independent
-/// of which corner is chosen as the apex, so a face's normal can be computed
-/// once (from any corner) and reused for all three of its vertices.
-pub fn compute_normal_of_face<D: GenericAttributeDs>(
+/// Accumulates each face's cross-product normal into per-vertex sums.
+/// The face normal is the cross product of the two edges leaving the face's
+/// first corner; it is computed once per face and added to the sums of all
+/// three of the face's vertices. `pos` must hold `NdVector<3, i32>` values.
+pub fn accumulate_face_normal_sums<D: GenericAttributeDs>(
     ads: &D,
     pos: &Attribute,
-    c: CornerIdx,
-    pos_c: NdVector<3, i32>,
-) -> NdVector<3, i64> {
-    // corners.
-    let c_next = c.next();
-    let c_prev = c.previous();
+    num_vertices: usize,
+) -> Vec<NdVector<3, i64>> {
+    let vals = pos.unique_vals_as_slice::<NdVector<3, i32>>();
+    let map = pos.point_map_as_slice();
+    let pos_of = |c: CornerIdx| -> NdVector<3, i32> {
+        let p = usize::from(ads.point_idx(c));
+        match map {
+            Some(m) => vals[usize::from(m[p])],
+            None => vals[p],
+        }
+    };
 
-    let pos_next = pos.get::<NdVector<3, i32>, 3>(ads.point_idx(c_next));
-    let pos_prev = pos.get::<NdVector<3, i32>, 3>(ads.point_idx(c_prev));
+    let mut sums = vec![NdVector::<3, i64>::zero(); num_vertices];
+    for f in 0..ads.num_faces() {
+        let c0 = CornerIdx::from(3 * f);
+        let c1 = CornerIdx::from(3 * f + 1);
+        let c2 = CornerIdx::from(3 * f + 2);
 
-    // Compute the difference to next and prev.
-    let delta_next = pos_next - pos_c;
-    let delta_prev = pos_prev - pos_c;
+        let pos_c = pos_of(c0);
+        let delta_next = pos_of(c1) - pos_c;
+        let delta_prev = pos_of(c2) - pos_c;
 
-    // Take the cross product
-    let cross = {
         let cross_i32 = delta_next.cross(delta_prev);
         let mut cross = NdVector::<3, i64>::zero();
         *cross.get_mut(0) = *cross_i32.get(0) as i64;
         *cross.get_mut(1) = *cross_i32.get(1) as i64;
         *cross.get_mut(2) = *cross_i32.get(2) as i64;
-        cross
-    };
-    cross
+
+        sums[usize::from(ads.vertex_idx(c0))] += cross;
+        sums[usize::from(ads.vertex_idx(c1))] += cross;
+        sums[usize::from(ads.vertex_idx(c2))] += cross;
+    }
+    sums
 }
 
 /// Turn an accumulated per-vertex face-normal sum into the octahedral,
 /// quantized prediction. Pure function of `sum` (matches the old inline
 /// computation in `predict`).
+#[inline]
 pub fn sum_to_prediction<const N: usize>(mut sum: NdVector<3, i64>) -> NdVector<N, i32>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
@@ -97,6 +107,7 @@ where
     /// The geometry-derived prediction for the vertex at corner `c`, without the
     /// sign flip. The decoder pairs this with the decoded flip bit to reproduce
     /// the value `predict` returned on the encoder side.
+    #[inline]
     pub fn predicted_value(&self, c: CornerIdx) -> NdVector<N, i32> {
         self.predicted[usize::from(self.ads.vertex_idx(c))]
     }
@@ -119,16 +130,7 @@ where
         );
         let pos = parents[0]; // we made sure that the first parent is the position attribute
 
-        let mut sums = vec![NdVector::<3, i64>::zero(); ads.vertex_index_bound()];
-        for f in 0..ads.num_faces() {
-            let c0 = CornerIdx::from(3 * f);
-            let pos_c0 = pos.get::<NdVector<3, i32>, 3>(ads.point_idx(c0));
-            let face_normal = compute_normal_of_face(ads, pos, c0, pos_c0);
-            for i in 0..3 {
-                let v = ads.vertex_idx(CornerIdx::from(3 * f + i));
-                sums[usize::from(v)] += face_normal;
-            }
-        }
+        let sums = accumulate_face_normal_sums(ads, pos, ads.vertex_index_bound());
         let predicted = sums
             .into_iter()
             .map(sum_to_prediction::<N>)

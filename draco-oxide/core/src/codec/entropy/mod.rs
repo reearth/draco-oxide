@@ -43,9 +43,7 @@ pub struct RansSymbol {
 
 /// Builds the cumulative-frequency table over the alphabet. The frequencies
 /// must sum to exactly `2^RANS_PRECISION`.
-pub fn rans_symbol_table<const RANS_PRECISION: usize>(
-    freq_counts: &[usize],
-) -> Result<Vec<RansSymbol>, Err> {
+pub fn rans_symbol_table(freq_counts: &[usize], precision: usize) -> Result<Vec<RansSymbol>, Err> {
     let mut rans_syms = Vec::with_capacity(freq_counts.len());
 
     let mut freq_cumulative: usize = 0;
@@ -61,10 +59,10 @@ pub fn rans_symbol_table<const RANS_PRECISION: usize>(
             .ok_or(Err::InvalidFreqCount)?;
     }
 
-    if freq_cumulative != 1 << RANS_PRECISION {
+    if freq_cumulative != 1 << precision {
         return Err(Err::FrequencyCountNotCompatibleWithRansPrecision(
             freq_cumulative,
-            1 << RANS_PRECISION,
+            1 << precision,
         ));
     }
 
@@ -74,16 +72,18 @@ pub fn rans_symbol_table<const RANS_PRECISION: usize>(
 /// Builds the slot-to-symbol lookup table: entry `r` is the symbol whose
 /// cumulative range contains `r`. The input must come from
 /// [`rans_symbol_table`], so the ranges tile `0..2^RANS_PRECISION`.
-pub fn rans_slot_table(rans_symbols: &[RansSymbol]) -> Vec<u32> {
+/// `T` is the entry width; the alphabet's largest index must fit in it.
+pub fn rans_slot_table<T: Copy + Default + TryFrom<usize>>(rans_symbols: &[RansSymbol]) -> Vec<T> {
     let total = rans_symbols
         .last()
         .map(|s| (s.freq_cumulative + s.freq_count) as usize)
         .unwrap_or(0);
-    let mut slot_table = vec![0u32; total];
+    let mut slot_table = vec![T::default(); total];
     for (i, sym) in rans_symbols.iter().enumerate() {
         let start = sym.freq_cumulative as usize;
         let end = start + sym.freq_count as usize;
-        slot_table[start..end].fill(i as u32);
+        let entry = T::try_from(i).unwrap_or_else(|_| unreachable!());
+        slot_table[start..end].fill(entry);
     }
     slot_table
 }

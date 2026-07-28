@@ -1,4 +1,4 @@
-//! Grouped horizontal bar charts as self-contained SVG files.
+//! Grouped horizontal bar charts as self-contained dark-themed SVG files.
 
 /// One data series across all categories. `None` marks a category the series
 /// has no measurement for.
@@ -10,10 +10,12 @@ pub struct Series<'a> {
     pub na_label: &'a str,
 }
 
-const SURFACE: &str = "#fcfcfb";
-const TEXT_PRIMARY: &str = "#1a1a19";
-const TEXT_SECONDARY: &str = "#5f5e56";
-const AXIS: &str = "#d9d8d0";
+const SURFACE: &str = "#0d1117";
+const BORDER: &str = "#30363d";
+const TEXT_PRIMARY: &str = "#e6edf3";
+const TEXT_SECONDARY: &str = "#9198a1";
+const GRID: &str = "#21262d";
+const AXIS: &str = "#3d444d";
 
 const WIDTH: f64 = 760.0;
 const LABEL_GUTTER: f64 = 178.0;
@@ -22,7 +24,8 @@ const BAR_H: f64 = 14.0;
 const BAR_GAP: f64 = 2.0;
 const GROUP_GAP: f64 = 14.0;
 const TOP: f64 = 64.0;
-const BOTTOM: f64 = 16.0;
+const AXIS_ROW: f64 = 22.0;
+const BOTTOM: f64 = 12.0;
 const FONT: &str = "system-ui, -apple-system, 'Segoe UI', sans-serif";
 
 fn esc(text: &str) -> String {
@@ -52,8 +55,35 @@ fn fmt_value(v: f64) -> String {
     }
 }
 
-/// Renders a grouped horizontal bar chart. Every bar carries a direct value
-/// label; the legend names the series.
+/// A 1/2/5-per-decade gridline step giving at most `target` ticks up to `max`.
+fn tick_step(max: f64, target: usize) -> f64 {
+    let raw = max / target as f64;
+    let mag = 10f64.powf(raw.log10().floor());
+    let n = raw / mag;
+    let unit = if n <= 1.0 {
+        1.0
+    } else if n <= 2.0 {
+        2.0
+    } else if n <= 5.0 {
+        5.0
+    } else {
+        10.0
+    };
+    unit * mag
+}
+
+fn fmt_tick(v: f64, step: f64) -> String {
+    if step >= 1.0 {
+        format!("{v:.0}")
+    } else if step >= 0.1 {
+        format!("{v:.1}")
+    } else {
+        format!("{v:.2}")
+    }
+}
+
+/// Renders a grouped horizontal bar chart on a dark card. Every bar carries a
+/// direct value label; the legend names the series; gridlines carry the scale.
 pub fn grouped_bar_svg(
     title: &str,
     subtitle: &str,
@@ -62,7 +92,8 @@ pub fn grouped_bar_svg(
 ) -> String {
     let plot_w = WIDTH - LABEL_GUTTER - VALUE_GUTTER;
     let group_h = series.len() as f64 * BAR_H + (series.len() as f64 - 1.0) * BAR_GAP;
-    let height = TOP + categories.len() as f64 * (group_h + GROUP_GAP) - GROUP_GAP + BOTTOM;
+    let plot_bottom = TOP + categories.len() as f64 * (group_h + GROUP_GAP) - GROUP_GAP + 6.0;
+    let height = plot_bottom + AXIS_ROW + BOTTOM;
 
     let max_value = series
         .iter()
@@ -75,8 +106,21 @@ pub fn grouped_bar_svg(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{WIDTH}\" height=\"{height:.0}\" \
          viewBox=\"0 0 {WIDTH} {height:.0}\" font-family=\"{FONT}\" font-size=\"12\">\n"
     ));
+    svg.push_str("<defs>\n");
+    for (si, s) in series.iter().enumerate() {
+        svg.push_str(&format!(
+            "<linearGradient id=\"bar{si}\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\">\
+             <stop offset=\"0\" stop-color=\"{c}\" stop-opacity=\"0.55\"/>\
+             <stop offset=\"1\" stop-color=\"{c}\"/></linearGradient>\n",
+            c = s.color
+        ));
+    }
+    svg.push_str("</defs>\n");
     svg.push_str(&format!(
-        "<rect width=\"{WIDTH}\" height=\"{height:.0}\" fill=\"{SURFACE}\"/>\n"
+        "<rect x=\"0.5\" y=\"0.5\" width=\"{:.0}\" height=\"{:.0}\" rx=\"10\" \
+         fill=\"{SURFACE}\" stroke=\"{BORDER}\"/>\n",
+        WIDTH - 1.0,
+        height - 1.0
     ));
     svg.push_str(&format!(
         "<text x=\"16\" y=\"24\" font-size=\"15\" font-weight=\"600\" fill=\"{TEXT_PRIMARY}\">{}</text>\n",
@@ -107,11 +151,29 @@ pub fn grouped_bar_svg(
         lx += 22.0 + 7.0 * s.name.len() as f64;
     }
 
+    // Gridlines with tick labels, behind the bars.
+    let step = tick_step(max_value, 5);
+    let mut tick = step;
+    while tick <= max_value * 1.001 {
+        let x = LABEL_GUTTER + tick / max_value * plot_w;
+        svg.push_str(&format!(
+            "<line x1=\"{x:.1}\" y1=\"{:.1}\" x2=\"{x:.1}\" y2=\"{plot_bottom:.1}\" \
+             stroke=\"{GRID}\" stroke-width=\"1\"/>\n",
+            TOP - 6.0
+        ));
+        svg.push_str(&format!(
+            "<text x=\"{x:.1}\" y=\"{:.1}\" text-anchor=\"middle\" fill=\"{TEXT_SECONDARY}\">{}</text>\n",
+            plot_bottom + 15.0,
+            fmt_tick(tick, step)
+        ));
+        tick += step;
+    }
+
     // Baseline.
     svg.push_str(&format!(
-        "<line x1=\"{LABEL_GUTTER}\" y1=\"{:.1}\" x2=\"{LABEL_GUTTER}\" y2=\"{:.1}\" stroke=\"{AXIS}\" stroke-width=\"1\"/>\n",
-        TOP - 6.0,
-        height - BOTTOM + 2.0
+        "<line x1=\"{LABEL_GUTTER}\" y1=\"{:.1}\" x2=\"{LABEL_GUTTER}\" y2=\"{plot_bottom:.1}\" \
+         stroke=\"{AXIS}\" stroke-width=\"1\"/>\n",
+        TOP - 6.0
     ));
 
     for (ci, cat) in categories.iter().enumerate() {
@@ -128,9 +190,8 @@ pub fn grouped_bar_svg(
                 Some(v) => {
                     let w = (v / max_value * plot_w).max(1.0);
                     svg.push_str(&format!(
-                        "<path d=\"{}\" fill=\"{}\"/>\n",
+                        "<path d=\"{}\" fill=\"url(#bar{si})\"/>\n",
                         bar_path(LABEL_GUTTER, y, w, BAR_H),
-                        s.color
                     ));
                     svg.push_str(&format!(
                         "<text x=\"{:.1}\" y=\"{:.1}\" fill=\"{TEXT_SECONDARY}\">{}</text>\n",

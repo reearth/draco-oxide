@@ -183,6 +183,7 @@ where
         // merged
     }
 
+    #[inline]
     fn predict(
         &mut self,
         _i: CornerIdx,

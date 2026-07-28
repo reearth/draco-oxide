@@ -1,0 +1,25 @@
+[package]
+name = "wasm-size-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Internal size-measurement harness for the decoder's WASM bundle-size
+# guarantee: a minimal cdylib linking draco-oxide-decoder through a C ABI, so
+# `cargo build -p wasm-size-probe --profile wasm-size --target
+# wasm32-unknown-unknown` yields the real linked-and-DCE'd module size per
+# feature tier. Not a shipping artifact.
+
+[lib]
+crate-type = ["cdylib"]
+
+# A direct path dependency, not the workspace one: `default-features = false`
+# is ignored on workspace-inherited deps, and each tier must control the
+# decoder's features exactly.
+[dependencies]
+draco-oxide-decoder = { path = "../draco-oxide/decoder", default-features = false }
+
+[features]
+default = ["dequantize"]
+# Mirrors the decoder's tiers so each probe build measures exactly one tier.
+dequantize = ["draco-oxide-decoder/dequantize"]

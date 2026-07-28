@@ -206,6 +206,12 @@ impl Attribute {
         self.point_to_att_val_map
     }
 
+    /// The point-to-value map as a plain slice, if the attribute has one.
+    #[inline]
+    pub fn point_map_as_slice(&self) -> Option<&[AttributeValueIdx]> {
+        self.point_to_att_val_map.as_ref().map(|m| m.as_slice())
+    }
+
     /// Assigns the attribute-value index of a single point. The point-to-value
     /// map must already be present (see [`Self::set_point_to_att_val_map`]); this
     /// fills it entry by entry as a traversal visits each point.
@@ -215,6 +221,24 @@ impl Attribute {
             .as_mut()
             .expect("point-to-value map must be initialized before per-point assignment")[p_idx] =
             val_idx;
+    }
+
+    /// [`Self::set_point_att_val`] without the presence and bound checks.
+    ///
+    /// # Safety
+    /// The point-to-value map must be present and `p_idx` must be less than its
+    /// length.
+    #[inline]
+    pub unsafe fn set_point_att_val_unchecked(
+        &mut self,
+        p_idx: PointIdx,
+        val_idx: AttributeValueIdx,
+    ) {
+        match self.point_to_att_val_map.as_mut() {
+            Some(map) => *map.get_unchecked_mut(p_idx) = val_idx,
+            // Safety contract violated; unreachable per the caller's guarantee.
+            None => core::hint::unreachable_unchecked(),
+        }
     }
 
     #[inline]
