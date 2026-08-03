@@ -1,0 +1,41 @@
+# Encodes sequential connectivity and checks that both decoders read it back.
+#
+# Sequential streams carry no corner table, so attributes are sequenced over the
+# point space and the only prediction available is the preceding value. That
+# makes this a check of the framing as much as of the values: the attribute
+# section drops the per-attribute connectivity header, puts every attribute in
+# one encoder, and moves the portabilization blocks after the last payload.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "sphere.obj"
+output = "oxide.drc"
+cfg = { connectivity = "Sequential" }
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "google.obj"
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "oxide.drc"
+output = "oxide.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "google.obj"
+input2 = "oxide.obj"
+methods = [
+    { method = "L2Norm", max = 0.000001 },
+    { method = "Ssim", min = 0.9999, color_by = "Normal" },
+]
+
+[[operations]]
+op = "Comparison"
+input1 = "sphere.obj"
+input2 = "oxide.obj"
+methods = [
+    { method = "L2Norm", max = 0.01 },
+    { method = "Ssim", min = 0.98, color_by = "Geometry" },
+]

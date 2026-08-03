@@ -41,18 +41,15 @@ fn rabs_over_substream<'a>(reader: &mut Reader<'a>, prob_zero: u8) -> Result<Rab
     RabsDecoder::new(rev, prob_zero)
 }
 
-/// Decodes the normal-prediction flip metadata: one bit per value. The rabs
-/// stream yields the bits in reverse traversal order, so the result is reversed
-/// into traversal order before returning.
+/// Decodes the normal-prediction flip metadata: one bit per value, in traversal
+/// order.
 pub(crate) fn decode_flip_metadata(
     reader: &mut Reader<'_>,
     num_values: usize,
 ) -> Result<Vec<bool>, Err> {
     let zero_prob = reader.read_u8()?;
     let mut rabs = rabs_over_substream(reader, zero_prob)?;
-    let mut flips: Vec<bool> = (0..num_values).map(|_| rabs.decode_bit()).collect();
-    flips.reverse();
-    Ok(flips)
+    Ok((0..num_values).map(|_| rabs.decode_bit()).collect())
 }
 
 /// Decodes the texture-coordinate orientation metadata: a u32 count, then one
@@ -101,12 +98,14 @@ where
 {
     /// Builds the predictor for `scheme_ty`. `parents` carries the decoded
     /// portable position attribute for the geometric schemes.
+    /// `oct_center` is consulted only by the normal scheme.
     pub(crate) fn new(
         scheme_ty: &PredictionSchemeType,
         parents: &[&'p Attribute],
         ads: &'p D,
         flips: Vec<bool>,
         orientations: Vec<bool>,
+        oct_center: i32,
     ) -> Result<Self, Err> {
         Ok(match scheme_ty {
             PredictionSchemeType::NoPrediction => Predictor::NoPrediction,
@@ -120,11 +119,20 @@ where
                 scheme: MeshPredictionForTextureCoordinates::new(parents, ads),
                 orientations,
             },
-            PredictionSchemeType::MeshNormalPrediction => Predictor::Normal {
-                scheme: MeshNormalPrediction::new(parents, ads),
-                flips,
-                next: 0,
-            },
+            PredictionSchemeType::MeshNormalPrediction => {
+                if oct_center <= 0 {
+                    return Err(Err::MalformedAttribute(
+                        "normal prediction needs an octahedral prediction transform",
+                    ));
+                }
+                let mut scheme = MeshNormalPrediction::new(parents, ads);
+                scheme.set_octahedral_center(oct_center);
+                Predictor::Normal {
+                    scheme,
+                    flips,
+                    next: 0,
+                }
+            }
             // No encoder-side implementation emits these yet.
             PredictionSchemeType::MeshMultiParallelogramPrediction
             | PredictionSchemeType::DerivativePrediction => return Err(Err::Unimplemented),
@@ -159,9 +167,9 @@ where
                 let flip = flips.get(*next).copied().unwrap_or(false);
                 *next += 1;
                 if flip {
-                    pred = pred * -1;
+                    pred *= -1;
                 }
-                pred
+                scheme.project(pred)
             }
         }
     }

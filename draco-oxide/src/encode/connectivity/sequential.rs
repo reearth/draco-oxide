@@ -1,7 +1,9 @@
 use crate::encode::connectivity::ConnectivityEncoder;
+use crate::encode::entropy::symbol_coding::encode_symbols;
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::connectivity::sequential::index_size_from_vertex_count;
 use draco_oxide_core::codec::connectivity::sequential::Method;
+use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
 use draco_oxide_core::debug_write;
 use draco_oxide_core::types::ConfigType;
 use draco_oxide_core::types::{CornerIdx, PointIdx};
@@ -22,6 +24,8 @@ impl Sequential {
         }
     }
 
+    /// Writes the face indices verbatim, in the smallest width that holds the
+    /// point space.
     fn encode_direct_indices<W>(&self, writer: &mut W) -> Result<(), Err>
     where
         W: ByteWriter,
@@ -33,14 +37,12 @@ impl Sequential {
         debug_write!("Start of indices", writer);
 
         if index_size == 21 {
-            // varint encoding
             for face in &self.faces {
                 leb128_write(usize::from(face[0]) as u64, writer);
                 leb128_write(usize::from(face[1]) as u64, writer);
                 leb128_write(usize::from(face[2]) as u64, writer);
             }
         } else {
-            // non-varint encoding
             match index_size {
                 8 => {
                     for face in &self.faces {
@@ -68,6 +70,29 @@ impl Sequential {
         }
         Ok(())
     }
+
+    /// Entropy-codes the face indices as deltas of the flattened index
+    /// sequence, each delta stored as its magnitude with the sign in the low
+    /// bit.
+    fn encode_compressed_indices<W>(&self, writer: &mut W) -> Result<(), Err>
+    where
+        W: ByteWriter,
+    {
+        debug_write!("Start of indices", writer);
+
+        let mut symbols = Vec::with_capacity(self.faces.len() * 3);
+        let mut last: i64 = 0;
+        for face in &self.faces {
+            for &p in face {
+                let index = usize::from(p) as i64;
+                let diff = index - last;
+                symbols.push((diff.unsigned_abs() << 1) | (diff < 0) as u64);
+                last = index;
+            }
+        }
+        encode_symbols(symbols, 1, SymbolEncodingMethod::DirectCoded, writer)
+            .map_err(Err::SymbolEncodingError)
+    }
 }
 
 impl ConnectivityEncoder for Sequential {
@@ -78,10 +103,13 @@ impl ConnectivityEncoder for Sequential {
     where
         W: ByteWriter,
     {
-        writer.write_u64(self.faces.len() as u64);
-        let encoder_method_id = self.cfg.encoder_method.get_id();
-        writer.write_u8(encoder_method_id);
-        self.encode_direct_indices(writer)?;
+        leb128_write(self.faces.len() as u64, writer);
+        leb128_write(self.num_points as u64, writer);
+        writer.write_u8(self.cfg.encoder_method.get_id());
+        match self.cfg.encoder_method {
+            Method::DirectIndices => self.encode_direct_indices(writer)?,
+            Method::Compressed => self.encode_compressed_indices(writer)?,
+        }
 
         // Sequential connectivity has no edgebreaker traversal to surface.
         Ok(Vec::new())
@@ -90,6 +118,7 @@ impl ConnectivityEncoder for Sequential {
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    /// How face indices are stored: verbatim, or entropy-coded as deltas.
     pub encoder_method: Method,
 }
 
@@ -106,4 +135,6 @@ impl ConfigType for Config {
 pub enum Err {
     #[error("Invalid vertex count")]
     SharedError(draco_oxide_core::codec::connectivity::sequential::Err),
+    #[error("Entropy Symbol Encoding Error: {0}")]
+    SymbolEncodingError(crate::encode::entropy::symbol_coding::Err),
 }

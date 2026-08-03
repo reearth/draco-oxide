@@ -1,0 +1,29 @@
+# Decodes a mesh whose connectivity uses the sequential encoder rather than
+# edgebreaker.
+#
+# Google's encoder selects sequential connectivity for very small meshes and at
+# the lowest compression levels, so it turns up in real content: both
+# MorphPrimitivesTest primitives in glTF-Sample-Models are sequential.
+#
+# sphere_sequential.drc is sphere.obj encoded with `draco_encoder -cl 0 -qp 14
+# --skip NORMAL`. Normals are skipped so the profile covers the connectivity
+# path alone, leaving normal reconstruction to the profiles that target it.
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "sphere_sequential.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "sphere.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.01 },
+    { method = "Ssim", min = 0.98, color_by = "Geometry" },
+]

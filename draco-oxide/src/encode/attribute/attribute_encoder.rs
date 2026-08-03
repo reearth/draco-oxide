@@ -10,7 +10,7 @@ use draco_oxide_core::codec::attribute::Portable;
 use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
 use draco_oxide_core::mesh::ds::AttributeDS;
 use draco_oxide_core::types::ConfigType;
-use draco_oxide_core::types::{CornerIdx, DataValue, NdVector};
+use draco_oxide_core::types::{CornerIdx, DataValue, NdVector, PointIdx};
 use thiserror::Error;
 
 #[cfg(feature = "evaluation")]
@@ -200,6 +200,20 @@ impl Config {
         self.group_cfgs[0].prediction_transform.ty = ty;
     }
 
+    /// Restricts the configuration to what a linearly sequenced stream can
+    /// express. Such a stream carries no connectivity, so every mesh-geometry
+    /// scheme degrades to delta prediction; the prediction transforms are
+    /// unaffected.
+    pub(super) fn for_sequential(mut self) -> Self {
+        use prediction_scheme::PredictionSchemeType as S;
+        for group in &mut self.group_cfgs {
+            if group.prediction_scheme.ty != S::NoPrediction {
+                group.prediction_scheme.ty = S::DeltaPrediction;
+            }
+        }
+        self
+    }
+
     /// Overrides the quantization resolution of the (single) encoding group.
     pub fn set_quantization(&mut self, quantization: portabilization::Quantization) {
         self.group_cfgs[0]
@@ -209,11 +223,23 @@ impl Config {
     }
 }
 
+/// The order an attribute's values are encoded in.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Sequencing {
+    /// A traversal of the attribute's own connectivity, seeded by the
+    /// edgebreaker traversal. One value per attribute vertex.
+    Traversal,
+    /// The point space in index order. One value per point, so a value split
+    /// across a seam is stored once for each point it belongs to.
+    Linear { num_points: usize },
+}
+
 pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, 'ds, W> {
     cfg: Config,
     writer: &'writer mut W,
     parents: &'encoder [&'parents Attribute],
     ads: AttributeDS<'ds>,
+    sequencing: Sequencing,
     /// Corners of the edgebreaker traversal, used to seed this attribute's sequencing.
     corners_of_edgebreaker: &'encoder [CornerIdx],
     /// Traversal sequence shared by all attributes without interior seams;
@@ -232,6 +258,7 @@ where
         corners_of_edgebreaker: &'encoder [CornerIdx],
         writer: &'writer mut W,
         cfg: Config,
+        sequencing: Sequencing,
         precomputed_sequence: Option<Vec<CornerIdx>>,
     ) -> Self {
         AttributeEncoder {
@@ -239,6 +266,7 @@ where
             writer,
             parents,
             ads,
+            sequencing,
             corners_of_edgebreaker,
             precomputed_sequence,
         }
@@ -255,7 +283,13 @@ where
         }
     }
 
-    pub(super) fn encode<const WRITE_NOW: bool, const BOOST: bool>(self) -> Result<Attribute, Err> {
+    /// Writes this attribute's payload block and returns its portable
+    /// representation together with its portabilization metadata. The metadata
+    /// is returned rather than written because an encoder carrying several
+    /// attributes emits every payload before the first metadata block.
+    pub(super) fn encode<const WRITE_NOW: bool, const BOOST: bool>(
+        self,
+    ) -> Result<(Attribute, Vec<u8>), Err> {
         self.cfg.group_cfgs[0]
             .prediction_scheme
             .ty
@@ -290,7 +324,7 @@ where
     /// default normal path writes, so Google Draco (and our decoder) rebuild the
     /// geometry-derived predicted normals. The input normal values are never read;
     /// only the connectivity-derived value count (the traversal length) is used.
-    fn encode_zero_correction_normal(mut self) -> Result<Attribute, Err> {
+    fn encode_zero_correction_normal(mut self) -> Result<(Attribute, Vec<u8>), Err> {
         let sequence = self.take_sequence();
         let num_values = sequence.len();
 
@@ -323,28 +357,23 @@ where
             self.writer,
         )?;
 
-        // Portabilization metadata last.
-        for byte in port_info_buffer {
-            self.writer.write_u8(byte);
-        }
-
         // Normals are a leaf attribute, so this returned octahedral attribute is
         // never consulted as a parent; an empty 2-component attribute suffices.
-        Ok(Attribute::from_without_removing_duplicates::<
-            NdVector<N, i32>,
-            N,
-        >(
-            self.ads.att_data().get_id(),
-            Vec::new(),
-            AttributeType::Normal,
-            self.ads.att_data().get_domain(),
-            self.ads.att_data().get_parents().clone(),
+        Ok((
+            Attribute::from_without_removing_duplicates::<NdVector<N, i32>, N>(
+                self.ads.att_data().get_id(),
+                Vec::new(),
+                AttributeType::Normal,
+                self.ads.att_data().get_domain(),
+                self.ads.att_data().get_parents().clone(),
+            ),
+            port_info_buffer,
         ))
     }
 
     fn unpack_num_components<const WRITE_NOW: bool, const BOOST: bool, T>(
         self,
-    ) -> Result<Attribute, Err>
+    ) -> Result<(Attribute, Vec<u8>), Err>
     where
         T: DataValue + Copy,
         NdVector<1, T>: Vector<1>,
@@ -364,8 +393,8 @@ where
     }
 
     fn encode_typed<const WRITE_NOW: bool, const BOOST: bool, const N: usize, T>(
-        mut self,
-    ) -> Result<Attribute, Err>
+        self,
+    ) -> Result<(Attribute, Vec<u8>), Err>
     where
         T: DataValue + Copy,
         NdVector<N, T>: Vector<N> + Portable,
@@ -373,14 +402,7 @@ where
         NdVector<N, f32>: Vector<N, Component = f32> + Portable,
     {
         if !BOOST {
-            if !self.corners_of_edgebreaker.is_empty() {
-                let sequence = self.take_sequence();
-                self.encode_impl_edgebreaker::<WRITE_NOW, _, NdVector<N, T>, N>(
-                    sequence.into_iter(),
-                )
-            } else {
-                unimplemented!("Sequential connectivity encoding is not implemented yet");
-            }
+            self.encode_impl::<WRITE_NOW, NdVector<N, T>, N>()
         } else {
             unimplemented!("BOOST is not implemented yet");
             // let corner_table = match self.conn_out {
@@ -397,12 +419,10 @@ where
         }
     }
 
-    fn encode_impl_edgebreaker<const WRITE_NOW: bool, S, Data, const N: usize>(
+    fn encode_impl<const WRITE_NOW: bool, Data, const N: usize>(
         mut self,
-        sequence: S,
-    ) -> Result<Attribute, Err>
+    ) -> Result<(Attribute, Vec<u8>), Err>
     where
-        S: Iterator<Item = CornerIdx> + Clone,
         Data: Vector<N> + Portable,
         NdVector<N, i32>: Vector<N, Component = i32>,
         NdVector<N, f32>: Vector<N, Component = f32> + Portable,
@@ -425,42 +445,64 @@ where
         let port_att = portabilization.portabilize();
 
         match port_att.get_num_components() {
-            1 => self.encode_portabilized::<S, 1>(sequence, port_att, port_info_buffer),
-            2 => self.encode_portabilized::<S, 2>(sequence, port_att, port_info_buffer),
-            3 => self.encode_portabilized::<S, 3>(sequence, port_att, port_info_buffer),
-            4 => self.encode_portabilized::<S, 4>(sequence, port_att, port_info_buffer),
+            1 => self.encode_portabilized::<1>(port_att, port_info_buffer),
+            2 => self.encode_portabilized::<2>(port_att, port_info_buffer),
+            3 => self.encode_portabilized::<3>(port_att, port_info_buffer),
+            4 => self.encode_portabilized::<4>(port_att, port_info_buffer),
             _ => Err(Err::UnsupportedNumComponents(port_att.get_num_components())),
         }
     }
 
-    fn encode_portabilized<S, const N: usize>(
+    fn encode_portabilized<const N: usize>(
         &mut self,
-        sequence: S,
         port_att: Attribute,
         port_info_buffer: Vec<u8>,
-    ) -> Result<Attribute, Err>
+    ) -> Result<(Attribute, Vec<u8>), Err>
     where
-        S: Iterator<Item = CornerIdx>,
         NdVector<N, i32>: Vector<N, Component = i32> + Portable,
     {
+        // Taken before the prediction scheme borrows `self.ads`.
+        let sequence = match self.sequencing {
+            Sequencing::Traversal => Some(self.take_sequence()),
+            Sequencing::Linear { .. } => None,
+        };
+
         let mut prediction_scheme = prediction_scheme::PredictionScheme::new(
             self.cfg.group_cfgs[0].prediction_scheme.ty.clone(),
             self.parents,
             &self.ads,
+            self.cfg.group_cfgs[0]
+                .prediction_transform
+                .portabilization
+                .oct_center(),
         );
 
         // Transform the predicted values
         let mut transform = PredictionTransform::new(self.cfg.group_cfgs[0].prediction_transform);
 
         // Predict and transform the values
-        let mut sequence_record = Vec::new();
-
-        for c in sequence {
-            let val = prediction_scheme.predict(c, &sequence_record, &port_att);
-            let v = self.ads.vertex_idx(c);
-            sequence_record.push(v);
-            let p = self.ads.global_ds().point_idx(c);
-            transform.map_with_tentative_metadata(port_att.get(p), val);
+        match self.sequencing {
+            Sequencing::Traversal => {
+                let mut sequence_record = Vec::new();
+                for c in sequence.expect("a traversal sequence is taken up front") {
+                    let val = prediction_scheme.predict(c, &sequence_record, &port_att);
+                    let v = self.ads.vertex_idx(c);
+                    sequence_record.push(v);
+                    let p = self.ads.global_ds().point_idx(c);
+                    transform.map_with_tentative_metadata(port_att.get(p), val);
+                }
+            }
+            // A linear sequence carries no connectivity, so the only prediction
+            // available is the preceding value, taken as zero at the first
+            // point. `Config::for_sequential` pins the scheme to match.
+            Sequencing::Linear { num_points } => {
+                let mut previous = NdVector::<N, i32>::zero();
+                for p in 0..num_points {
+                    let val: NdVector<N, i32> = port_att.get(PointIdx::from(p));
+                    transform.map_with_tentative_metadata(val, previous);
+                    previous = val;
+                }
+            }
         }
 
         // Write the output
@@ -511,11 +553,7 @@ where
             }
         }
 
-        for byte in port_info_buffer {
-            self.writer.write_u8(byte);
-        }
-
-        Ok(port_att)
+        Ok((port_att, port_info_buffer))
     }
 }
 

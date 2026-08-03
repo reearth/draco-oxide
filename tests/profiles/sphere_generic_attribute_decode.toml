@@ -1,0 +1,34 @@
+# Decodes an attribute carried by the generic attribute encoder.
+#
+# The last byte of an attribute descriptor selects its sequential attribute
+# decoder: 0 generic, 1 integer, 2 quantization, 3 normals. The generic decoder
+# stores values raw in their original component type, with no prediction scheme,
+# no transform and no correction stream behind them. In glTF this is the encoder
+# that carries TANGENT and WEIGHTS_0.
+#
+# sphere_generic_normals.drc is sphere.obj encoded with `draco_encoder -qp 14
+# -qn 0`. Leaving normals unquantized routes them through the generic encoder,
+# so the file exercises that decoder without needing an attribute type the OBJ
+# reader cannot express.
+#
+# The normals travel unquantized and so must come back exactly; positions are
+# quantized at 14 bits and are only near-lossless.
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "sphere_generic_normals.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "sphere.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.01 },
+    { method = "Ssim", min = 0.99, color_by = "Normal" },
+]

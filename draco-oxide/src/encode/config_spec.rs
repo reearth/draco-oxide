@@ -14,6 +14,9 @@
 //! [edgebreaker]
 //! traversal = "Valence"
 //!
+//! [sequential]
+//! indices = "Direct"                   # or "Compressed"
+//!
 //! [attributes.Position]
 //! prediction   = "MeshParallelogramPrediction"
 //! quantization = { bits = 14 }        # or { max_error = 0.001 }
@@ -30,6 +33,7 @@ use serde::Deserialize;
 use draco_oxide_core::attribute::AttributeType;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
 use draco_oxide_core::codec::connectivity::edgebreaker::EdgebreakerKind;
+use draco_oxide_core::codec::connectivity::sequential::Method as SequentialMethod;
 use draco_oxide_core::types::ConfigType;
 
 use super::attribute::{AttributeConfig, NormalEncoding, PredictionTransformType, Quantization};
@@ -43,6 +47,7 @@ pub(super) struct ConfigSpec {
     metadata: bool,
     connectivity: ConnectivityName,
     edgebreaker: EdgebreakerSpec,
+    sequential: SequentialSpec,
     attributes: HashMap<AttributeName, AttributeConfigSpec>,
 }
 
@@ -58,7 +63,9 @@ impl From<ConfigSpec> for Config {
                 traversal: spec.edgebreaker.traversal.into(),
                 use_single_connectivity: spec.edgebreaker.use_single_connectivity,
             }),
-            ConnectivityName::Sequential => cfg.with_sequential(SequentialConfig::default()),
+            ConnectivityName::Sequential => cfg.with_sequential(SequentialConfig {
+                encoder_method: spec.sequential.indices.into(),
+            }),
         };
 
         for (name, aspec) in spec.attributes {
@@ -81,6 +88,28 @@ enum ConnectivityName {
 struct EdgebreakerSpec {
     traversal: TraversalName,
     use_single_connectivity: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct SequentialSpec {
+    indices: IndexStorageName,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+enum IndexStorageName {
+    #[default]
+    Direct,
+    Compressed,
+}
+
+impl From<IndexStorageName> for SequentialMethod {
+    fn from(i: IndexStorageName) -> Self {
+        match i {
+            IndexStorageName::Direct => SequentialMethod::DirectIndices,
+            IndexStorageName::Compressed => SequentialMethod::Compressed,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]

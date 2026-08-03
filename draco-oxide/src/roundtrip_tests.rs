@@ -373,7 +373,7 @@ mod connectivity {
         let mut reader = draco_oxide_core::bit_coder::Reader::new(&buffer);
         let header = decode_header(&mut reader).unwrap();
         let conn = decode_connectivity(&mut reader, header.encoder_method).unwrap();
-        conn.position_faces().0
+        conn.edgebreaker().unwrap().position_faces().0
     }
 
     /// (num_vertices, num_faces, num_edges, sorted vertex-degree sequence).
@@ -475,9 +475,7 @@ mod connectivity {
 mod attribute_roundtrip_util {
     use crate::io::obj::load_obj;
     use draco_oxide_core::attribute::{Attribute, AttributeType};
-    use draco_oxide_core::codec::attribute::geom::{
-        into_faithful_oct_quantization, octahedral_transform,
-    };
+    use draco_oxide_core::codec::attribute::geom::{float_vector_to_oct, oct_center};
     use draco_oxide_core::mesh::Mesh;
     use draco_oxide_core::types::{NdVector, PointIdx, Vector};
 
@@ -543,16 +541,11 @@ mod attribute_roundtrip_util {
 
     /// Replays the encoder's octahedral quantization on all points of `att`.
     fn quantize_octahedral(att: &Attribute, bits: u8) -> Vec<Vec<i32>> {
-        let scale = ((1u64 << (bits - 1)) - 1) as f32;
+        let center = oct_center(bits);
         (0..att.len())
             .map(|p| {
                 let v: NdVector<3, f32> = att.get(PointIdx::from(p));
-                let oct = octahedral_transform(v) + NdVector::<2, f32>::from([1.0, 1.0]);
-                let q = NdVector::<2, i32>::from([
-                    (*oct.get(0) * scale) as i32,
-                    (*oct.get(1) * scale) as i32,
-                ]);
-                let q = into_faithful_oct_quantization(q, bits);
+                let q = float_vector_to_oct(v, center);
                 vec![*q.get(0), *q.get(1)]
             })
             .collect()
@@ -1034,6 +1027,7 @@ mod attribute_seams {
             header.encoder_method,
         )
         .unwrap();
+        let conn = conn.edgebreaker().unwrap();
         let num_corners = conn.num_faces * 3;
         (0..conn.num_attribute_data)
             .map(|i| count_attribute_vertices(&conn.attribute_corner_table(i), num_corners))

@@ -1,8 +1,8 @@
 use draco_oxide_core::attribute::Attribute;
 use draco_oxide_core::attribute::AttributeType;
 use draco_oxide_core::bit_coder::ByteWriter;
-use draco_oxide_core::codec::attribute::geom::into_faithful_oct_quantization;
-use draco_oxide_core::codec::attribute::geom::octahedral_transform;
+use draco_oxide_core::codec::attribute::geom::float_vector_to_oct;
+use draco_oxide_core::codec::attribute::geom::oct_center;
 use draco_oxide_core::codec::attribute::Portable;
 use draco_oxide_core::safety_assert;
 use draco_oxide_core::types::AttributeValueIdx;
@@ -52,21 +52,13 @@ where
     }
 
     fn portabilize_value(&mut self, val: Data) -> NdVector<2, i32> {
-        let val_oct = octahedral_transform(val) + NdVector::<2, f32>::from([1.0, 1.0]);
+        let out = float_vector_to_oct(val, oct_center(self.quantization_bits));
         safety_assert!(
-            *val_oct.get(0) >= 0.0
-                && *val_oct.get(0) <= 2.0
-                && *val_oct.get(1) >= 0.0
-                && *val_oct.get(1) <= 2.0,
-            "Octahedral transformed value out of bounds: {:?}",
-            val_oct
+            *out.get(0) >= 0 && *out.get(1) >= 0,
+            "Octahedral quantized value out of bounds: {:?}",
+            out
         );
-        let quantized = val_oct * ((1 << (self.quantization_bits - 1)) - 1) as f32;
-        let mut out = NdVector::<2, i32>::zero();
-        for i in 0..2 {
-            *out.get_mut(i) = *quantized.get(i) as i32;
-        }
-        into_faithful_oct_quantization(out, self.quantization_bits)
+        out
     }
 }
 

@@ -1,0 +1,28 @@
+# Decodes positions carried by the generic attribute encoder.
+#
+# The generic encoder stores values verbatim in their declared component type
+# rather than as quantized integers, so these positions are lossless and the
+# comparison can be exact. It also leaves the attribute with no portable
+# representation, which is why Draco picks a non-geometric normal predictor
+# here: a generic attribute can never be a prediction parent.
+#
+# sphere_unquantized_positions.drc is sphere.obj under `draco_encoder -cl 7
+# -qp 0 -qn 8`.
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "sphere_unquantized_positions.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "sphere.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.0000001 },
+]

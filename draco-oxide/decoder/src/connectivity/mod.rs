@@ -1,17 +1,45 @@
-//! Connectivity decoding, dispatched on the encoder method. Only edgebreaker is
-//! handled; sequential connectivity is not implemented.
+//! Connectivity decoding, dispatched on the encoder method.
 
 mod edgebreaker;
+mod sequential;
 
 use crate::Err;
 use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::header::EncoderMethod;
 use draco_oxide_core::mesh::ds::{AttributeCornerTable, CornerTable};
-use draco_oxide_core::types::{CornerIdx, VecCornerIdx, VertexIdx};
+use draco_oxide_core::types::{CornerIdx, PointIdx, VecCornerIdx, VertexIdx};
 use std::collections::HashMap;
 
+/// The decoded connectivity, in the shape the encoder method produced it.
+pub enum Connectivity {
+    /// A traversal-encoded corner table; attributes are sequenced over it.
+    Edgebreaker(EdgebreakerConnectivity),
+    /// Plain face indices into a flat point space; attributes are sequenced
+    /// linearly over that space.
+    Sequential(SequentialConnectivity),
+}
+
+impl Connectivity {
+    /// The corner-table connectivity, or `None` when the stream was encoded
+    /// sequentially and carries none.
+    pub fn edgebreaker(&self) -> Option<&EdgebreakerConnectivity> {
+        match self {
+            Connectivity::Edgebreaker(conn) => Some(conn),
+            Connectivity::Sequential(_) => None,
+        }
+    }
+}
+
+/// Face indices over a flat point space, with no topology attached.
+pub struct SequentialConnectivity {
+    /// Faces as point triples, in encoded order.
+    pub faces: Vec<[PointIdx; 3]>,
+    /// The size of the point space, and hence of every attribute's value list.
+    pub num_points: usize,
+}
+
 /// The decoded position connectivity plus the data the attribute stages need.
-pub struct Connectivity {
+pub struct EdgebreakerConnectivity {
     /// Position corner table (opposite relation over `num_faces * 3` corners).
     pub corner_table: CornerTable,
     /// Per-corner position vertex.
@@ -36,7 +64,7 @@ pub struct Connectivity {
     pub attribute_seams: Vec<Vec<bool>>,
 }
 
-impl Connectivity {
+impl EdgebreakerConnectivity {
     /// Faces as position-vertex triples, densely relabeled so referenced vertices
     /// occupy `0..k`. Returns the faces and `k`.
     pub fn position_faces(&self) -> (Vec<[usize; 3]>, usize) {
@@ -75,8 +103,7 @@ pub fn decode_connectivity(
     encoder_method: EncoderMethod,
 ) -> Result<Connectivity, Err> {
     match encoder_method {
-        EncoderMethod::Edgebreaker => edgebreaker::decode(reader),
-        // Google falls back to sequential for tiny meshes; decode arrives in B.
-        EncoderMethod::Sequential => Err(Err::Unimplemented),
+        EncoderMethod::Edgebreaker => Ok(Connectivity::Edgebreaker(edgebreaker::decode(reader)?)),
+        EncoderMethod::Sequential => Ok(Connectivity::Sequential(sequential::decode(reader)?)),
     }
 }

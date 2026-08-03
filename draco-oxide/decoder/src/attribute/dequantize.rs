@@ -3,7 +3,7 @@
 //! Google's `TransformAttributesToOriginalFormat`.
 
 use crate::{AttributeTransform, Err};
-use draco_oxide_core::attribute::Attribute;
+use draco_oxide_core::attribute::{Attribute, ComponentDataType};
 use draco_oxide_core::codec::attribute::geom::octahedral_inverse_transform;
 use draco_oxide_core::types::{AttributeValueIdx, NdVector, Vector};
 
@@ -28,7 +28,37 @@ pub(crate) fn dequantize_attribute(
             _ => Err(Err::MalformedAttribute("unsupported number of components")),
         },
         AttributeTransform::Octahedral { bits } => dequantize_octahedral(att, *bits),
+        // Integer components are already their own value; floats travelled as
+        // their bit pattern.
+        AttributeTransform::Raw { component_type } => match component_type {
+            ComponentDataType::F32 => match att.get_num_components() {
+                1 => reinterpret_f32::<1>(att),
+                2 => reinterpret_f32::<2>(att),
+                3 => reinterpret_f32::<3>(att),
+                4 => reinterpret_f32::<4>(att),
+                _ => Err(Err::MalformedAttribute("unsupported number of components")),
+            },
+            _ => Ok(att),
+        },
     }
+}
+
+/// Reads back the f32 values a generic attribute carried as bit patterns.
+fn reinterpret_f32<const N: usize>(att: Attribute) -> Result<Attribute, Err>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+    NdVector<N, f32>: Vector<N, Component = f32>,
+{
+    let mut values = Vec::with_capacity(att.num_unique_values());
+    for i in 0..att.num_unique_values() {
+        let bits: NdVector<N, i32> = att.get_unique_val(AttributeValueIdx::from(i));
+        let mut v = NdVector::<N, f32>::zero();
+        for j in 0..N {
+            *v.get_mut(j) = f32::from_bits(*bits.get(j) as u32);
+        }
+        values.push(v);
+    }
+    Ok(rebuild(att, values))
 }
 
 /// Inverse of the encoder's coordinate-wise quantization:

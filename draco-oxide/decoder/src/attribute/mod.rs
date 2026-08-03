@@ -6,11 +6,12 @@ mod ds;
 mod inverse_transform;
 mod prediction;
 mod sequence;
+mod sequential;
 
 #[cfg(feature = "dequantize")]
 pub(crate) mod dequantize;
 
-use crate::connectivity::Connectivity;
+use crate::connectivity::{Connectivity, EdgebreakerConnectivity};
 use crate::entropy::{rans::RansSymbolDecoder, start_symbol_decoder, unzigzag, AnySymbolDecoder};
 use crate::{AttributeTransform, Err};
 use draco_oxide_core::attribute::{
@@ -18,7 +19,7 @@ use draco_oxide_core::attribute::{
 };
 use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::attribute::prediction_scheme::mesh_normal_prediction::{
-    accumulate_face_normal_sums, sum_to_prediction,
+    accumulate_face_normal_sums, canonical_normal_to_oct, sum_to_canonical_normal,
 };
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
@@ -27,15 +28,21 @@ use draco_oxide_core::mesh::ds::{GenericAttributeDs, GenericCornerTable, Identit
 use draco_oxide_core::types::{
     AttributeValueIdx, CornerIdx, NdVector, PointIdx, VecPointIdx, Vector, VertexIdx,
 };
+use draco_oxide_core::utils::bit_coder::leb128_read;
 use ds::{build_attribute_ds, build_ds, GeneralDs, Input};
 
 use inverse_transform::InverseTransform;
 use prediction::Predictor;
 
 /// The portabilization type ids on the wire.
+const PORT_GENERIC: u8 = 0;
 const PORT_TO_BITS: u8 = 1;
 const PORT_QUANTIZATION_COORDINATE_WISE: u8 = 2;
 const PORT_OCTAHEDRAL: u8 = 3;
+
+/// The attribute-data id (`-1` on the wire) an attribute carries when it rides
+/// the position connectivity rather than a seam stream of its own.
+const NO_ATTRIBUTE_DATA: u8 = 0xFF;
 
 /// The decoded attribute section: the point-indexed faces plus, per attribute,
 /// the portable integer attribute and its dequantization parameters.
@@ -47,18 +54,28 @@ pub(crate) struct DecodedAttributes {
 
 /// One attribute's wire descriptor.
 struct Descriptor {
+    /// Index of the attribute connectivity this attribute rides, into the
+    /// connectivity section's seam streams. [`NO_ATTRIBUTE_DATA`] means it
+    /// rides the position connectivity instead.
+    att_data_id: u8,
     att_type: AttributeType,
-    /// The original component type. Unread: the portable representation is
-    /// always I32 and dequantization reconstructs f32.
-    #[allow(dead_code)]
+    /// The declared component type. Only the generic encoder keeps values in
+    /// it; the other encoders force the portable representation to I32.
     component_type: ComponentDataType,
     num_components: usize,
-    uid: u8,
+    uid: u32,
     port_type: u8,
     domain: AttributeDomain,
 }
 
 impl Descriptor {
+    /// Whether this attribute can be another attribute's prediction parent.
+    /// The generic encoder builds no portable representation, so an attribute
+    /// it carries is never available to predict from.
+    fn is_prediction_parent(&self) -> bool {
+        self.att_type == AttributeType::Position && self.port_type != PORT_GENERIC
+    }
+
     /// The component count of the portable (quantized-integer) representation:
     /// octahedral attributes travel as 2-component values regardless of their
     /// original dimension.
@@ -76,23 +93,35 @@ pub(crate) fn decode_attributes(
     reader: &mut Reader<'_>,
     conn: &Connectivity,
 ) -> Result<DecodedAttributes, Err> {
+    match conn {
+        Connectivity::Edgebreaker(conn) => decode_traversed_attributes(reader, conn),
+        Connectivity::Sequential(conn) => sequential::decode_attributes(reader, conn),
+    }
+}
+
+/// Decodes the attribute section of an edgebreaker stream, where each attribute
+/// is sequenced over a traversal of its own connectivity.
+fn decode_traversed_attributes(
+    reader: &mut Reader<'_>,
+    conn: &EdgebreakerConnectivity,
+) -> Result<DecodedAttributes, Err> {
     let num_atts = reader.read_u8()? as usize;
 
-    // Framing part 1: per-attribute decoder id, domain, and traversal method.
-    let mut domains = Vec::with_capacity(num_atts);
+    // Framing part 1: per-attribute connectivity id, domain, and traversal method.
+    let mut headers = Vec::with_capacity(num_atts);
     for _ in 0..num_atts {
-        let _decoder_id = reader.read_u8()?;
+        let att_data_id = reader.read_u8()?;
         let domain = AttributeDomain::read_from(reader)?;
         let traversal = reader.read_u8()?;
         if traversal != 0 {
             return Err(Err::Unimplemented);
         }
-        domains.push(domain);
+        headers.push((att_data_id, domain));
     }
 
     // Framing part 2: per-attribute descriptors.
     let mut descriptors = Vec::with_capacity(num_atts);
-    for domain in domains {
+    for (att_data_id, domain) in headers {
         let atts_in_encoder = reader.read_u8()?;
         if atts_in_encoder != 1 {
             return Err(Err::MalformedAttribute(
@@ -103,9 +132,10 @@ pub(crate) fn decode_attributes(
         let component_type = ComponentDataType::read_from(reader)?;
         let num_components = reader.read_u8()? as usize;
         let _normalized = reader.read_u8()?;
-        let uid = reader.read_u8()?;
+        let uid = leb128_read(reader)? as u32;
         let port_type = reader.read_u8()?;
         descriptors.push(Descriptor {
+            att_data_id,
             att_type,
             component_type,
             num_components,
@@ -117,29 +147,24 @@ pub(crate) fn decode_attributes(
 
     let num_corners = conn.num_faces * 3;
 
-    // Per-attribute seam edges, in attribute order. The position attribute
-    // carries no encoded seams; boundary edges (its only seams) are already
-    // seams for every attribute through the corner table itself.
+    // Per-attribute seam edges, in attribute order. An attribute names its seam
+    // stream by `att_data_id`, which is independent of the order the descriptors
+    // arrive in. An attribute on the position domain rides the position
+    // connectivity whatever its id, and carries no encoded seams: boundary edges
+    // (its only seams) are already seams for every attribute through the corner
+    // table itself.
     let mut seams: Vec<Vec<bool>> = Vec::with_capacity(num_atts);
-    let mut seam_idx = 0;
     for desc in &descriptors {
-        if desc.att_type == AttributeType::Position {
-            seams.push(vec![false; num_corners]);
-        } else {
-            let s = conn
-                .attribute_seams
-                .get(seam_idx)
-                .ok_or(Err::MalformedAttribute(
-                    "more non-position attributes than seam streams",
-                ))?;
-            seam_idx += 1;
+        if desc.domain == AttributeDomain::Corner && desc.att_data_id != NO_ATTRIBUTE_DATA {
+            let s = conn.attribute_seams.get(desc.att_data_id as usize).ok_or(
+                Err::MalformedAttribute(
+                    "attribute names a seam stream the connectivity did not encode",
+                ),
+            )?;
             seams.push(s.clone());
+        } else {
+            seams.push(vec![false; num_corners]);
         }
-    }
-    if seam_idx != conn.num_attribute_data {
-        return Err(Err::MalformedAttribute(
-            "attribute count does not match the connectivity seam streams",
-        ));
     }
 
     let seam_sets: Vec<&[bool]> = seams.iter().map(|s| s.as_slice()).collect();
@@ -268,19 +293,15 @@ fn decode_payloads<D: GroupWalkDs>(
         }
     }
 
-    // The wire holds one contiguous block per attribute, so every block is
-    // parsed before the first group walk starts.
+    // Every attribute rides its own encoder here, so its payload and
+    // portabilization blocks are adjacent. Both are read before the first group
+    // walk starts.
     let mut parsed: Vec<Option<ParsedPayload>> = Vec::with_capacity(adss.len());
+    let mut dequants: Vec<Option<AttributeTransform>> = Vec::with_capacity(adss.len());
     for (i, desc) in descriptors.iter().enumerate() {
         let num_values = group_num_values[group_ids[i]];
-        let payload = match desc.portable_num_components() {
-            1 => ParsedPayload::N1(parse_payload::<1>(reader, num_values, desc)?),
-            2 => ParsedPayload::N2(parse_payload::<2>(reader, num_values, desc)?),
-            3 => ParsedPayload::N3(parse_payload::<3>(reader, num_values, desc)?),
-            4 => ParsedPayload::N4(parse_payload::<4>(reader, num_values, desc)?),
-            _ => return Err(Err::MalformedAttribute("unsupported number of components")),
-        };
-        parsed.push(Some(payload));
+        parsed.push(Some(parse_payload_dispatched(reader, num_values, desc)?));
+        dequants.push(Some(read_portabilization(reader, desc)?));
     }
 
     // Waves order the parent dependency: geometric schemes consult the decoded
@@ -328,7 +349,7 @@ fn decode_payloads<D: GroupWalkDs>(
                     );
                     let parent_stepper = descriptors[..i]
                         .iter()
-                        .position(|d| d.att_type == AttributeType::Position)
+                        .position(|d| d.is_prediction_parent())
                         .and_then(|j| members.iter().position(|&m| m == j));
                     match (is_normal, parent_stepper) {
                         (true, Some(s)) => {
@@ -349,7 +370,7 @@ fn decode_payloads<D: GroupWalkDs>(
             for &i in &members {
                 let parent = if parent_wave {
                     let parent = descriptors[..i].iter().zip(&slots).find_map(|(d, slot)| {
-                        if d.att_type == AttributeType::Position {
+                        if d.is_prediction_parent() {
                             slot.as_ref().map(|(a, _)| a)
                         } else {
                             None
@@ -368,6 +389,7 @@ fn decode_payloads<D: GroupWalkDs>(
                 member_adss.push(&adss[i]);
                 group_members.push(GroupMember {
                     payload,
+                    dequant: dequants[i].take().expect("each attribute joins one group"),
                     desc: &descriptors[i],
                     parent,
                 });
@@ -380,6 +402,7 @@ fn decode_payloads<D: GroupWalkDs>(
                 let parent_id = AttributeId::new(descriptors[members[parent_stepper]].uid as usize);
                 fused_normals.push(FusedNormal {
                     payload: p,
+                    dequant: dequants[i].take().expect("each attribute joins one group"),
                     desc: &descriptors[i],
                     parent_id,
                     parent_stepper,
@@ -423,6 +446,7 @@ fn decode_payloads<D: GroupWalkDs>(
 /// one.
 struct GroupMember<'p> {
     payload: ParsedPayload<'p>,
+    dequant: AttributeTransform,
     desc: &'p Descriptor,
     parent: Option<&'p Attribute>,
 }
@@ -430,6 +454,7 @@ struct GroupMember<'p> {
 /// One fused normal attribute's inputs to a group walk (see [`NormalFuser`]).
 struct FusedNormal<'p> {
     payload: Parsed<'p, 2>,
+    dequant: AttributeTransform,
     desc: &'p Descriptor,
     parent_id: AttributeId,
     parent_stepper: usize,
@@ -557,12 +582,15 @@ fn run_group_impl<'p, D: GenericAttributeDs>(
     debug_assert_eq!(members.len(), member_adss.len());
     let mut steppers: Vec<AnyStepper<'_, D>> = Vec::with_capacity(members.len());
     for (m, &ads) in members.into_iter().zip(member_adss) {
-        steppers.push(build_stepper(m.payload, m.desc, ads, m.parent, num_values)?);
+        steppers.push(build_stepper(
+            m.payload, m.dequant, m.desc, ads, m.parent, num_values,
+        )?);
     }
     let mut fusers: Vec<NormalFuser> = Vec::with_capacity(fused.len());
     for f in fused {
         fusers.push(NormalFuser::new(
             f.payload,
+            f.dequant,
             f.desc,
             f.parent_id,
             rep,
@@ -665,10 +693,10 @@ where
     }
 }
 
-/// One attribute's parsed wire payload: prediction/transform ids, the
-/// correction stream, the scheme and transform metadata (in the
-/// scheme-dependent order the encoder writes them), and the portabilization
-/// parameters. Everything the reversal walk consumes.
+/// One attribute's parsed payload block: prediction/transform ids, the
+/// correction stream, and the scheme and transform metadata (in the
+/// scheme-dependent order the encoder writes them). The portabilization
+/// parameters live in their own block, read by [`read_portabilization`].
 struct Parsed<'a, const N: usize>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
@@ -678,7 +706,6 @@ where
     flips: Vec<bool>,
     orientations: Vec<bool>,
     transform: InverseTransform,
-    dequant: AttributeTransform,
 }
 
 /// [`Parsed`] behind the component-count dispatch.
@@ -710,7 +737,22 @@ impl ParsedPayload<'_> {
     }
 }
 
-/// Parses one attribute's contiguous payload block off the wire.
+/// [`parse_payload`] behind the portable component-count dispatch.
+fn parse_payload_dispatched<'a>(
+    reader: &mut Reader<'a>,
+    num_values: usize,
+    desc: &Descriptor,
+) -> Result<ParsedPayload<'a>, Err> {
+    Ok(match desc.portable_num_components() {
+        1 => ParsedPayload::N1(parse_payload::<1>(reader, num_values, desc)?),
+        2 => ParsedPayload::N2(parse_payload::<2>(reader, num_values, desc)?),
+        3 => ParsedPayload::N3(parse_payload::<3>(reader, num_values, desc)?),
+        4 => ParsedPayload::N4(parse_payload::<4>(reader, num_values, desc)?),
+        _ => return Err(Err::MalformedAttribute("unsupported number of components")),
+    })
+}
+
+/// Parses one attribute's payload block off the wire.
 fn parse_payload<'a, const N: usize>(
     reader: &mut Reader<'a>,
     num_values: usize,
@@ -718,8 +760,22 @@ fn parse_payload<'a, const N: usize>(
 ) -> Result<Parsed<'a, N>, Err>
 where
     NdVector<N, i32>: Vector<N, Component = i32> + Portable,
-    NdVector<N, f32>: Vector<N, Component = f32> + Portable,
 {
+    // The generic encoder writes no header at all: the payload is the values
+    // themselves, in their declared component type. Modelled as an unpredicted,
+    // untransformed stream so the reversal walk is shared with every other
+    // encoder.
+    if desc.port_type == PORT_GENERIC {
+        let values = read_raw_values::<N>(reader, num_values, desc.component_type)?;
+        return Ok(Parsed {
+            scheme_ty: PredictionSchemeType::NoPrediction,
+            corrections: Corrections::Eager(values),
+            flips: Vec::new(),
+            orientations: Vec::new(),
+            transform: InverseTransform::None,
+        });
+    }
+
     let scheme_ty = prediction::read_scheme_id(reader)?;
     let transform_id = reader.read_u8()?;
 
@@ -768,17 +824,50 @@ where
         _ => InverseTransform::read_from(reader, transform_id)?,
     };
 
-    // Portabilization (dequantization) parameters come last.
-    let dequant = read_portabilization::<N>(reader, desc.port_type)?;
-
     Ok(Parsed {
         scheme_ty,
         corrections,
         flips,
         orientations,
         transform,
-        dequant,
     })
+}
+
+/// Reads a generic attribute's values: `num_values` entries of `N` components,
+/// each the little-endian encoding of one `component_type`, widened into the
+/// i32 the portable representation carries. Floats travel as their bit pattern
+/// and unsigned types as their two's complement; both are reversed by
+/// [`AttributeTransform::Raw`].
+fn read_raw_values<const N: usize>(
+    reader: &mut Reader<'_>,
+    num_values: usize,
+    component_type: ComponentDataType,
+) -> Result<Vec<NdVector<N, i32>>, Err>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    // 64-bit components do not fit the i32 portable representation.
+    if component_type.size() > 4 {
+        return Err(Err::Unimplemented);
+    }
+    let mut out = Vec::with_capacity(num_values);
+    for _ in 0..num_values {
+        let mut v = NdVector::<N, i32>::zero();
+        for i in 0..N {
+            *v.get_mut(i) = match component_type {
+                ComponentDataType::I8 => reader.read_u8()? as i8 as i32,
+                ComponentDataType::U8 => reader.read_u8()? as i32,
+                ComponentDataType::I16 => reader.read_u16()? as i16 as i32,
+                ComponentDataType::U16 => reader.read_u16()? as i32,
+                ComponentDataType::I32 | ComponentDataType::U32 | ComponentDataType::F32 => {
+                    reader.read_u32()? as i32
+                }
+                _ => return Err(Err::MalformedAttribute("invalid component type")),
+            };
+        }
+        out.push(v);
+    }
+    Ok(out)
 }
 
 /// One attribute's state through a group walk: the partially filled attribute,
@@ -802,6 +891,7 @@ where
 {
     fn new(
         parsed: Parsed<'p, N>,
+        dequant: AttributeTransform,
         desc: &Descriptor,
         ads: &'p D,
         parent: Option<&'p Attribute>,
@@ -826,6 +916,7 @@ where
             ads,
             parsed.flips,
             parsed.orientations,
+            parsed.transform.oct_center(),
         )?;
         let zigzagged = parsed.transform.corrections_are_zigzagged();
         Ok(Self {
@@ -834,7 +925,7 @@ where
             transform: parsed.transform,
             corrections: parsed.corrections,
             zigzagged,
-            dequant: parsed.dequant,
+            dequant,
         })
     }
 
@@ -911,16 +1002,25 @@ impl<'p, D: GenericAttributeDs> AnyStepper<'p, D> {
 
 fn build_stepper<'p, D: GenericAttributeDs>(
     payload: ParsedPayload<'p>,
+    dequant: AttributeTransform,
     desc: &Descriptor,
     ads: &'p D,
     parent: Option<&'p Attribute>,
     num_values: usize,
 ) -> Result<AnyStepper<'p, D>, Err> {
     Ok(match payload {
-        ParsedPayload::N1(p) => AnyStepper::N1(Stepper::new(p, desc, ads, parent, num_values)?),
-        ParsedPayload::N2(p) => AnyStepper::N2(Stepper::new(p, desc, ads, parent, num_values)?),
-        ParsedPayload::N3(p) => AnyStepper::N3(Stepper::new(p, desc, ads, parent, num_values)?),
-        ParsedPayload::N4(p) => AnyStepper::N4(Stepper::new(p, desc, ads, parent, num_values)?),
+        ParsedPayload::N1(p) => {
+            AnyStepper::N1(Stepper::new(p, dequant, desc, ads, parent, num_values)?)
+        }
+        ParsedPayload::N2(p) => {
+            AnyStepper::N2(Stepper::new(p, dequant, desc, ads, parent, num_values)?)
+        }
+        ParsedPayload::N3(p) => {
+            AnyStepper::N3(Stepper::new(p, dequant, desc, ads, parent, num_values)?)
+        }
+        ParsedPayload::N4(p) => {
+            AnyStepper::N4(Stepper::new(p, dequant, desc, ads, parent, num_values)?)
+        }
     })
 }
 
@@ -949,6 +1049,7 @@ struct NormalFuser {
 impl NormalFuser {
     fn new<D: GenericAttributeDs>(
         parsed: Parsed<'_, 2>,
+        dequant: AttributeTransform,
         desc: &Descriptor,
         parent_id: AttributeId,
         ads: &D,
@@ -975,7 +1076,7 @@ impl NormalFuser {
             flips: parsed.flips,
             zigzagged,
             transform: parsed.transform,
-            dequant: parsed.dequant,
+            dequant,
             parent_stepper,
             rank_of: vec![usize::MAX; ads.vertex_index_bound()],
         }
@@ -995,15 +1096,17 @@ impl NormalFuser {
     /// sums in one sequential face pass over the completed positions, then
     /// applies each vertex's flip and correction at its recorded rank.
     fn finish_walk<D: GenericAttributeDs>(&mut self, ads: &D, pos: &Attribute) {
+        let center = self.transform.oct_center();
         let sums = accumulate_face_normal_sums(ads, pos, self.rank_of.len());
         for (v, &k) in self.rank_of.iter().enumerate() {
             if k == usize::MAX {
                 continue;
             }
-            let mut pred = sum_to_prediction::<2>(sums[v]);
+            let mut pred_3d = sum_to_canonical_normal(sums[v], center);
             if self.flips.get(k).copied().unwrap_or(false) {
-                pred *= -1;
+                pred_3d *= -1;
             }
+            let pred = canonical_normal_to_oct::<2>(pred_3d, center);
             let mut corr = self.corrections[k];
             if self.zigzagged {
                 for i in 0..2 {
@@ -1116,23 +1219,27 @@ fn decode_group<D: GenericAttributeDs>(
     Ok(())
 }
 
-/// Parses the portabilization metadata for `port_type` into the dequantization
-/// parameters surfaced through [`AttributeTransform`].
-fn read_portabilization<const N: usize>(
+/// Parses one attribute's portabilization metadata into the dequantization
+/// parameters surfaced through [`AttributeTransform`]. This block is written
+/// separately from the payload: an encoder carrying several attributes emits
+/// every payload before the first of these.
+fn read_portabilization(
     reader: &mut Reader<'_>,
-    port_type: u8,
-) -> Result<AttributeTransform, Err>
-where
-    NdVector<N, f32>: Vector<N, Component = f32> + Portable,
-{
-    match port_type {
+    desc: &Descriptor,
+) -> Result<AttributeTransform, Err> {
+    match desc.port_type {
+        PORT_GENERIC => Ok(AttributeTransform::Raw {
+            component_type: desc.component_type,
+        }),
         PORT_TO_BITS => Ok(AttributeTransform::None),
         PORT_QUANTIZATION_COORDINATE_WISE => {
-            let min = NdVector::<N, f32>::read_from(reader)?;
+            let min = (0..desc.portable_num_components())
+                .map(|_| f32::read_from(reader))
+                .collect::<Result<Vec<_>, _>>()?;
             let delta_max = f32::read_from(reader)?;
             let bits = reader.read_u8()?;
             Ok(AttributeTransform::Quantized {
-                min: (0..N).map(|i| *min.get(i)).collect(),
+                min,
                 delta_max,
                 bits,
             })

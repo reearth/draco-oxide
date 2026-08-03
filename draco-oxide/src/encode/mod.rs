@@ -126,6 +126,7 @@ impl Config {
     /// Called automatically at the top of [`encode`].
     pub fn validate(&self) -> Result<(), ConfigError> {
         use draco_oxide_core::attribute::AttributeType;
+        use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
         use draco_oxide_core::codec::connectivity::edgebreaker::EdgebreakerKind;
 
         // Connectivity: reject the unimplemented predictive edgebreaker traversal.
@@ -134,8 +135,29 @@ impl Config {
                 return Err(ConfigError::UnsupportedTraversal);
             }
         }
+        let sequential = matches!(self.connectivity, ConnectivityConfig::Sequential(_));
 
         for (&ty, over) in self.attribute.overrides() {
+            // A sequential stream carries no connectivity, so nothing can
+            // predict from the mesh: the built-in mesh defaults degrade to
+            // delta, but an explicit request for one cannot be honored, and
+            // trusting a geometry-derived normal prediction is meaningless.
+            if sequential {
+                if let Some(scheme) = &over.prediction {
+                    if !matches!(
+                        scheme,
+                        PredictionSchemeType::DeltaPrediction | PredictionSchemeType::NoPrediction
+                    ) {
+                        return Err(ConfigError::MeshPredictionUnderSequential(
+                            scheme.to_string(),
+                        ));
+                    }
+                }
+                if over.normal_encoding == Some(NormalEncoding::PredictedOnly) {
+                    return Err(ConfigError::PredictedNormalsUnderSequential);
+                }
+            }
+
             if over.normal_encoding.is_some() && ty != AttributeType::Normal {
                 return Err(ConfigError::NormalEncodingOnNonNormal(ty));
             }
@@ -220,10 +242,14 @@ fn allowed_transforms(
 #[remain::sorted]
 #[derive(Error, Debug)]
 pub enum ConfigError {
+    #[error("prediction scheme {0} needs mesh connectivity, which sequential encoding omits")]
+    MeshPredictionUnderSequential(String),
     #[error("normals accept only an explicit bit count (octahedral error is angular)")]
     NonBitsQuantizationForNormal,
     #[error("normal encoding was set on a non-normal attribute ({0:?})")]
     NormalEncodingOnNonNormal(draco_oxide_core::attribute::AttributeType),
+    #[error("geometry-predicted normals need mesh connectivity, which sequential encoding omits")]
+    PredictedNormalsUnderSequential,
     #[error("prediction scheme {scheme} is not valid for attribute type {ty:?}")]
     PredictionSchemeForType {
         ty: draco_oxide_core::attribute::AttributeType,

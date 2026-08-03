@@ -54,6 +54,15 @@ impl InverseTransform {
         }
     }
 
+    /// The octahedral lattice this transform operates on, or `0` if it is not
+    /// octahedral.
+    pub(crate) fn oct_center(&self) -> i32 {
+        match *self {
+            InverseTransform::OctahedralOrthogonal { center, .. } => center,
+            _ => 0,
+        }
+    }
+
     /// Whether the encoded corrections are zigzag-mapped and need `unzigzag`.
     pub(crate) fn corrections_are_zigzagged(&self) -> bool {
         matches!(

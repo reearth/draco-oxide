@@ -5,7 +5,6 @@ pub(crate) mod sequential;
 use std::fmt::Debug;
 
 use crate::encode::connectivity::edgebreaker::{DefaultTraversal, ValenceTraversal};
-use draco_oxide_core::attribute::AttributeType;
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::connectivity::edgebreaker::EdgebreakerKind;
 use draco_oxide_core::mesh::ds::AttributeDS;
@@ -70,12 +69,9 @@ where
             #[cfg(feature = "evaluation")]
             eval::scope_begin("sequential", writer);
 
-            let num_points = adss
-                .iter()
-                .find(|ads| ads.att_data().get_attribute_type() == AttributeType::Position)
-                .unwrap()
-                .att_data()
-                .len();
+            // Sequential attributes are stored per point, so the point space is
+            // what the face indices address and what sizes them.
+            let num_points = adss[0].global_ds().num_points();
             let faces = (0..adss[0].global_ds().num_faces())
                 .map(|i| {
                     let c = CornerIdx::from(3 * i);
@@ -119,7 +115,6 @@ pub enum Err {
 #[derive(Clone, Debug)]
 pub enum Config {
     Edgebreaker(edgebreaker::Config),
-    #[allow(unused)] // we currently support only edgebreaker
     Sequential(sequential::Config),
 }
 

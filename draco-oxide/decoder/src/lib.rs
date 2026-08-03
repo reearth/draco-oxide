@@ -87,6 +87,12 @@ pub enum AttributeTransform {
         /// Number of quantization bits.
         bits: u8,
     },
+    /// Values stored verbatim by the generic encoder, widened into i32.
+    /// `component_type` is what they are read back as.
+    Raw {
+        /// The attribute's declared component type.
+        component_type: draco_oxide_core::attribute::ComponentDataType,
+    },
     /// No transform; values are already in their original format.
     None,
 }

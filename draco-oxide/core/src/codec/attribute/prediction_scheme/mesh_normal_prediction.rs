@@ -1,6 +1,6 @@
-use crate::codec::attribute::geom::{into_faithful_oct_quantization, octahedral_transform};
+use crate::codec::attribute::geom::{canonicalize_integer_vector, integer_vector_to_oct};
 use crate::codec::entropy::rans::RabsCoder;
-use crate::types::{CornerIdx, Cross, Dot, VertexIdx};
+use crate::types::{CornerIdx, Cross, VertexIdx};
 use crate::utils::bit_coder::leb128_write;
 
 use super::PredictionSchemeImpl;
@@ -12,10 +12,14 @@ use crate::types::Vector;
 
 pub struct MeshNormalPrediction<'parents, const N: usize, D: GenericAttributeDs> {
     ads: &'parents D,
-    /// Per-vertex precomputed prediction (octahedral, quantized), indexed by
-    /// `VertexIdx`. Built once in `new()`; `predict` only looks it up and applies
-    /// the sign flip.
-    predicted: Vec<NdVector<N, i32>>,
+    pos: &'parents Attribute,
+    /// Per-vertex canonicalized prediction, indexed by `VertexIdx`. The sign
+    /// flip applies here, before the octahedral projection; the two do not
+    /// commute.
+    predicted: Vec<NdVector<3, i32>>,
+    /// Zero until [`MeshNormalPrediction::set_octahedral_center`], which every
+    /// construction must call before predicting.
+    center: i32,
     flips: Vec<bool>,
 }
 
@@ -48,11 +52,11 @@ pub fn accumulate_face_normal_sums<D: GenericAttributeDs>(
         let delta_next = pos_of(c1) - pos_c;
         let delta_prev = pos_of(c2) - pos_c;
 
-        let cross_i32 = delta_next.cross(delta_prev);
-        let mut cross = NdVector::<3, i64>::zero();
-        *cross.get_mut(0) = *cross_i32.get(0) as i64;
-        *cross.get_mut(1) = *cross_i32.get(1) as i64;
-        *cross.get_mut(2) = *cross_i32.get(2) as i64;
+        // i64: at high position quantization the products overflow i32.
+        let widen = |v: NdVector<3, i32>| {
+            NdVector::<3, i64>::from([*v.get(0) as i64, *v.get(1) as i64, *v.get(2) as i64])
+        };
+        let cross = widen(delta_next).cross(widen(delta_prev));
 
         sums[usize::from(ads.vertex_idx(c0))] += cross;
         sums[usize::from(ads.vertex_idx(c1))] += cross;
@@ -61,55 +65,64 @@ pub fn accumulate_face_normal_sums<D: GenericAttributeDs>(
     sums
 }
 
-/// Turn an accumulated per-vertex face-normal sum into the octahedral,
-/// quantized prediction. Pure function of `sum` (matches the old inline
-/// computation in `predict`).
+/// Scales a per-vertex face-normal sum down into i32 and canonicalizes it.
 #[inline]
-pub fn sum_to_prediction<const N: usize>(mut sum: NdVector<3, i64>) -> NdVector<N, i32>
-where
-    NdVector<N, i32>: Vector<N, Component = i32>,
-{
+pub fn sum_to_canonical_normal(mut sum: NdVector<3, i64>, center: i32) -> NdVector<3, i32> {
     let upper_bound = 1 << 29;
     let abs_sum = sum.get(0).abs() + sum.get(1).abs() + sum.get(2).abs();
     if abs_sum > upper_bound {
         let quotient = abs_sum / upper_bound;
         sum /= quotient;
     }
-    let mut out = NdVector::<3, i32>::zero();
-    *out.get_mut(0) = *sum.get(0) as i32;
-    *out.get_mut(1) = *sum.get(1) as i32;
-    *out.get_mut(2) = *sum.get(2) as i32;
+    let mut out =
+        NdVector::<3, i32>::from([*sum.get(0) as i32, *sum.get(1) as i32, *sum.get(2) as i32]);
+    canonicalize_integer_vector(&mut out, center);
+    out
+}
 
-    if out == NdVector::<3, i32>::zero() {
-        let mut default_out = NdVector::<N, i32>::zero();
-        *default_out.get_mut(0) = 0;
-        *default_out.get_mut(1) = 0;
-        default_out
-    } else {
-        let val_oct = octahedral_transform(out) + NdVector::<2, f32>::from([1.0, 1.0]);
-        let quantized = val_oct * ((1 << (8 - 1)) - 1) as f32; // TODO: Stop hardcoding the quantization bits.
-        let mut out = NdVector::<2, i32>::zero();
-        for i in 0..2 {
-            *out.get_mut(i) = (*quantized.get(i)) as i32;
-        }
-        let quant_out = into_faithful_oct_quantization(out, 8); // TODO: Stop hardcoding the quantization bits.
-        let mut out = NdVector::<N, i32>::zero();
-        *out.get_mut(0) = *quant_out.get(0);
-        *out.get_mut(1) = *quant_out.get(1);
-        out
-    }
+/// Projects a canonicalized prediction onto the octahedral square, widened to
+/// `N` components; only the first two are meaningful.
+#[inline]
+pub fn canonical_normal_to_oct<const N: usize>(
+    vec: NdVector<3, i32>,
+    center: i32,
+) -> NdVector<N, i32>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    let st = integer_vector_to_oct(vec, center);
+    let mut out = NdVector::<N, i32>::zero();
+    *out.get_mut(0) = *st.get(0);
+    *out.get_mut(1) = *st.get(1);
+    out
 }
 
 impl<'parents, const N: usize, D: GenericAttributeDs> MeshNormalPrediction<'parents, N, D>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
-    /// The geometry-derived prediction for the vertex at corner `c`, without the
-    /// sign flip. The decoder pairs this with the decoded flip bit to reproduce
-    /// the value `predict` returned on the encoder side.
+    /// Fixes the target lattice and builds the predictions. Must run before any
+    /// prediction.
+    pub fn set_octahedral_center(&mut self, center: i32) {
+        assert!(center > 0, "octahedral center must be positive");
+        self.center = center;
+        let sums = accumulate_face_normal_sums(self.ads, self.pos, self.ads.vertex_index_bound());
+        self.predicted = sums
+            .into_iter()
+            .map(|s| sum_to_canonical_normal(s, center))
+            .collect();
+    }
+
+    /// The canonicalized prediction at corner `c`, before the sign flip.
     #[inline]
-    pub fn predicted_value(&self, c: CornerIdx) -> NdVector<N, i32> {
+    pub fn predicted_value(&self, c: CornerIdx) -> NdVector<3, i32> {
         self.predicted[usize::from(self.ads.vertex_idx(c))]
+    }
+
+    /// Projects a prediction onto this scheme's lattice.
+    #[inline]
+    pub fn project(&self, vec: NdVector<3, i32>) -> NdVector<N, i32> {
+        canonical_normal_to_oct(vec, self.center)
     }
 }
 
@@ -130,15 +143,11 @@ where
         );
         let pos = parents[0]; // we made sure that the first parent is the position attribute
 
-        let sums = accumulate_face_normal_sums(ads, pos, ads.vertex_index_bound());
-        let predicted = sums
-            .into_iter()
-            .map(sum_to_prediction::<N>)
-            .collect::<Vec<_>>();
-
         Self {
             ads,
-            predicted,
+            pos,
+            predicted: Vec::new(),
+            center: 0,
             flips: Vec::new(),
         }
     }
@@ -157,19 +166,37 @@ where
         attribute: &Attribute,
     ) -> NdVector<N, i32> {
         let v = self.ads.vertex_idx(c);
-        let mut out = self.predicted[usize::from(v)];
+        let pred_3d = self.predicted[usize::from(v)];
+
+        // The closer direction wins, measured the way the correction is: the
+        // octahedral square wraps, so distances are taken modulo its edge.
+        let pos = self.project(pred_3d);
+        let neg = self.project(pred_3d * -1);
 
         let actual_val = attribute.get::<NdVector<N, i32>, N>(self.ads.point_idx(c));
-        let diff1 = out - actual_val;
-        let diff2 = out * -1 - actual_val;
-        if diff1.dot(diff1) > diff2.dot(diff2) {
-            // if -out is closer to the actual value, we flip the sign.
+        let cost = |cand: NdVector<N, i32>| -> i32 {
+            let max_quantized = 2 * self.center + 1;
+            (0..2)
+                .map(|i| {
+                    let d = *actual_val.get(i) - *cand.get(i);
+                    let d = if d > self.center {
+                        d - max_quantized
+                    } else if d < -self.center {
+                        d + max_quantized
+                    } else {
+                        d
+                    };
+                    d.abs()
+                })
+                .sum()
+        };
+        if cost(pos) > cost(neg) {
             self.flips.push(true);
-            out = out * -1;
+            neg
         } else {
             self.flips.push(false);
+            pos
         }
-        out
     }
 
     fn encode_prediction_metadtata<W>(&self, writer: &mut W) -> Result<(), super::Err>
@@ -198,8 +225,9 @@ where
         (((freq_count_0 as f32 / flips.len() as f32) * 256.0 + 0.5) as u16).clamp(1, 255) as u8;
     let mut rabs_coder: RabsCoder = RabsCoder::new(zero_prob as usize, None);
     writer.write_u8(zero_prob);
-    for &b in flips {
-        // Encode each flip as a single bit
+    // rABS decodes last-written-first, so writing in reverse yields traversal
+    // order on decode.
+    for &b in flips.iter().rev() {
         rabs_coder.write(if b { 1 } else { 0 })?;
     }
     let buffer = rabs_coder.flush()?;

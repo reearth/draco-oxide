@@ -1,0 +1,37 @@
+# Reconstructs octahedral normals at reference parity on a curved surface.
+#
+# Normals predicted with the geometric normal scheme and the canonicalized
+# octahedron transform are rebuilt from the decoded positions, so the predicted
+# octahedral coordinates have to agree with the reference implementation exactly:
+# a prediction landing one cell away puts the normal on a different lattice
+# point. A sphere exercises this far harder than a faceted mesh, where most
+# predictions are trivially correct.
+#
+# The comparison is against Google's decode of the very same payload rather than
+# against sphere.obj, so quantization loss cancels out and the score measures
+# decoder parity alone.
+#
+# sphere_octahedral_normals.drc is sphere.obj encoded with `draco_encoder -cl 7
+# -qp 14 -qn 8`, and sphere_octahedral_normals_ref.obj is `draco_decoder` run
+# over it. Level 7 is the encoder default; other levels select different
+# prediction schemes and attribute groupings, which belong to their own
+# profiles.
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "sphere_octahedral_normals.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "sphere_octahedral_normals_ref.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.001 },
+    { method = "Ssim", min = 0.99, color_by = "Normal" },
+]

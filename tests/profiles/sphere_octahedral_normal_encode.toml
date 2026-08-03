@@ -1,0 +1,33 @@
+# Encodes octahedral normals that Google Draco reconstructs the same way
+# draco-oxide does.
+#
+# The prediction is not carried in the stream: each decoder recomputes it from
+# the decoded positions, so decoding one file with both compares the two
+# predictions directly, with no quantization loss in the way.
+#
+# A sphere is what exercises this: on a faceted mesh nearly every prediction is
+# trivially correct.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "sphere.obj"
+output = "oxide.drc"
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "google.obj"
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "oxide.drc"
+output = "oxide.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "google.obj"
+input2 = "oxide.obj"
+methods = [
+    { method = "L2Norm", max = 0.000001 },
+    { method = "Ssim", min = 0.9999, color_by = "Normal" },
+]

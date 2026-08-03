@@ -4,7 +4,7 @@
 mod reconstruct;
 mod traversal;
 
-use super::Connectivity;
+use super::EdgebreakerConnectivity;
 use crate::Err;
 use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::mesh::ds::CornerTable;
@@ -32,7 +32,7 @@ struct Counts {
 /// Decodes edgebreaker connectivity from `reader`, positioned just after the header
 /// (and metadata). Leaves the reader at the start of the attribute section. Handles
 /// the standard and valence traversals; any other traversal id is unimplemented.
-pub fn decode(reader: &mut Reader<'_>) -> Result<Connectivity, Err> {
+pub fn decode(reader: &mut Reader<'_>) -> Result<EdgebreakerConnectivity, Err> {
     let traversal_type = reader.read_u8()?;
 
     let counts = Counts {
@@ -72,7 +72,7 @@ fn decode_with<T: TraversalDecoder>(
     mut traversal: T,
     counts: &Counts,
     splits: Vec<TopologySplit>,
-) -> Result<Connectivity, Err> {
+) -> Result<EdgebreakerConnectivity, Err> {
     let recon = reconstruct(
         &mut traversal,
         counts.num_encoded_symbols,
@@ -85,7 +85,7 @@ fn decode_with<T: TraversalDecoder>(
 
     let attribute_seams = traversal.decode_attribute_seams(&recon.opposite, counts.num_faces);
 
-    Ok(Connectivity {
+    Ok(EdgebreakerConnectivity {
         corner_table: CornerTable::from_opposite_sentinels(recon.opposite),
         corner_to_vertex: recon.corner_to_vertex,
         vertex_corners: recon.vertex_corners,

@@ -1,0 +1,32 @@
+# Sequential encoding of a mesh whose UV and normal attributes are seamed.
+#
+# Seams are what the two connectivity methods disagree about most: edgebreaker
+# encodes one value per attribute vertex and reconstructs the split from an
+# encoded seam stream, while a sequential stream has one value per point and
+# stores the duplicates across a seam outright.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "cube_uv_normal_seams.obj"
+output = "oxide.drc"
+cfg = { connectivity = "Sequential" }
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "google.obj"
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "oxide.drc"
+output = "oxide.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "google.obj"
+input2 = "oxide.obj"
+methods = [
+    { method = "L2Norm", max = 0.000001 },
+    { method = "Ssim", min = 0.9999, color_by = "Uv" },
+    { method = "Ssim", min = 0.9999, color_by = "Normal" },
+]

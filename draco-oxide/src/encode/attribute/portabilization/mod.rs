@@ -125,6 +125,17 @@ impl ConfigType for Config {
 }
 
 impl Config {
+    /// The octahedral lattice this config quantizes onto, or `0` if it
+    /// portabilizes some other way.
+    pub fn oct_center(&self) -> i32 {
+        match self.type_ {
+            PortabilizationType::OctahedralQuantization => {
+                draco_oxide_core::codec::attribute::geom::oct_center(self.quantization.resolve(0.0))
+            }
+            _ => 0,
+        }
+    }
+
     pub fn default_for(ty: AttributeType) -> Self {
         match ty {
             AttributeType::Normal => Config {

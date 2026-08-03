@@ -1,0 +1,44 @@
+# Binds each attribute to the seam stream it names.
+#
+# An attribute names its seam stream with the `att_data_id` byte in the
+# attribute section's framing, which is independent of the order the descriptors
+# arrive in. An attribute on the position domain rides the position connectivity
+# whatever its id.
+#
+# cube_uv_normal_seams.drc is the file that separates that from binding the
+# streams in descriptor order: flat per-face normals seam on all 12 cube edges,
+# the cross UV net seams on only 7 of them, and the two attributes are listed in
+# the opposite order to their ids. Each attribute therefore keeps the value
+# grouping its own seam set implies, and the comparisons check that both come
+# back with it.
+#
+# cube_uv_normal_seams.obj is the same synthetic geometry the fixture was
+# encoded from, so the comparisons run against ground truth rather than another
+# decoder. Positions are near-lossless for an axis-aligned unit cube at 14 bits.
+#
+# The fixture was built against libdraco rather than `draco_encoder`, because
+# the id ordering needs the normal attribute declared before the positions,
+# which OBJ input cannot express: `TriangleSoupMeshBuilder::AddAttribute` in the
+# order NORMAL, POSITION, TEX_COORD, then `Encoder` with speed 1 (the geometric
+# normal predictor, which makes the normal encoder depend on positions and so be
+# written after them) and quantization 14 / 12 / 8.
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "cube_uv_normal_seams.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "cube_uv_normal_seams.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.01 },
+    { method = "Ssim", min = 0.97, color_by = "Normal" },
+    { method = "Ssim", min = 0.97, color_by = "Uv" },
+]

@@ -5,11 +5,15 @@ use draco_oxide_core::types::{NdVector, Vector};
 
 pub struct OctahedronOrthogonalTransform<const N: usize> {
     out: Vec<NdVector<N, i32>>,
+    center: i32,
 }
 
 impl<const N: usize> OctahedronOrthogonalTransform<N> {
-    pub fn new(_cfg: super::Config) -> Self {
-        Self { out: Vec::new() }
+    pub fn new(cfg: super::Config) -> Self {
+        Self {
+            out: Vec::new(),
+            center: cfg.portabilization.oct_center(),
+        }
     }
 }
 
@@ -21,19 +25,15 @@ impl<const N: usize> PredictionTransformImpl<N> for OctahedronOrthogonalTransfor
     ) where
         NdVector<N, i32>: Vector<N, Component = i32>,
     {
-        // Safety:
-        // We made sure that the data is two dimensional.
-        assert!(N == 2,);
+        assert!(N == 2);
+        let one = self.center;
+        let max_quantized = 2 * one + 1;
 
-        // make sure that pred is in the upper hemisphere.
-        let one = 255 / 2;
         *pred.get_mut(0) -= one;
         *pred.get_mut(1) -= one;
         *orig.get_mut(0) -= one;
         *orig.get_mut(1) -= one;
         if pred.get(0).abs() + pred.get(1).abs() > one {
-            // we need to flip the z-axis.
-            // In the octahedron representation, this means that we need to flip inside out.
             let mut p = NdVector::<2, i32>::from([*pred.get(0), *pred.get(1)]);
             invert_diamond(&mut p, one);
             *pred.get_mut(0) = *p.get(0);
@@ -44,10 +44,9 @@ impl<const N: usize> PredictionTransformImpl<N> for OctahedronOrthogonalTransfor
             *orig.get_mut(1) = *o.get(1);
         }
 
-        // Now rotate the sphere around the z-axis so that the x and y coordinates of pred are both negative.
+        // Rotate until both of pred's coordinates are negative, taking orig along.
         if pred != NdVector::<N, i32>::zero() {
             while *pred.get(0) >= 0 || *pred.get(1) > 0 {
-                // rotate 90 degrees clockwise
                 let tmp = *pred.get(0);
                 *pred.get_mut(0) = -pred.get(1);
                 *pred.get_mut(1) = tmp;
@@ -58,11 +57,10 @@ impl<const N: usize> PredictionTransformImpl<N> for OctahedronOrthogonalTransfor
             }
         }
 
-        // Now we take the difference and make it positive.
         let mut corr = orig - pred;
         for i in 0..N {
             if *corr.get(i) < 0 {
-                *corr.get_mut(i) += 255;
+                *corr.get_mut(i) += max_quantized;
             }
         }
         self.out.push(corr);
@@ -72,11 +70,8 @@ impl<const N: usize> PredictionTransformImpl<N> for OctahedronOrthogonalTransfor
     where
         W: ByteWriter,
     {
-        // write the max quantized value.
-        writer.write_u32(255);
-        // write center of the octahedron.
-        writer.write_u32(255 / 2);
-
+        writer.write_u32((2 * self.center + 1) as u32);
+        writer.write_u32(self.center as u32);
         self.out
     }
 }

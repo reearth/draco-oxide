@@ -173,10 +173,12 @@ impl<'parents, const N: usize, D: GenericAttributeDs> PredictionScheme<'parents,
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
+    /// `oct_center` is consulted only by the normal scheme.
     pub fn new(
         ty: PredictionSchemeType,
         parents: &[&'parents Attribute],
         ads: &'parents D,
+        oct_center: i32,
     ) -> Self {
         match ty {
             PredictionSchemeType::DeltaPrediction => {
@@ -203,7 +205,9 @@ where
                 PredictionScheme::MeshParallelogramPrediction(prediction)
             }
             PredictionSchemeType::MeshNormalPrediction => {
-                let prediction = mesh_normal_prediction::MeshNormalPrediction::new(parents, ads);
+                let mut prediction =
+                    mesh_normal_prediction::MeshNormalPrediction::new(parents, ads);
+                prediction.set_octahedral_center(oct_center);
                 PredictionScheme::MeshNormalPrediction(prediction)
             }
             PredictionSchemeType::MeshPredictionForTextureCoordinates => {
@@ -227,9 +231,10 @@ where
         reader: &mut Reader<'_>,
         parents: &[&'parents Attribute],
         ads: &'parents D,
+        oct_center: i32,
     ) -> Result<Self, usize> {
         let ty = PredictionSchemeType::read_from(reader)?;
-        Ok(Self::new(ty, parents, ads))
+        Ok(Self::new(ty, parents, ads, oct_center))
     }
 
     #[allow(unused)] // TODO: Remove this function when we support multiple encoding groups for one attribute

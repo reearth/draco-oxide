@@ -1,0 +1,30 @@
+# Decodes octahedral normals whose prediction has to be negated.
+#
+# The prediction follows the face winding, so stored normals pointing the other
+# way set the flip bit on essentially every vertex. Those bits are rABS coded,
+# and a stream read in the wrong order still decodes cleanly into wrong normals.
+# `sphere_octahedral_normal_decode` has no bit set and passes either way.
+#
+# sphere_inverted_normals.obj is sphere.obj with every `vn` negated,
+# sphere_flipped_normals.drc is `draco_encoder -cl 7 -qp 14 -qn 8` over it, and
+# sphere_flipped_normals_ref.obj is `draco_decoder` over that, so the comparison
+# cancels quantization loss.
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "sphere_flipped_normals.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "sphere_flipped_normals_ref.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.001 },
+    { method = "Ssim", min = 0.99, color_by = "Normal" },
+]
