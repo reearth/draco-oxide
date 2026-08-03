@@ -271,10 +271,10 @@ pub fn remove_buffer_views(
 
 /// glTF componentType values
 pub const COMPONENT_TYPE_UNSIGNED_SHORT: u64 = 5123;
+pub const COMPONENT_TYPE_FLOAT: u64 = 5126;
 
-/// Update accessor componentType to UNSIGNED_SHORT (5123).
-/// This is needed for feature ID attributes that are encoded as u16 in Draco
-/// but originally declared as FLOAT in glTF.
+/// Update an accessor's componentType, e.g. for feature ID attributes whose
+/// encoded width differs from the source accessor's declaration.
 pub fn update_accessor_component_type(json: &mut Value, accessor_idx: u64, component_type: u64) {
     if let Some(accessor) = json
         .get_mut("accessors")

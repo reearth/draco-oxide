@@ -52,11 +52,9 @@ impl EdgebreakerKind {
 pub const MAX_VALENCE: usize = 7;
 pub const MIN_VALENCE: usize = 2;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TraversalType {
     DepthFirst,
-    #[allow(dead_code)]
-    // This variant is not used yet. We might not implement this and may simply remove it in the future.
     PredictionDegree,
 }
 

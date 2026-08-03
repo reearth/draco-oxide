@@ -19,9 +19,11 @@ use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::attribute::prediction_scheme::mesh_normal_prediction::{
     accumulate_face_normal_sums, canonical_normal_to_oct, sum_to_canonical_normal,
 };
+use draco_oxide_core::codec::attribute::prediction_scheme::mesh_constrained_multi_parallelogram_prediction::MAX_PARALLELOGRAMS;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
-use draco_oxide_core::codec::attribute::sequence::Traverser;
+use draco_oxide_core::codec::attribute::sequence::{PredictionDegreeTraverser, Traverser};
 use draco_oxide_core::codec::attribute::Portable;
+use draco_oxide_core::codec::connectivity::edgebreaker::TraversalType;
 use draco_oxide_core::mesh::ds::{CornerTable, GenericAttributeDs, IdentityDS};
 use draco_oxide_core::types::{
     AttributeValueIdx, CornerIdx, NdVector, PointIdx, VecPointIdx, Vector, VertexIdx,
@@ -60,6 +62,7 @@ struct Descriptor {
     uid: u32,
     port_type: u8,
     domain: AttributeDomain,
+    traversal: TraversalType,
 }
 
 impl Descriptor {
@@ -94,43 +97,58 @@ fn decode_traversed_attributes(
     reader: &mut Reader<'_>,
     conn: &EdgebreakerConnectivity,
 ) -> Result<DecodedAttributes, Err> {
-    let num_atts = reader.read_u8()? as usize;
+    let num_decoders = reader.read_u8()? as usize;
 
-    let mut headers = Vec::with_capacity(num_atts);
-    for _ in 0..num_atts {
+    let mut headers = Vec::with_capacity(num_decoders);
+    for _ in 0..num_decoders {
         let att_data_id = reader.read_u8()?;
         let domain = AttributeDomain::read_from(reader)?;
-        let traversal = reader.read_u8()?;
-        if traversal != 0 {
-            return Err(Err::Unimplemented);
-        }
-        headers.push((att_data_id, domain));
+        let traversal = match reader.read_u8()? {
+            0 => TraversalType::DepthFirst,
+            1 => TraversalType::PredictionDegree,
+            _ => return Err(Err::MalformedAttribute("unknown traversal method")),
+        };
+        headers.push((att_data_id, domain, traversal));
     }
 
-    let mut descriptors = Vec::with_capacity(num_atts);
-    for (att_data_id, domain) in headers {
-        let atts_in_encoder = reader.read_u8()?;
-        if atts_in_encoder != 1 {
+    // One attribute decoder may carry several attributes (the reference groups
+    // every attribute into one decoder under single connectivity). Members of a
+    // decoder share its connectivity and traversal; their payload blocks are
+    // batched per decoder, so the member ranges are kept.
+    let mut descriptors: Vec<Descriptor> = Vec::with_capacity(num_decoders);
+    let mut decoder_ranges: Vec<std::ops::Range<usize>> = Vec::with_capacity(num_decoders);
+    for (att_data_id, domain, traversal) in headers {
+        let atts_in_decoder = leb128_read(reader)? as usize;
+        if atts_in_decoder == 0 {
             return Err(Err::MalformedAttribute(
-                "each attribute encoder must carry exactly one attribute",
+                "an attribute decoder must carry at least one attribute",
             ));
         }
-        let att_type = AttributeType::read_from(reader)?;
-        let component_type = ComponentDataType::read_from(reader)?;
-        let num_components = reader.read_u8()? as usize;
-        let _normalized = reader.read_u8()?;
-        let uid = leb128_read(reader)? as u32;
-        let port_type = reader.read_u8()?;
-        descriptors.push(Descriptor {
-            att_data_id,
-            att_type,
-            component_type,
-            num_components,
-            uid,
-            port_type,
-            domain,
-        });
+        let start = descriptors.len();
+        for _ in 0..atts_in_decoder {
+            let att_type = AttributeType::read_from(reader)?;
+            let component_type = ComponentDataType::read_from(reader)?;
+            let num_components = reader.read_u8()? as usize;
+            let _normalized = reader.read_u8()?;
+            let uid = leb128_read(reader)? as u32;
+            descriptors.push(Descriptor {
+                att_data_id,
+                att_type,
+                component_type,
+                num_components,
+                uid,
+                // The decoder-type bytes follow the decoder's last descriptor.
+                port_type: 0,
+                domain,
+                traversal,
+            });
+        }
+        for desc in &mut descriptors[start..] {
+            desc.port_type = reader.read_u8()?;
+        }
+        decoder_ranges.push(start..descriptors.len());
     }
+    let num_atts = descriptors.len();
 
     let seam_bits: &[u8] = &conn.seam_bits;
     let mut masks: Vec<u8> = Vec::with_capacity(num_atts);
@@ -152,16 +170,29 @@ fn decode_traversed_attributes(
             stats.push(None);
         }
     }
+    // Prediction-degree traversal is defined over the position connectivity
+    // only; the reference rejects it on a per-corner attribute decoder.
+    for (desc, &interior) in descriptors.iter().zip(&has_interior) {
+        if interior && desc.traversal != TraversalType::DepthFirst {
+            return Err(Err::MalformedAttribute(
+                "prediction-degree traversal on an attribute with interior seams",
+            ));
+        }
+    }
 
     let seeds = sequence::traversal_seeds(conn.num_faces);
 
     let columns_equal =
         |mi: u8, mj: u8| mi == mj || seam_bits.iter().all(|&b| (b & mi != 0) == (b & mj != 0));
     let mut group_ids: Vec<usize> = Vec::with_capacity(num_atts);
-    let mut first_plain: Option<usize> = None;
     for i in 0..num_atts {
         let gid = if !has_interior[i] {
-            *first_plain.get_or_insert(i)
+            // Plain attributes share the position connectivity, but only
+            // attributes walking it the same way share a sequence.
+            (0..i)
+                .find(|&j| !has_interior[j] && descriptors[j].traversal == descriptors[i].traversal)
+                .map(|j| group_ids[j])
+                .unwrap_or(i)
         } else {
             (0..i)
                 .find(|&j| has_interior[j] && columns_equal(masks[j], masks[i]))
@@ -221,7 +252,7 @@ fn decode_traversed_attributes(
         seeds: &seeds,
         union_mask,
     };
-    let decoded = decode_payloads(reader, &descriptors, &ctx)?;
+    let decoded = decode_payloads(reader, &descriptors, &decoder_ranges, &ctx)?;
     let DecodedPayloads {
         mut attributes,
         transforms,
@@ -302,17 +333,28 @@ struct DecodedPayloads {
 fn decode_payloads(
     reader: &mut Reader<'_>,
     descriptors: &[Descriptor],
+    decoder_ranges: &[std::ops::Range<usize>],
     ctx: &SchedulerCtx<'_>,
 ) -> Result<DecodedPayloads, Err> {
     let num_atts = descriptors.len();
     let group_ids = ctx.group_ids;
 
-    let mut parsed: Vec<Option<ParsedPayload>> = Vec::with_capacity(num_atts);
-    let mut dequants: Vec<Option<AttributeTransform>> = Vec::with_capacity(num_atts);
-    for (i, desc) in descriptors.iter().enumerate() {
-        let num_values = ctx.group_num_values[group_ids[i]];
-        parsed.push(Some(parse_payload_dispatched(reader, num_values, desc)?));
-        dequants.push(Some(read_portabilization(reader, desc)?));
+    // Each attribute decoder writes all its payloads before its first
+    // portabilization block.
+    let mut parsed: Vec<Option<ParsedPayload>> = (0..num_atts).map(|_| None).collect();
+    let mut dequants: Vec<Option<AttributeTransform>> = (0..num_atts).map(|_| None).collect();
+    for range in decoder_ranges {
+        for i in range.clone() {
+            let num_values = ctx.group_num_values[group_ids[i]];
+            parsed[i] = Some(parse_payload_dispatched(
+                reader,
+                num_values,
+                &descriptors[i],
+            )?);
+        }
+        for i in range.clone() {
+            dequants[i] = Some(read_portabilization(reader, &descriptors[i])?);
+        }
     }
 
     // Any lazy real walk can carry the point assembly; the last rep is a
@@ -462,6 +504,7 @@ fn decode_payloads(
                         seeds: ctx.seeds,
                         replay: recorded_seqs[rep].take(),
                         record_walk: later_wave_members,
+                        traversal: descriptors[rep].traversal,
                     },
                 )?;
                 recorded_seqs[rep] = result.recorded_seq;
@@ -515,6 +558,7 @@ struct GroupCtx<'p, 'c> {
     seeds: &'c [CornerIdx],
     replay: Option<Vec<CornerIdx>>,
     record_walk: bool,
+    traversal: TraversalType,
 }
 
 /// The owned results of one plain group walk.
@@ -533,6 +577,7 @@ fn run_plain_group<'p>(ads: &'p PlainDs<'p>, ctx: GroupCtx<'p, '_>) -> Result<Gr
         seeds,
         replay,
         record_walk,
+        traversal,
     } = ctx;
     let mut steppers: Vec<AnyStepper<'_, PlainDs<'p>>> = Vec::with_capacity(members.len());
     for m in members {
@@ -564,18 +609,32 @@ fn run_plain_group<'p>(ads: &'p PlainDs<'p>, ctx: GroupCtx<'p, '_>) -> Result<Gr
             )?;
             None
         }
-        None => {
-            let mut record_seq = record_walk.then(|| Vec::with_capacity(num_values));
-            decode_group(
-                ads,
-                Traverser::new(ads, seeds.to_vec()),
-                &mut steppers,
-                &mut fusers,
-                num_values,
-                record_seq.as_mut(),
-            )?;
-            record_seq
-        }
+        None => match traversal {
+            TraversalType::DepthFirst => {
+                let mut record_seq = record_walk.then(|| Vec::with_capacity(num_values));
+                decode_group(
+                    ads,
+                    Traverser::new(ads, seeds.to_vec()),
+                    &mut steppers,
+                    &mut fusers,
+                    num_values,
+                    record_seq.as_mut(),
+                )?;
+                record_seq
+            }
+            TraversalType::PredictionDegree => {
+                let seq = PredictionDegreeTraverser::new(ads, seeds.to_vec()).compute_seqeunce();
+                decode_group(
+                    ads,
+                    seq.iter().copied(),
+                    &mut steppers,
+                    &mut fusers,
+                    num_values,
+                    None,
+                )?;
+                record_walk.then_some(seq)
+            }
+        },
     };
     Ok(GroupResult {
         members: steppers.into_iter().map(AnyStepper::finish).collect(),
@@ -641,6 +700,7 @@ where
     corrections: Corrections<'a, N>,
     flips: Vec<bool>,
     orientations: Vec<bool>,
+    creases: [Vec<bool>; MAX_PARALLELOGRAMS],
     transform: InverseTransform,
 }
 
@@ -703,6 +763,7 @@ where
             corrections: Corrections::Eager(values),
             flips: Vec::new(),
             orientations: Vec::new(),
+            creases: Default::default(),
             transform: InverseTransform::None,
         });
     }
@@ -736,6 +797,7 @@ where
 
     let mut flips = Vec::new();
     let mut orientations = Vec::new();
+    let mut creases: [Vec<bool>; MAX_PARALLELOGRAMS] = Default::default();
     let transform = match scheme_ty {
         PredictionSchemeType::MeshNormalPrediction => {
             let t = InverseTransform::read_from(reader, transform_id)?;
@@ -746,6 +808,10 @@ where
             orientations = prediction::decode_orientation_metadata(reader)?;
             InverseTransform::read_from(reader, transform_id)?
         }
+        PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction => {
+            creases = prediction::decode_crease_metadata(reader, num_values)?;
+            InverseTransform::read_from(reader, transform_id)?
+        }
         _ => InverseTransform::read_from(reader, transform_id)?,
     };
 
@@ -754,6 +820,7 @@ where
         corrections,
         flips,
         orientations,
+        creases,
         transform,
     })
 }
@@ -834,6 +901,7 @@ where
             ads,
             parsed.flips,
             parsed.orientations,
+            parsed.creases,
             parsed.transform.oct_center(),
         )?;
         let zigzagged = parsed.transform.corrections_are_zigzagged();
@@ -1069,7 +1137,9 @@ fn read_portabilization(
         PORT_GENERIC => Ok(AttributeTransform::Raw {
             component_type: desc.component_type,
         }),
-        PORT_TO_BITS => Ok(AttributeTransform::None),
+        PORT_TO_BITS => Ok(AttributeTransform::Integer {
+            component_type: desc.component_type,
+        }),
         PORT_QUANTIZATION_COORDINATE_WISE => {
             let min = (0..desc.portable_num_components())
                 .map(|_| f32::read_from(reader))

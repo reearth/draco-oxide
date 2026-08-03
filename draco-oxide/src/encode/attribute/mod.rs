@@ -10,10 +10,10 @@ use crate::eval;
 
 use std::collections::HashMap;
 
-use draco_oxide_core::attribute::{Attribute, AttributeDomain, AttributeType};
+use draco_oxide_core::attribute::{Attribute, AttributeDomain, AttributeType, ComponentDataType};
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
-use draco_oxide_core::codec::attribute::sequence::Traverser;
+use draco_oxide_core::codec::attribute::sequence::{PredictionDegreeTraverser, Traverser};
 use draco_oxide_core::codec::connectivity::edgebreaker::TraversalType;
 use draco_oxide_core::codec::header::EncoderMethod;
 use draco_oxide_core::mesh::ds::AttributeDS;
@@ -66,6 +66,21 @@ where
     #[cfg(feature = "evaluation")]
     eval::write_json_pair("attributes count", adss.len().into(), writer);
 
+    // The resolved traversal method per attribute. Prediction-degree traversal
+    // is defined over the position connectivity only, so an attribute with
+    // interior seams always walks depth-first.
+    let traversals: Vec<TraversalType> = adss
+        .iter()
+        .map(|att| {
+            if att.corner_table().has_interior_seams() {
+                TraversalType::DepthFirst
+            } else {
+                cfg.attribute
+                    .traversal_for(att.att_data().get_attribute_type())
+            }
+        })
+        .collect();
+
     for (i, att) in adss.iter().enumerate() {
         // encode decoder id
         writer.write_u8((i as u8).wrapping_sub(1));
@@ -80,8 +95,8 @@ where
                 domain
             };
         wire_domain.write_to(writer);
-        // write traversal method for attribute encoding/decoding sequencer. We currently only support depth-first traversal.
-        TraversalType::DepthFirst.write_to(writer);
+        // write traversal method for attribute encoding/decoding sequencer.
+        traversals[i].write_to(writer);
     }
 
     #[cfg(feature = "evaluation")]
@@ -99,17 +114,21 @@ where
         writer.write_u8(att.att_data().get_id().as_usize() as u8); // unique id
 
         // write the decoder type.
-        PortabilizationType::default_for(att.att_data().get_attribute_type()).write_to(writer);
+        PortabilizationType::default_for(
+            att.att_data().get_attribute_type(),
+            att.att_data().get_component_type(),
+        )
+        .write_to(writer);
     }
 
     // `adss` is built one-per-attribute and in the same order as `atts`, so each attribute is
     // paired with its own attribute data structure here.
     //
     // Attributes without interior seams share the position connectivity, so
-    // their traversal sequences are identical; the walk runs once and is
-    // reused for all of them.
-    let mut shared_sequence: Option<Vec<CornerIdx>> = None;
-    for ads in adss {
+    // attributes walking it with the same traversal method have identical
+    // sequences; each method's walk runs once and is reused.
+    let mut shared_sequences: Vec<(TraversalType, Vec<CornerIdx>)> = Vec::new();
+    for (ads, traversal) in adss.into_iter().zip(traversals) {
         #[cfg(feature = "evaluation")]
         eval::scope_begin("attribute", writer);
 
@@ -122,21 +141,34 @@ where
         let sequence = if ads.corner_table().has_interior_seams() {
             None
         } else {
-            if shared_sequence.is_none() {
-                shared_sequence =
-                    Some(Traverser::new(&ads, corners_of_edgebreaker.clone()).compute_seqeunce());
-            }
-            shared_sequence.clone()
+            let seq = match shared_sequences.iter().find(|(t, _)| *t == traversal) {
+                Some((_, s)) => s.clone(),
+                None => {
+                    let s = match traversal {
+                        TraversalType::DepthFirst => {
+                            Traverser::new(&ads, corners_of_edgebreaker.clone()).compute_seqeunce()
+                        }
+                        TraversalType::PredictionDegree => {
+                            PredictionDegreeTraverser::new(&ads, corners_of_edgebreaker.clone())
+                                .compute_seqeunce()
+                        }
+                    };
+                    shared_sequences.push((traversal, s.clone()));
+                    s
+                }
+            };
+            Some(seq)
         };
 
         let ty = ads.att_data().get_attribute_type();
+        let component_ty = ads.att_data().get_component_type();
         let len = ads.att_data().len();
         let encoder = attribute_encoder::AttributeEncoder::new(
             ads,
             &parents,
             &corners_of_edgebreaker,
             writer,
-            cfg.attribute.encoder_config_for(ty, len),
+            cfg.attribute.encoder_config_for(ty, component_ty, len),
             Sequencing::Traversal,
             sequence,
         );
@@ -185,7 +217,11 @@ where
         leb128_write(att.get_id().as_usize() as u64, writer);
     }
     for ads in &adss {
-        PortabilizationType::default_for(ads.att_data().get_attribute_type()).write_to(writer);
+        PortabilizationType::default_for(
+            ads.att_data().get_attribute_type(),
+            ads.att_data().get_component_type(),
+        )
+        .write_to(writer);
     }
 
     #[cfg(feature = "evaluation")]
@@ -198,13 +234,16 @@ where
         eval::scope_begin("attribute", writer);
 
         let ty = ads.att_data().get_attribute_type();
+        let component_ty = ads.att_data().get_component_type();
         let len = ads.att_data().len();
         let encoder = attribute_encoder::AttributeEncoder::new(
             ads,
             &[],
             &[],
             writer,
-            cfg.attribute.encoder_config_for(ty, len).for_sequential(),
+            cfg.attribute
+                .encoder_config_for(ty, component_ty, len)
+                .for_sequential(),
             Sequencing::Linear { num_points },
             None,
         );
@@ -248,6 +287,10 @@ pub struct AttributeConfig {
     pub quantization: Option<Quantization>,
     /// Normal-specific encoding mode override (only valid for `Normal`).
     pub normal_encoding: Option<NormalEncoding>,
+    /// Traversal method override. Applies only under edgebreaker connectivity,
+    /// and only to attributes without interior seams; everything else walks
+    /// depth-first.
+    pub traversal: Option<TraversalType>,
 }
 
 /// How a normal attribute is compressed.
@@ -297,12 +340,25 @@ impl Config {
         &self.overrides
     }
 
+    /// Resolves the traversal method for an attribute of type `ty`.
+    fn traversal_for(&self, ty: AttributeType) -> TraversalType {
+        self.overrides
+            .get(&ty)
+            .and_then(|o| o.traversal)
+            .unwrap_or(TraversalType::DepthFirst)
+    }
+
     /// Resolves the per-attribute encoder config for an attribute of type `ty`
     /// with `len` values, honoring any override and otherwise falling back to the
     /// built-in default.
-    fn encoder_config_for(&self, ty: AttributeType, len: usize) -> attribute_encoder::Config {
+    fn encoder_config_for(
+        &self,
+        ty: AttributeType,
+        component_ty: ComponentDataType,
+        len: usize,
+    ) -> attribute_encoder::Config {
         let Some(over) = self.overrides.get(&ty) else {
-            return attribute_encoder::Config::default_for(ty, len);
+            return attribute_encoder::Config::default_for(ty, component_ty, len);
         };
 
         // Start from the zero-correction base for PredictedOnly normals, else the
@@ -310,7 +366,7 @@ impl Config {
         let mut base = if over.normal_encoding == Some(NormalEncoding::PredictedOnly) {
             attribute_encoder::Config::predicted_normals(len)
         } else {
-            attribute_encoder::Config::default_for(ty, len)
+            attribute_encoder::Config::default_for(ty, component_ty, len)
         };
 
         if let Some(scheme) = &over.prediction {

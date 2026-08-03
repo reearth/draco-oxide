@@ -1,0 +1,40 @@
+# Decodes a reference stream using constrained multi-parallelogram prediction.
+#
+# At compression level 9 (speed 1) the reference encoder selects prediction
+# scheme 4 (constrained multi-parallelogram) for the position attribute and for
+# any generic attribute, so this exercises the crease-bit metadata and the
+# multi-parallelogram averaging on both a 3-component and a 1-component stream.
+# The traversal method stays depth-first at this level.
+#
+# The comparison is against Google's decode of the very same payload, so
+# quantization loss cancels out and the score measures decoder parity alone.
+
+[[operations]]
+op = "DracoEncode"
+input = "sphere.obj"
+output = "cl9.drc"
+cfg = { compression_level = 9, position_quantization = 14 }
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "cl9.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "DracoDecode"
+input = "cl9.drc"
+output = "ref.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "ref.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.001 },
+    { method = "Ssim", min = 0.99 },
+]

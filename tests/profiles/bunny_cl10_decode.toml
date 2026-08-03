@@ -1,0 +1,31 @@
+# Level 10 decode at scale.
+#
+# The bunny's tens of thousands of faces stress the prediction-degree
+# traverser's priority scheduling and the constrained multi-parallelogram
+# crease streams far past the sphere fixtures, catching ordering bugs that
+# only surface once the priority stacks interleave deeply.
+#
+# The comparison is against Google's decode of the very same payload, so
+# quantization loss cancels out and the score measures decoder parity alone.
+
+[[operations]]
+op = "DracoEncode"
+input = "bunny.obj"
+output = "cl10.drc"
+cfg = { compression_level = 10, position_quantization = 14 }
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "cl10.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "DracoDecode"
+input = "cl10.drc"
+output = "ref.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "ref.obj"
+input2 = "decoded.obj"
+methods = [{ method = "L2Norm", max = 0.001 }]

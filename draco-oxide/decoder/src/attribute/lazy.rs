@@ -731,7 +731,12 @@ where
                     flips,
                 }
             }
-            PredictionSchemeType::MeshMultiParallelogramPrediction
+            // Constrained multi-parallelogram over an interior-seam walk is
+            // not implemented; the reference reaches it only when a seamed
+            // attribute falls through to the generic predictor at speed <= 1.
+            // The other two schemes are never emitted.
+            PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction
+            | PredictionSchemeType::MeshMultiParallelogramPrediction
             | PredictionSchemeType::DerivativePrediction => return Err(Err::Unimplemented),
             PredictionSchemeType::Invalid => {
                 return Err(Err::MalformedAttribute("invalid prediction scheme"))

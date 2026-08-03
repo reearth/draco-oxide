@@ -47,6 +47,10 @@ pub enum Err {
     #[error("malformed connectivity: {0}")]
     MalformedConnectivity(&'static str),
 
+    /// The metadata section is inconsistent.
+    #[error("malformed metadata: {0}")]
+    MalformedMetadata(&'static str),
+
     /// A byte reader ran out of data or otherwise failed.
     #[error("reader error: {0}")]
     Reader(#[from] ReaderErr),
@@ -93,8 +97,13 @@ pub enum AttributeTransform {
         /// The attribute's declared component type.
         component_type: draco_oxide_core::attribute::ComponentDataType,
     },
-    /// No transform; values are already in their original format.
-    None,
+    /// Values carried by the integer codec, widened into the portable i32;
+    /// narrowing them to the declared component type restores the original
+    /// format.
+    Integer {
+        /// The attribute's declared component type.
+        component_type: draco_oxide_core::attribute::ComponentDataType,
+    },
 }
 
 /// Decode a draco stream into a [`PortableMesh`] with quantized-integer

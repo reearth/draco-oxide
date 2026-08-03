@@ -1,0 +1,39 @@
+# Level 10 decode over a mesh with boundary.
+#
+# A boundary makes the prediction-degree traverser take its stack path where a
+# closed mesh flows corner to corner, and makes the constrained
+# multi-parallelogram gather swing off an open fan and restart in the other
+# direction, so this covers the arms sphere_cl10_decode cannot reach.
+#
+# The comparison is against Google's decode of the very same payload, so
+# quantization loss cancels out and the score measures decoder parity alone.
+
+[[operations]]
+op = "DracoEncode"
+input = "punctured_sphere.obj"
+output = "cl10.drc"
+cfg = { compression_level = 10, position_quantization = 14 }
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "cl10.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "DracoDecode"
+input = "cl10.drc"
+output = "ref.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "ref.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.001 },
+    { method = "Ssim", min = 0.99 },
+]

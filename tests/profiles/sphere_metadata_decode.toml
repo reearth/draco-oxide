@@ -1,0 +1,40 @@
+# Decodes a reference stream carrying metadata.
+#
+# `draco_encoder --metadata` writes per-attribute metadata blocks (material
+# names for the sphere's usemtl ids) and a geometry-level block. The decoder
+# parses the section to keep the reader in sync and drops the contents;
+# before that, the misread desynced everything after the header and surfaced
+# as an unrelated connectivity error.
+#
+# The comparison is against Google's decode of the very same payload, so
+# quantization loss cancels out and the score measures decoder parity alone.
+
+[[operations]]
+op = "DracoEncode"
+input = "sphere.obj"
+output = "meta.drc"
+cfg = { compression_level = 7, position_quantization = 14, metadata = true }
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "meta.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "DracoDecode"
+input = "meta.drc"
+output = "ref.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "ref.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.001 },
+    { method = "Ssim", min = 0.99 },
+]

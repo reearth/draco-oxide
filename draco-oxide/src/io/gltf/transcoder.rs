@@ -209,8 +209,7 @@ impl GltfTranscoder {
                                     buffer_view_length: compressed.buffer_view_length,
                                     attribute_ids: compressed.attribute_ids,
                                     indices_accessor_idx: compressed.indices_accessor_idx,
-                                    feature_id_accessor_indices: compressed
-                                        .feature_id_accessor_indices,
+                                    feature_id_accessors: compressed.feature_id_accessors,
                                     original_accessor_indices: compressed.original_accessor_indices,
                                     vertex_count: compressed.vertex_count,
                                     indices_count: compressed.indices_count,
@@ -415,11 +414,10 @@ impl GltfTranscoder {
                 indices_accessor_idx,
             );
 
-            // Update feature ID accessor componentType from FLOAT to UNSIGNED_SHORT
-            // since we encode feature IDs as u16 for Draco compatibility
-            // Use remapped accessor indices if available
+            // Stamp each feature ID accessor with the componentType matching
+            // its encoded width. Use remapped accessor indices if available.
             let remapping = accessor_remappings.get(&(compressed.mesh_idx, compressed.prim_idx));
-            for &original_accessor_idx in &compressed.feature_id_accessor_indices {
+            for &(original_accessor_idx, component_type) in &compressed.feature_id_accessors {
                 let actual_idx = remapping
                     .and_then(|r| r.get(&original_accessor_idx))
                     .copied()
@@ -427,7 +425,7 @@ impl GltfTranscoder {
                 draco_extension::update_accessor_component_type(
                     &mut json,
                     actual_idx as u64,
-                    draco_extension::COMPONENT_TYPE_UNSIGNED_SHORT,
+                    component_type,
                 );
             }
         }
@@ -505,10 +503,22 @@ impl GltfTranscoder {
             buffer_view_length: length,
             attribute_ids: geometry.draco_attribute_ids,
             indices_accessor_idx: geometry.indices_accessor_idx,
-            feature_id_accessor_indices: geometry
+            feature_id_accessors: geometry
                 .feature_id_accessor_indices
                 .into_iter()
-                .map(|(_, idx)| idx)
+                .map(|(name, idx)| {
+                    let wide = geometry
+                        .feature_ids
+                        .iter()
+                        .find(|(n, _)| *n == name)
+                        .is_some_and(|(_, ids)| feature_ids_need_wide_form(ids));
+                    let component_type = if wide {
+                        draco_extension::COMPONENT_TYPE_FLOAT
+                    } else {
+                        draco_extension::COMPONENT_TYPE_UNSIGNED_SHORT
+                    };
+                    (idx, component_type)
+                })
                 .collect(),
             original_accessor_indices: geometry.original_accessor_indices,
             vertex_count,
@@ -703,20 +713,34 @@ impl GltfTranscoder {
             draco_id += 1;
         }
 
-        // Add feature IDs (from EXT_mesh_features)
-        // Encode as u16 for Draco compatibility (Draco GENERIC attributes work better with integers)
-        // The glTF accessor componentType will be updated to U16 after encoding
+        // Add feature IDs (from EXT_mesh_features), carried as integers on the
+        // Draco side. Ids fitting u16 ride an UNSIGNED_SHORT accessor; wider
+        // ids ride u32 with a FLOAT accessor, the glTF-sanctioned carrier for
+        // integer ids up to 2^24 (vertex attributes cannot be UNSIGNED_INT).
         for (name, feature_ids) in &geometry.feature_ids {
-            let feature_ids: Vec<NdVector<1, u16>> = feature_ids
-                .iter()
-                .map(|&id| NdVector::from([id as u16]))
-                .collect();
-            builder.add_attribute(
-                feature_ids,
-                AttributeType::Custom,
-                AttributeDomain::Corner,
-                vec![pos_id],
-            );
+            if feature_ids_need_wide_form(feature_ids) {
+                let vals: Vec<NdVector<1, u32>> = feature_ids
+                    .iter()
+                    .map(|&id| NdVector::from([id as u32]))
+                    .collect();
+                builder.add_attribute(
+                    vals,
+                    AttributeType::Custom,
+                    AttributeDomain::Corner,
+                    vec![pos_id],
+                );
+            } else {
+                let vals: Vec<NdVector<1, u16>> = feature_ids
+                    .iter()
+                    .map(|&id| NdVector::from([id as u16]))
+                    .collect();
+                builder.add_attribute(
+                    vals,
+                    AttributeType::Custom,
+                    AttributeDomain::Corner,
+                    vec![pos_id],
+                );
+            }
             geometry.draco_attribute_ids.insert(name, draco_id);
             draco_id += 1;
         }
@@ -869,6 +893,12 @@ enum SkipReason {
     Error(Error),
 }
 
+/// Whether a feature ID stream needs the wide form: ids above `u16::MAX`
+/// cannot ride an UNSIGNED_SHORT accessor.
+fn feature_ids_need_wide_form(ids: &[f32]) -> bool {
+    ids.iter().any(|&id| id > u16::MAX as f32)
+}
+
 /// Data about a compressed primitive.
 struct CompressedPrimitive {
     mesh_idx: usize,
@@ -877,8 +907,9 @@ struct CompressedPrimitive {
     buffer_view_length: usize,
     attribute_ids: DracoAttributeIds,
     indices_accessor_idx: Option<u64>,
-    /// Feature ID accessor indices that need their componentType updated to U32
-    feature_id_accessor_indices: Vec<u64>,
+    /// Feature ID accessors paired with the componentType their encoded width
+    /// requires (UNSIGNED_SHORT, or FLOAT for the wide u32 form)
+    feature_id_accessors: Vec<(u64, u64)>,
     /// Maps attribute name to original accessor index (for detecting shared accessors)
     original_accessor_indices: HashMap<String, u64>,
     /// Number of vertices in this primitive (for updating accessor count after duplication)
@@ -892,8 +923,9 @@ struct CompressedPrimitiveData {
     buffer_view_length: usize,
     attribute_ids: DracoAttributeIds,
     indices_accessor_idx: Option<u64>,
-    /// Feature ID accessor indices that need their componentType updated to U32
-    feature_id_accessor_indices: Vec<u64>,
+    /// Feature ID accessors paired with the componentType their encoded width
+    /// requires (UNSIGNED_SHORT, or FLOAT for the wide u32 form)
+    feature_id_accessors: Vec<(u64, u64)>,
     /// Maps attribute name to original accessor index (for detecting shared accessors)
     original_accessor_indices: HashMap<String, u64>,
     /// Number of vertices in this primitive (for updating accessor count after duplication)

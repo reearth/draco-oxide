@@ -1,5 +1,6 @@
 pub mod delta_prediction;
 pub mod derivative_prediction;
+pub mod mesh_constrained_multi_parallelogram_prediction;
 pub mod mesh_multi_parallelogram_prediction;
 pub mod mesh_normal_prediction;
 pub mod mesh_parallelogram_prediction;
@@ -7,9 +8,36 @@ pub mod mesh_prediction_for_texture_coordinates;
 
 use crate::attribute::Attribute;
 use crate::bit_coder::{ByteWriter, Reader};
+use crate::codec::entropy::rans::RabsCoder;
 use crate::mesh::ds::GenericAttributeDs;
 use crate::types::NdVector;
 use crate::types::{ConfigType, CornerIdx, Vector, VertexIdx};
+use crate::utils::bit_coder::leb128_write;
+
+/// Encodes `bits` as one rABS bit stream in the layout the reference decoder
+/// expects: a `zero_prob` byte, the leb128 length of the coded buffer, then the
+/// buffer itself.
+pub fn encode_rabs_bit_stream<W>(bits: &[bool], writer: &mut W) -> Result<(), Err>
+where
+    W: ByteWriter,
+{
+    let freq_count_0 = bits.iter().filter(|&&o| !o).count();
+    let zero_prob =
+        (((freq_count_0 as f32 / bits.len() as f32) * 256.0 + 0.5) as u16).clamp(1, 255) as u8;
+    let mut rabs_coder: RabsCoder = RabsCoder::new(zero_prob as usize, None);
+    writer.write_u8(zero_prob);
+    // rABS decodes last-written-first, so writing in reverse yields stream
+    // order on decode.
+    for &b in bits.iter().rev() {
+        rabs_coder.write(if b { 1 } else { 0 })?;
+    }
+    let buffer = rabs_coder.flush()?;
+    leb128_write(buffer.len() as u64, writer);
+    for byte in buffer {
+        writer.write_u8(byte);
+    }
+    Ok(())
+}
 
 /// PredictionScheme traits are not generic and the structs implementing the
 /// trait are generic. This is so because some of the structs need to store
@@ -69,6 +97,7 @@ where
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PredictionSchemeType {
     DerivativePrediction,
+    MeshConstrainedMultiParallelogramPrediction,
     MeshMultiParallelogramPrediction,
     MeshParallelogramPrediction,
     MeshNormalPrediction,
@@ -84,6 +113,7 @@ impl PredictionSchemeType {
             PredictionSchemeType::DeltaPrediction => 0,
             PredictionSchemeType::MeshParallelogramPrediction => 1,
             PredictionSchemeType::MeshMultiParallelogramPrediction => 2,
+            PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction => 4,
             PredictionSchemeType::MeshPredictionForTextureCoordinates => 5,
             PredictionSchemeType::MeshNormalPrediction => 6,
             PredictionSchemeType::DerivativePrediction => 7,
@@ -108,6 +138,7 @@ impl PredictionSchemeType {
             0 => PredictionSchemeType::DeltaPrediction,
             1 => PredictionSchemeType::MeshParallelogramPrediction,
             2 => PredictionSchemeType::MeshMultiParallelogramPrediction,
+            4 => PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction,
             5 => PredictionSchemeType::MeshPredictionForTextureCoordinates,
             6 => PredictionSchemeType::MeshNormalPrediction,
             7 => PredictionSchemeType::DerivativePrediction,
@@ -124,6 +155,9 @@ impl PredictionSchemeType {
         match self {
             PredictionSchemeType::DeltaPrediction => "DeltaPrediction".to_string(),
             PredictionSchemeType::DerivativePrediction => "DerivativePrediction".to_string(),
+            PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction => {
+                "MeshConstrainedMultiParallelogramPrediction".to_string()
+            }
             PredictionSchemeType::MeshMultiParallelogramPrediction => {
                 "MeshMultiParallelogramPrediction".to_string()
             }
@@ -151,6 +185,13 @@ pub enum PredictionScheme<'parents, const N: usize, D: GenericAttributeDs> {
     DeltaPrediction(delta_prediction::DeltaPrediction<'parents, N, D>),
     DerivativePrediction(
         derivative_prediction::DerivativePredictionForTextureCoordinates<'parents, N, D>,
+    ),
+    MeshConstrainedMultiParallelogramPrediction(
+        mesh_constrained_multi_parallelogram_prediction::MeshConstrainedMultiParallelogramPrediction<
+            'parents,
+            N,
+            D,
+        >,
     ),
     MeshMultiParallelogramPrediction(
         mesh_multi_parallelogram_prediction::MeshMultiParallelogramPrediction<'parents, N, D>,
@@ -191,6 +232,12 @@ where
                         parents, ads,
                     );
                 PredictionScheme::DerivativePrediction(prediction)
+            }
+            PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction => {
+                let prediction = mesh_constrained_multi_parallelogram_prediction::MeshConstrainedMultiParallelogramPrediction::new(
+                    parents, ads,
+                );
+                PredictionScheme::MeshConstrainedMultiParallelogramPrediction(prediction)
             }
             PredictionSchemeType::MeshMultiParallelogramPrediction => {
                 let prediction =
@@ -249,6 +296,9 @@ where
             PredictionScheme::DerivativePrediction(prediction) => {
                 prediction.get_values_impossible_to_predict(value_indices)
             }
+            PredictionScheme::MeshConstrainedMultiParallelogramPrediction(prediction) => {
+                prediction.get_values_impossible_to_predict(value_indices)
+            }
             PredictionScheme::MeshMultiParallelogramPrediction(prediction) => {
                 prediction.get_values_impossible_to_predict(value_indices)
             }
@@ -286,6 +336,9 @@ where
             PredictionScheme::DerivativePrediction(prediction) => {
                 prediction.predict(i, vertices_processed_up_till_now, attribute)
             }
+            PredictionScheme::MeshConstrainedMultiParallelogramPrediction(prediction) => {
+                prediction.predict(i, vertices_processed_up_till_now, attribute)
+            }
             PredictionScheme::MeshMultiParallelogramPrediction(prediction) => {
                 prediction.predict(i, vertices_processed_up_till_now, attribute)
             }
@@ -314,6 +367,9 @@ where
             PredictionScheme::DerivativePrediction(prediction) => {
                 prediction.encode_prediction_metadtata(writer)
             }
+            PredictionScheme::MeshConstrainedMultiParallelogramPrediction(prediction) => {
+                prediction.encode_prediction_metadtata(writer)
+            }
             PredictionScheme::MeshMultiParallelogramPrediction(prediction) => {
                 prediction.encode_prediction_metadtata(writer)
             }
@@ -337,6 +393,9 @@ where
         match self {
             PredictionScheme::DeltaPrediction(_) => PredictionSchemeType::DeltaPrediction,
             PredictionScheme::DerivativePrediction(_) => PredictionSchemeType::DerivativePrediction,
+            PredictionScheme::MeshConstrainedMultiParallelogramPrediction(_) => {
+                PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction
+            }
             PredictionScheme::MeshMultiParallelogramPrediction(_) => {
                 PredictionSchemeType::MeshMultiParallelogramPrediction
             }

@@ -156,6 +156,11 @@ impl Config {
                 if over.normal_encoding == Some(NormalEncoding::PredictedOnly) {
                     return Err(ConfigError::PredictedNormalsUnderSequential);
                 }
+                if over.traversal
+                    == Some(draco_oxide_core::codec::connectivity::edgebreaker::TraversalType::PredictionDegree)
+                {
+                    return Err(ConfigError::PredictionDegreeUnderSequential);
+                }
             }
 
             if over.normal_encoding.is_some() && ty != AttributeType::Normal {
@@ -208,20 +213,27 @@ fn allowed_schemes(
         Position => vec![
             S::MeshParallelogramPrediction,
             S::MeshMultiParallelogramPrediction,
+            S::MeshConstrainedMultiParallelogramPrediction,
             S::DeltaPrediction,
             S::NoPrediction,
         ],
         Normal => vec![S::MeshNormalPrediction],
         TextureCoordinate => vec![
             S::MeshParallelogramPrediction,
+            S::MeshConstrainedMultiParallelogramPrediction,
             S::MeshPredictionForTextureCoordinates,
             S::DerivativePrediction,
             S::DeltaPrediction,
             S::NoPrediction,
         ],
         // Color, Custom, and any other generic per-vertex attribute have no
-        // mesh-geometry predictor.
-        _ => vec![S::DeltaPrediction, S::NoPrediction],
+        // geometry-derived predictor, but the parallelogram family predicts
+        // any value carried over the mesh connectivity.
+        _ => vec![
+            S::MeshConstrainedMultiParallelogramPrediction,
+            S::DeltaPrediction,
+            S::NoPrediction,
+        ],
     }
 }
 
@@ -250,6 +262,10 @@ pub enum ConfigError {
     NormalEncodingOnNonNormal(draco_oxide_core::attribute::AttributeType),
     #[error("geometry-predicted normals need mesh connectivity, which sequential encoding omits")]
     PredictedNormalsUnderSequential,
+    #[error(
+        "prediction-degree traversal needs mesh connectivity, which sequential encoding omits"
+    )]
+    PredictionDegreeUnderSequential,
     #[error("prediction scheme {scheme} is not valid for attribute type {ty:?}")]
     PredictionSchemeForType {
         ty: draco_oxide_core::attribute::AttributeType,

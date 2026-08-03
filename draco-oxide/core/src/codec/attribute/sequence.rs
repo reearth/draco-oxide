@@ -164,6 +164,148 @@ impl<'a, D: GenericAttributeDs> Traverser<'a, D> {
     }
 }
 
+/// The prediction-degree traversal (the reference `MaxPredictionDegreeTraverser`,
+/// wire traversal method 1): faces are walked in an order that prefers reaching
+/// vertices with more than one traversed face around them, so more
+/// parallelograms are available when the vertex's value is predicted. Seeds
+/// follow the same contract as [`Traverser`]: a stack processed from the back,
+/// one full traversal per seed.
+pub struct PredictionDegreeTraverser<'a, D: GenericAttributeDs> {
+    ads: &'a D,
+    visited_vertices: VecVertexIdx<bool>,
+    visited_faces: VecFaceIdx<bool>,
+    /// Number of times an edge toward each unvisited vertex was considered.
+    prediction_degree: VecVertexIdx<u32>,
+    /// One corner stack per priority; priority 0 is processed first.
+    stacks: [Vec<CornerIdx>; 3],
+    best_priority: usize,
+    seeds: Vec<CornerIdx>,
+    out: Vec<CornerIdx>,
+}
+
+impl<'a, D: GenericAttributeDs> PredictionDegreeTraverser<'a, D> {
+    pub fn new(ads: &'a D, corners_of_edgebreaker_traversal: Vec<CornerIdx>) -> Self {
+        let num_faces = ads.num_faces();
+        Self {
+            visited_vertices: vec![false; ads.vertex_index_bound()].into(),
+            visited_faces: vec![false; num_faces].into(),
+            prediction_degree: vec![0; ads.vertex_index_bound()].into(),
+            stacks: Default::default(),
+            best_priority: 0,
+            seeds: corners_of_edgebreaker_traversal,
+            out: Vec::new(),
+            ads,
+        }
+    }
+
+    /// Records `c` as the first corner reaching its vertex.
+    #[inline]
+    fn visit(&mut self, c: CornerIdx) {
+        let v = self.ads.vertex_idx(c);
+        if !self.visited_vertices[v] {
+            self.visited_vertices[v] = true;
+            self.out.push(c);
+        }
+    }
+
+    /// The priority of traversing the edge leading to `c`: 0 toward a visited
+    /// vertex, 1 toward a vertex whose prediction degree exceeds one, 2
+    /// otherwise. Evaluating the priority itself raises the degree.
+    #[inline]
+    fn compute_priority(&mut self, c: CornerIdx) -> usize {
+        let v = self.ads.vertex_idx(c);
+        if self.visited_vertices[v] {
+            return 0;
+        }
+        self.prediction_degree[v] += 1;
+        if self.prediction_degree[v] > 1 {
+            1
+        } else {
+            2
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, c: CornerIdx, priority: usize) {
+        self.stacks[priority].push(c);
+        if priority < self.best_priority {
+            self.best_priority = priority;
+        }
+    }
+
+    #[inline]
+    fn pop_next(&mut self) -> Option<CornerIdx> {
+        for i in self.best_priority..self.stacks.len() {
+            if let Some(c) = self.stacks[i].pop() {
+                self.best_priority = i;
+                return Some(c);
+            }
+        }
+        None
+    }
+
+    fn traverse_from(&mut self, seed: CornerIdx) {
+        self.stacks[0].push(seed);
+        self.best_priority = 0;
+        // The seed face's remaining corners may be unvisited; the reference
+        // emits them next-previous-tip.
+        self.visit(seed.next());
+        self.visit(seed.previous());
+        self.visit(seed);
+        while let Some(popped) = self.pop_next() {
+            if self.visited_faces[popped.face_idx()] {
+                continue;
+            }
+            let mut c = popped;
+            loop {
+                let face = c.face_idx();
+                self.visited_faces[face] = true;
+                self.visit(c);
+                let right = self
+                    .ads
+                    .corner_table()
+                    .get_right_corner_with_face_idx(c, face);
+                let left = self
+                    .ads
+                    .corner_table()
+                    .get_left_corner_with_face_idx(c, face);
+                let right_visited = right.is_none_or(|rc| self.visited_faces[rc.face_idx()]);
+                let left_visited = left.is_none_or(|lc| self.visited_faces[lc.face_idx()]);
+                if !left_visited {
+                    let lc = left.unwrap();
+                    let priority = self.compute_priority(lc);
+                    if right_visited && priority <= self.best_priority {
+                        // The left face is certain to be traversed next, so it
+                        // continues in place instead of going through the stack.
+                        c = lc;
+                        continue;
+                    }
+                    self.push(lc, priority);
+                }
+                if !right_visited {
+                    let rc = right.unwrap();
+                    let priority = self.compute_priority(rc);
+                    if priority <= self.best_priority {
+                        c = rc;
+                        continue;
+                    }
+                    self.push(rc, priority);
+                }
+                break;
+            }
+        }
+    }
+
+    /// Computes the attribute traversal sequence.
+    pub fn compute_seqeunce(mut self) -> Vec<CornerIdx> {
+        self.out.reserve(self.ads.vertex_index_bound());
+        while let Some(seed) = self.seeds.pop() {
+            self.traverse_from(seed);
+        }
+        self.out
+    }
+}
+
 /// Yields the attribute traversal sequence one corner at a time, in the same
 /// order as [`Traverser::compute_seqeunce`], letting a consumer fuse its own
 /// per-corner work into the walk without materializing the sequence.

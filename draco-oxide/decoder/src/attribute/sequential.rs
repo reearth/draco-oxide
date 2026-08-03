@@ -18,6 +18,7 @@ use draco_oxide_core::attribute::{
 };
 use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
+use draco_oxide_core::codec::connectivity::edgebreaker::TraversalType;
 use draco_oxide_core::types::{NdVector, Vector};
 use draco_oxide_core::utils::bit_coder::leb128_read;
 
@@ -89,6 +90,8 @@ fn read_descriptors(reader: &mut Reader<'_>) -> Result<Vec<Descriptor>, Err> {
             uid,
             port_type: reader.read_u8()?,
             domain: AttributeDomain::Position,
+            // A sequential stream carries no connectivity to traverse.
+            traversal: TraversalType::DepthFirst,
         });
     }
     Ok(descriptors)

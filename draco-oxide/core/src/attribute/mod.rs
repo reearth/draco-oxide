@@ -722,18 +722,33 @@ impl ComponentDataType {
     #[inline]
     pub fn get_id(self) -> u8 {
         match self {
-            ComponentDataType::U8 => 1,
-            ComponentDataType::I8 => 2,
-            ComponentDataType::U16 => 3,
-            ComponentDataType::I16 => 4,
-            ComponentDataType::U32 => 5,
-            ComponentDataType::I32 => 6,
-            ComponentDataType::U64 => 7,
-            ComponentDataType::I64 => 8,
+            ComponentDataType::I8 => 1,
+            ComponentDataType::U8 => 2,
+            ComponentDataType::I16 => 3,
+            ComponentDataType::U16 => 4,
+            ComponentDataType::I32 => 5,
+            ComponentDataType::U32 => 6,
+            ComponentDataType::I64 => 7,
+            ComponentDataType::U64 => 8,
             ComponentDataType::F32 => 9,
             ComponentDataType::F64 => 10,
             ComponentDataType::Invalid => u8::MAX, // Invalid type
         }
+    }
+
+    /// Whether this is an integer type of either signedness.
+    pub fn is_integer(self) -> bool {
+        matches!(
+            self,
+            ComponentDataType::I8
+                | ComponentDataType::U8
+                | ComponentDataType::I16
+                | ComponentDataType::U16
+                | ComponentDataType::I32
+                | ComponentDataType::U32
+                | ComponentDataType::I64
+                | ComponentDataType::U64
+        )
     }
 
     /// returns the data type as a string.
@@ -815,10 +830,22 @@ impl AttributeType {
         }
     }
 
-    /// Returns the id of the attribute type.
+    /// The type as it goes on the wire. Tangent, material, joint, and weight
+    /// exist only in the reference transcoder's internal builds and are
+    /// downgraded to the generic type on write there too; a stock decoder
+    /// rejects `att_type >= 5`.
+    #[inline]
+    pub fn wire_type(&self) -> AttributeType {
+        match self {
+            Self::Tangent | Self::Material | Self::Joint | Self::Weight => Self::Custom,
+            other => *other,
+        }
+    }
+
+    /// Writes the wire id of the attribute type.
     #[inline]
     pub fn write_to<W: ByteWriter>(&self, writer: &mut W) {
-        writer.write_u8(self.get_id());
+        writer.write_u8(self.wire_type().get_id());
     }
 
     /// Reads the attribute type from the reader.
@@ -1002,5 +1029,42 @@ mod tests {
                 .collect::<Vec<_>>(),
             &vec![0, 2, 1, 3]
         );
+    }
+
+    /// Attribute types outside the stock decoder's range write as generic.
+    #[test]
+    fn transcoder_only_attribute_types_downgrade_on_the_wire() {
+        for ty in [
+            AttributeType::Tangent,
+            AttributeType::Material,
+            AttributeType::Joint,
+            AttributeType::Weight,
+        ] {
+            let mut buf = Vec::new();
+            ty.write_to(&mut buf);
+            assert_eq!(buf, vec![AttributeType::Custom.get_id()]);
+        }
+    }
+
+    /// The wire ids follow the reference `draco::DataType` numbering, and the
+    /// two directions agree.
+    #[test]
+    fn component_type_ids_match_reference() {
+        let expected = [
+            (ComponentDataType::I8, 1),
+            (ComponentDataType::U8, 2),
+            (ComponentDataType::I16, 3),
+            (ComponentDataType::U16, 4),
+            (ComponentDataType::I32, 5),
+            (ComponentDataType::U32, 6),
+            (ComponentDataType::I64, 7),
+            (ComponentDataType::U64, 8),
+            (ComponentDataType::F32, 9),
+            (ComponentDataType::F64, 10),
+        ];
+        for (ty, id) in expected {
+            assert_eq!(ty.get_id(), id, "{ty:?}");
+            assert_eq!(ComponentDataType::from_id(id as usize), Some(ty));
+        }
     }
 }

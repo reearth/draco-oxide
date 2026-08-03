@@ -1,6 +1,7 @@
 use crate::bit_coder::{ByteWriter, Reader, ReaderErr};
 
 pub mod rans;
+pub mod shannon;
 
 pub const L_RANS_BASE: usize = 4096;
 pub const DEFAULT_RANS_PRECISION: usize = 12;

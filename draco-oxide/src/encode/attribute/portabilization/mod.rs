@@ -2,7 +2,7 @@ pub mod octahedral_quantization;
 pub mod quantization_coordinate_wise;
 pub mod to_bits;
 
-use draco_oxide_core::attribute::{Attribute, AttributeType};
+use draco_oxide_core::attribute::{Attribute, AttributeType, ComponentDataType};
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::attribute::Portable;
 use draco_oxide_core::debug_write;
@@ -48,9 +48,6 @@ where
             PortabilizationType::ToBits => {
                 Portabilization::ToBits(to_bits::ToBits::new(att, cfg, writer))
             }
-            PortabilizationType::Integer => {
-                unimplemented!("Integer portabilization is not implemented yet.")
-            }
         };
         debug_write!("End of Portabilization Metadata", writer);
         out
@@ -77,8 +74,6 @@ where
 pub enum PortabilizationType {
     QuantizationCoordinateWise,
     OctahedralQuantization,
-    #[allow(dead_code)]
-    Integer,
     ToBits,
 }
 
@@ -86,7 +81,6 @@ impl PortabilizationType {
     pub(crate) fn get_id(&self) -> u8 {
         match self {
             PortabilizationType::ToBits => 1,
-            PortabilizationType::Integer => 1, // Integer is not used in the current implementation, but kept for compatibility.
             PortabilizationType::QuantizationCoordinateWise => 2,
             PortabilizationType::OctahedralQuantization => 3,
         }
@@ -100,11 +94,22 @@ impl PortabilizationType {
         writer.write_u8(id);
     }
 
-    pub(crate) fn default_for(ty: AttributeType) -> Self {
+    /// The default portabilization for an attribute of type `ty` with
+    /// components of `component_ty`. Integer values ride the integer codec
+    /// whatever the attribute type; float quantization is only valid for
+    /// float input (the reference decoder rejects a quantization block on a
+    /// non-float declared type).
+    pub(crate) fn default_for(ty: AttributeType, component_ty: ComponentDataType) -> Self {
+        if component_ty.is_integer() {
+            return PortabilizationType::ToBits;
+        }
         match ty {
             AttributeType::Normal => PortabilizationType::OctahedralQuantization,
-            AttributeType::Custom => PortabilizationType::ToBits,
-            _ => PortabilizationType::QuantizationCoordinateWise, // default
+            // Float values of every other type, generics included, are
+            // quantized: `ToBits` truncates floats numerically, and the
+            // reference's lossless float form (the raw type 0 codec) is not
+            // implemented.
+            _ => PortabilizationType::QuantizationCoordinateWise,
         }
     }
 }
@@ -136,7 +141,13 @@ impl Config {
         }
     }
 
-    pub fn default_for(ty: AttributeType) -> Self {
+    pub fn default_for(ty: AttributeType, component_ty: ComponentDataType) -> Self {
+        if component_ty.is_integer() {
+            return Config {
+                type_: PortabilizationType::ToBits,
+                quantization: Quantization::Bits(11), // not used for ToBits
+            };
+        }
         match ty {
             AttributeType::Normal => Config {
                 type_: PortabilizationType::OctahedralQuantization,
@@ -145,10 +156,6 @@ impl Config {
             AttributeType::TextureCoordinate => Config {
                 type_: PortabilizationType::QuantizationCoordinateWise,
                 quantization: Quantization::Bits(10),
-            },
-            AttributeType::Custom => Config {
-                type_: PortabilizationType::ToBits,
-                quantization: Quantization::Bits(11), // not used for ToBits
             },
             _ => Self::default(),
         }

@@ -1,0 +1,35 @@
+# Grouped attribute encoders over a real multi-attribute mesh.
+#
+# At compression level 4 (speed 6) the reference encoder groups the Duck's
+# position, normal, and texture coordinate attributes into one attribute
+# decoder over the single (per-point) connectivity, predicting each with the
+# parallelogram scheme, the normals over their octahedral representation. One
+# traversal walk drives three steppers with distinct portabilizations.
+#
+# The comparison is against Google's decode of the very same payload, so
+# quantization loss cancels out and the score measures decoder parity alone.
+
+[[operations]]
+op = "DracoEncode"
+input = "Duck.obj"
+output = "cl4.drc"
+cfg = { compression_level = 4, position_quantization = 14 }
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "cl4.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "DracoDecode"
+input = "cl4.drc"
+output = "ref.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "ref.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.001 },
+    { method = "Ssim", min = 0.99, color_by = "Normal" },
+]

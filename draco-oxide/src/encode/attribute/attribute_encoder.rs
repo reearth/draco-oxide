@@ -29,6 +29,8 @@ pub enum Err {
     TooManyEncodingGroups(usize),
     #[error("An attribute has too many parents: {0}")]
     TooManyParents(usize),
+    #[error("64-bit integer components have no compressed representation; the reference carries them only through the raw generic codec, which is not implemented")]
+    Unsupported64BitComponents,
     #[error("Unsupported data type.")]
     UnsupportedDataType,
     #[error("Attribute data has too many components; it must be less than {}, but it is {}.", 5, .0)]
@@ -48,17 +50,27 @@ pub struct GroupConfig {
 }
 
 impl GroupConfig {
-    #[allow(clippy::single_range_in_vec_init)]
-    fn default_with_size(size: usize) -> Self {
-        Self {
-            range: vec![0..size],
-            prediction_scheme: prediction_scheme::Config::default(),
-            prediction_transform: prediction_transform::Config::default(),
-        }
-    }
-
     #[allow(clippy::single_range_in_vec_init, clippy::needless_update)]
-    fn default_for(att_ty: AttributeType, size: usize) -> Self {
+    fn default_for(att_ty: AttributeType, component_ty: ComponentDataType, size: usize) -> Self {
+        // Integer values ride the integer codec with wrap-transformed
+        // predictions whatever the attribute type; the geometric pipelines
+        // below assume float input (float quantization, octahedral normals).
+        if component_ty.is_integer() {
+            let prediction = match att_ty {
+                AttributeType::Position | AttributeType::TextureCoordinate => {
+                    prediction_scheme::PredictionSchemeType::MeshParallelogramPrediction
+                }
+                _ => prediction_scheme::PredictionSchemeType::DeltaPrediction,
+            };
+            return Self {
+                range: vec![0..size],
+                prediction_scheme: prediction_scheme::Config { ty: prediction },
+                prediction_transform: prediction_transform::Config {
+                    ty: prediction_transform::PredictionTransformType::WrappedDifference,
+                    portabilization: portabilization::Config::default_for(att_ty, component_ty),
+                },
+            };
+        }
         match att_ty {
             AttributeType::Position => Self {
                 range: vec![0..size],
@@ -68,7 +80,7 @@ impl GroupConfig {
                 },
                 prediction_transform: prediction_transform::Config {
                     ty: prediction_transform::PredictionTransformType::WrappedDifference,
-                    portabilization: portabilization::Config::default_for(att_ty),
+                    portabilization: portabilization::Config::default_for(att_ty, component_ty),
                 },
             },
             AttributeType::Normal => Self {
@@ -79,7 +91,7 @@ impl GroupConfig {
                 },
                 prediction_transform: prediction_transform::Config {
                     ty: prediction_transform::PredictionTransformType::OctahedralOrthogonal,
-                    portabilization: portabilization::Config::default_for(att_ty),
+                    portabilization: portabilization::Config::default_for(att_ty, component_ty),
                 },
             },
             // Parallelogram over the UV connectivity is the default: it
@@ -95,18 +107,7 @@ impl GroupConfig {
                 },
                 prediction_transform: prediction_transform::Config {
                     ty: prediction_transform::PredictionTransformType::WrappedDifference,
-                    portabilization: portabilization::Config::default_for(att_ty),
-                },
-            },
-            AttributeType::Custom => Self {
-                range: vec![0..size],
-                prediction_scheme: prediction_scheme::Config {
-                    ty: prediction_scheme::PredictionSchemeType::DeltaPrediction,
-                    ..prediction_scheme::Config::default()
-                },
-                prediction_transform: prediction_transform::Config {
-                    ty: prediction_transform::PredictionTransformType::WrappedDifference,
-                    portabilization: portabilization::Config::default_for(AttributeType::Custom),
+                    portabilization: portabilization::Config::default_for(att_ty, component_ty),
                 },
             },
             // Color (e.g. glTF COLOR_0) — a generic per-vertex attribute with no
@@ -117,9 +118,9 @@ impl GroupConfig {
             // the `Difference`/`PREDICTION_TRANSFORM_DELTA` (id 0) default the
             // `_` catch-all selects — makes the decoder skip the prediction
             // revert and return the raw quantized residuals (garbage colors,
-            // alpha read as delta-of-constant). Pin Color to the same
-            // reference-compatible delta + wrapped-difference path the Custom arm
-            // uses (PREDICTION_DIFFERENCE + WRAP — also the reference encoder's
+            // alpha read as delta-of-constant). Pin Color to the
+            // reference-compatible delta + wrapped-difference path
+            // (PREDICTION_DIFFERENCE + WRAP, also the reference encoder's
             // generic high-speed path), so draco3d reconstructs absolute colors.
             AttributeType::Color => Self {
                 range: vec![0..size],
@@ -129,10 +130,28 @@ impl GroupConfig {
                 },
                 prediction_transform: prediction_transform::Config {
                     ty: prediction_transform::PredictionTransformType::WrappedDifference,
-                    portabilization: portabilization::Config::default_for(AttributeType::Color),
+                    portabilization: portabilization::Config::default_for(
+                        AttributeType::Color,
+                        component_ty,
+                    ),
                 },
             },
-            _ => Self::default_with_size(size),
+            // Any other type (tangents, weights, unrecognized generics) takes
+            // the same reference-compatible delta + wrapped-difference pipeline
+            // as the Color arm: the reference decoder reverts predictions only
+            // under the wrap transform, so the plain `Difference` default would
+            // decode to raw residuals there.
+            _ => Self {
+                range: vec![0..size],
+                prediction_scheme: prediction_scheme::Config {
+                    ty: prediction_scheme::PredictionSchemeType::DeltaPrediction,
+                    ..prediction_scheme::Config::default()
+                },
+                prediction_transform: prediction_transform::Config {
+                    ty: prediction_transform::PredictionTransformType::WrappedDifference,
+                    portabilization: portabilization::Config::default_for(att_ty, component_ty),
+                },
+            },
         }
     }
 }
@@ -171,9 +190,13 @@ impl ConfigType for Config {
 }
 
 impl Config {
-    pub fn default_for(att_ty: AttributeType, size: usize) -> Self {
+    pub fn default_for(
+        att_ty: AttributeType,
+        component_ty: ComponentDataType,
+        size: usize,
+    ) -> Self {
         Self {
-            group_cfgs: vec![GroupConfig::default_for(att_ty, size)],
+            group_cfgs: vec![GroupConfig::default_for(att_ty, component_ty, size)],
             rans_encoding: true,
             mode: EncodingMode::Full,
         }
@@ -184,7 +207,11 @@ impl Config {
     /// stream instead of reading the input normals (see [`EncodingMode::ZeroCorrection`]).
     pub fn predicted_normals(size: usize) -> Self {
         Self {
-            group_cfgs: vec![GroupConfig::default_for(AttributeType::Normal, size)],
+            group_cfgs: vec![GroupConfig::default_for(
+                AttributeType::Normal,
+                ComponentDataType::F32,
+                size,
+            )],
             rans_encoding: true,
             mode: EncodingMode::ZeroCorrection,
         }
@@ -290,6 +317,12 @@ where
     pub(super) fn encode<const WRITE_NOW: bool, const BOOST: bool>(
         self,
     ) -> Result<(Attribute, Vec<u8>), Err> {
+        if matches!(
+            self.ads.att_data().get_component_type(),
+            ComponentDataType::I64 | ComponentDataType::U64
+        ) {
+            return Err(Err::Unsupported64BitComponents);
+        }
         self.cfg.group_cfgs[0]
             .prediction_scheme
             .ty
@@ -330,7 +363,8 @@ where
 
         const N: usize = 2;
 
-        let por_cfg = portabilization::Config::default_for(AttributeType::Normal);
+        let por_cfg =
+            portabilization::Config::default_for(AttributeType::Normal, ComponentDataType::F32);
         let mut port_info_buffer: Vec<u8> = Vec::new();
         port_info_buffer.write_u8(por_cfg.quantization.resolve(0.0));
 
@@ -534,9 +568,11 @@ where
                 self.writer.write_u8(byte);
             }
             prediction_scheme.encode_prediction_metadtata(self.writer)?;
-        } else if prediction_scheme.get_type()
-            == prediction_scheme::PredictionSchemeType::MeshPredictionForTextureCoordinates
-        {
+        } else if matches!(
+            prediction_scheme.get_type(),
+            prediction_scheme::PredictionSchemeType::MeshPredictionForTextureCoordinates
+                | prediction_scheme::PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction
+        ) {
             prediction_scheme.encode_prediction_metadtata(self.writer)?;
             for byte in transform_info_buffer {
                 self.writer.write_u8(byte);

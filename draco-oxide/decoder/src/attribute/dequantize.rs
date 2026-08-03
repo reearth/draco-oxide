@@ -11,7 +11,7 @@ pub(crate) fn dequantize_attribute(
     transform: &AttributeTransform,
 ) -> Result<Attribute, Err> {
     match transform {
-        AttributeTransform::None => Ok(att),
+        AttributeTransform::Integer { component_type } => narrow_integer(att, *component_type),
         AttributeTransform::Quantized {
             min,
             delta_max,
@@ -32,9 +32,63 @@ pub(crate) fn dequantize_attribute(
                 4 => reinterpret_f32::<4>(att),
                 _ => Err(Err::MalformedAttribute("unsupported number of components")),
             },
-            _ => Ok(att),
+            _ => narrow_integer(att, *component_type),
         },
     }
+}
+
+/// Narrows the portable i32 values back to the declared component type, the
+/// counterpart of the encoder's widening. Declarations without a narrower form
+/// (i32 itself, 64-bit and float types) pass through untouched.
+fn narrow_integer(att: Attribute, component_type: ComponentDataType) -> Result<Attribute, Err> {
+    match att.get_num_components() {
+        1 => Ok(narrow_typed::<1>(att, component_type)),
+        2 => Ok(narrow_typed::<2>(att, component_type)),
+        3 => Ok(narrow_typed::<3>(att, component_type)),
+        4 => Ok(narrow_typed::<4>(att, component_type)),
+        _ => Err(Err::MalformedAttribute("unsupported number of components")),
+    }
+}
+
+fn narrow_typed<const N: usize>(att: Attribute, component_type: ComponentDataType) -> Attribute
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+    NdVector<N, i8>: Vector<N, Component = i8>,
+    NdVector<N, u8>: Vector<N, Component = u8>,
+    NdVector<N, i16>: Vector<N, Component = i16>,
+    NdVector<N, u16>: Vector<N, Component = u16>,
+    NdVector<N, u32>: Vector<N, Component = u32>,
+{
+    match component_type {
+        ComponentDataType::I8 => narrow_to::<i8, N>(att),
+        ComponentDataType::U8 => narrow_to::<u8, N>(att),
+        ComponentDataType::I16 => narrow_to::<i16, N>(att),
+        ComponentDataType::U16 => narrow_to::<u16, N>(att),
+        ComponentDataType::U32 => narrow_to::<u32, N>(att),
+        _ => att,
+    }
+}
+
+/// The per-component cast from the portable i32, bit-truncating like the
+/// reference's `StoreTypedValues`.
+fn narrow_to<T, const N: usize>(att: Attribute) -> Attribute
+where
+    T: draco_oxide_core::types::DataValue + Copy,
+    NdVector<N, T>: Vector<N, Component = T>,
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    let vals = att.unique_vals_as_slice::<NdVector<N, i32>>();
+    let values: Vec<NdVector<N, T>> = vals
+        .iter()
+        .map(|q| {
+            let mut v = NdVector::<N, T>::zero();
+            for j in 0..N {
+                *v.get_mut(j) = T::from_i64(*q.get(j) as i64);
+            }
+            v
+        })
+        .collect();
+    rebuild(att, values)
 }
 
 /// Reads back the f32 values a generic attribute carried as bit patterns.

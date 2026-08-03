@@ -1,0 +1,40 @@
+# Decodes a reference stream using prediction-degree traversal.
+#
+# At compression level 10 (speed 0) the reference encoder writes traversal
+# method 1 (prediction-degree) on the position attribute while other attributes
+# keep depth-first, so this exercises the max-prediction-degree traverser and
+# the split of same-connectivity attributes into per-traversal walks, on top of
+# the constrained multi-parallelogram prediction level 9 already selects.
+#
+# The comparison is against Google's decode of the very same payload, so
+# quantization loss cancels out and the score measures decoder parity alone.
+
+[[operations]]
+op = "DracoEncode"
+input = "sphere.obj"
+output = "cl10.drc"
+cfg = { compression_level = 10, position_quantization = 14 }
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "cl10.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "DracoDecode"
+input = "cl10.drc"
+output = "ref.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "ref.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.001 },
+    { method = "Ssim", min = 0.99 },
+]

@@ -1,0 +1,27 @@
+# Encodes with the metadata flag set.
+#
+# The encoder writes an empty but conformant geometry metadata section, so the
+# reference decoder accepts the stream; the previous stub bytes were rejected.
+# Both decoders must reconstruct the same geometry.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "sphere.obj"
+output = "oxide.drc"
+cfg = { metadata = true }
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "google_decoded.obj"
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "oxide.drc"
+output = "oxide_decoded.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "google_decoded.obj"
+input2 = "oxide_decoded.obj"
+methods = [{ method = "L2Norm", max = 0.00001 }]

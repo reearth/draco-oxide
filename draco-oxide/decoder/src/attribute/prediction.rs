@@ -8,7 +8,11 @@ use crate::Err;
 use draco_oxide_core::attribute::Attribute;
 use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::attribute::prediction_scheme::{
-    delta_prediction::DeltaPrediction, mesh_normal_prediction::MeshNormalPrediction,
+    delta_prediction::DeltaPrediction,
+    mesh_constrained_multi_parallelogram_prediction::{
+        DecodedCreases, MeshConstrainedMultiParallelogramPrediction, MAX_PARALLELOGRAMS,
+    },
+    mesh_normal_prediction::MeshNormalPrediction,
     mesh_parallelogram_prediction::MeshParallelogramPrediction,
     mesh_prediction_for_texture_coordinates::MeshPredictionForTextureCoordinates,
     PredictionSchemeImpl, PredictionSchemeType,
@@ -25,6 +29,7 @@ pub(crate) fn read_scheme_id(reader: &mut Reader<'_>) -> Result<PredictionScheme
         0 => Ok(PredictionSchemeType::DeltaPrediction),
         1 => Ok(PredictionSchemeType::MeshParallelogramPrediction),
         2 => Ok(PredictionSchemeType::MeshMultiParallelogramPrediction),
+        4 => Ok(PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction),
         5 => Ok(PredictionSchemeType::MeshPredictionForTextureCoordinates),
         6 => Ok(PredictionSchemeType::MeshNormalPrediction),
         7 => Ok(PredictionSchemeType::DerivativePrediction),
@@ -71,6 +76,31 @@ pub(crate) fn decode_orientation_metadata(reader: &mut Reader<'_>) -> Result<Vec
     Ok(orientations)
 }
 
+/// Decodes the constrained multi-parallelogram crease metadata: one rABS bit
+/// stream per context, each prefixed by its leb128 bit count. Context `i` holds
+/// exactly `i + 1` bits for every value whose vertex had `i + 1` parallelograms
+/// available, so `num_values * (i + 1)` bounds a well-formed stream.
+pub(crate) fn decode_crease_metadata(
+    reader: &mut Reader<'_>,
+    num_values: usize,
+) -> Result<[Vec<bool>; MAX_PARALLELOGRAMS], Err> {
+    let mut out: [Vec<bool>; MAX_PARALLELOGRAMS] = Default::default();
+    for (i, bits) in out.iter_mut().enumerate() {
+        let count = leb128_read(reader)? as usize;
+        if count > num_values * (i + 1) {
+            return Err(Err::MalformedAttribute(
+                "crease bit count exceeds the attribute's value count",
+            ));
+        }
+        if count > 0 {
+            let zero_prob = reader.read_u8()?;
+            let mut rabs = rabs_over_substream(reader, zero_prob)?;
+            *bits = (0..count).map(|_| rabs.decode_bit()).collect();
+        }
+    }
+    Ok(out)
+}
+
 /// The decode-side predictor: wraps the core prediction schemes, feeding the
 /// decoded flip/orientation metadata where the encoder consulted the actual
 /// values.
@@ -81,6 +111,10 @@ where
     NoPrediction,
     Delta(DeltaPrediction<'p, N, D>),
     Parallelogram(MeshParallelogramPrediction<'p, N, D>),
+    ConstrainedMultiParallelogram {
+        scheme: Box<MeshConstrainedMultiParallelogramPrediction<'p, N, D>>,
+        creases: DecodedCreases,
+    },
     TexCoords {
         scheme: MeshPredictionForTextureCoordinates<'p, N, D>,
         orientations: Vec<bool>,
@@ -105,6 +139,7 @@ where
         ads: &'p D,
         flips: Vec<bool>,
         orientations: Vec<bool>,
+        creases: [Vec<bool>; MAX_PARALLELOGRAMS],
         oct_center: i32,
     ) -> Result<Self, Err> {
         Ok(match scheme_ty {
@@ -114,6 +149,14 @@ where
             }
             PredictionSchemeType::MeshParallelogramPrediction => {
                 Predictor::Parallelogram(MeshParallelogramPrediction::new(parents, ads))
+            }
+            PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction => {
+                Predictor::ConstrainedMultiParallelogram {
+                    scheme: Box::new(MeshConstrainedMultiParallelogramPrediction::new(
+                        parents, ads,
+                    )),
+                    creases: DecodedCreases::new(creases),
+                }
             }
             PredictionSchemeType::MeshPredictionForTextureCoordinates => Predictor::TexCoords {
                 scheme: MeshPredictionForTextureCoordinates::new(parents, ads),
@@ -154,6 +197,9 @@ where
             Predictor::NoPrediction => NdVector::zero(),
             Predictor::Delta(scheme) => scheme.predict(c, vertices_up_till_now, attribute),
             Predictor::Parallelogram(scheme) => scheme.predict(c, vertices_up_till_now, attribute),
+            Predictor::ConstrainedMultiParallelogram { scheme, creases } => {
+                scheme.predict_given_creases(c, vertices_up_till_now, attribute, creases)
+            }
             Predictor::TexCoords {
                 scheme,
                 orientations,

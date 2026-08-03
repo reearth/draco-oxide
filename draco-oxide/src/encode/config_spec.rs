@@ -32,7 +32,7 @@ use serde::Deserialize;
 
 use draco_oxide_core::attribute::AttributeType;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
-use draco_oxide_core::codec::connectivity::edgebreaker::EdgebreakerKind;
+use draco_oxide_core::codec::connectivity::edgebreaker::{EdgebreakerKind, TraversalType};
 use draco_oxide_core::codec::connectivity::sequential::Method as SequentialMethod;
 use draco_oxide_core::types::ConfigType;
 
@@ -166,6 +166,7 @@ struct AttributeConfigSpec {
     transform: Option<TransformName>,
     quantization: Option<QuantizationSpec>,
     encoding: Option<NormalEncoding>,
+    traversal: Option<AttributeTraversalName>,
 }
 
 impl From<AttributeConfigSpec> for AttributeConfig {
@@ -175,6 +176,7 @@ impl From<AttributeConfigSpec> for AttributeConfig {
             transform: s.transform.map(Into::into),
             quantization: s.quantization.map(Into::into),
             normal_encoding: s.encoding,
+            traversal: s.traversal.map(Into::into),
         }
     }
 }
@@ -183,6 +185,7 @@ impl From<AttributeConfigSpec> for AttributeConfig {
 enum SchemeName {
     DeltaPrediction,
     DerivativePrediction,
+    MeshConstrainedMultiParallelogramPrediction,
     MeshMultiParallelogramPrediction,
     MeshParallelogramPrediction,
     MeshNormalPrediction,
@@ -195,6 +198,9 @@ impl From<SchemeName> for PredictionSchemeType {
         match s {
             SchemeName::DeltaPrediction => PredictionSchemeType::DeltaPrediction,
             SchemeName::DerivativePrediction => PredictionSchemeType::DerivativePrediction,
+            SchemeName::MeshConstrainedMultiParallelogramPrediction => {
+                PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction
+            }
             SchemeName::MeshMultiParallelogramPrediction => {
                 PredictionSchemeType::MeshMultiParallelogramPrediction
             }
@@ -206,6 +212,23 @@ impl From<SchemeName> for PredictionSchemeType {
                 PredictionSchemeType::MeshPredictionForTextureCoordinates
             }
             SchemeName::NoPrediction => PredictionSchemeType::NoPrediction,
+        }
+    }
+}
+
+/// TOML form of the per-attribute [`TraversalType`], distinct from the
+/// edgebreaker connectivity `traversal` key.
+#[derive(Debug, Clone, Copy, Deserialize)]
+enum AttributeTraversalName {
+    DepthFirst,
+    PredictionDegree,
+}
+
+impl From<AttributeTraversalName> for TraversalType {
+    fn from(t: AttributeTraversalName) -> Self {
+        match t {
+            AttributeTraversalName::DepthFirst => TraversalType::DepthFirst,
+            AttributeTraversalName::PredictionDegree => TraversalType::PredictionDegree,
         }
     }
 }

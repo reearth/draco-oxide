@@ -1,0 +1,40 @@
+# Decodes a reference stream with grouped attribute encoders.
+#
+# At compression level 1 (speed 9) the reference encoder switches to single
+# connectivity and carries every attribute in one attribute decoder: the
+# descriptor block interleaves differently and every payload precedes the
+# first portabilization block. Prediction is plain difference at this level,
+# so the profile isolates the grouped framing.
+#
+# The comparison is against Google's decode of the very same payload, so
+# quantization loss cancels out and the score measures decoder parity alone.
+
+[[operations]]
+op = "DracoEncode"
+input = "sphere.obj"
+output = "cl1.drc"
+cfg = { compression_level = 1, position_quantization = 14 }
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "cl1.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "DracoDecode"
+input = "cl1.drc"
+output = "ref.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "ref.obj"
+input2 = "decoded.obj"
+methods = [
+    { method = "L2Norm", max = 0.001 },
+    { method = "Ssim", min = 0.99 },
+]

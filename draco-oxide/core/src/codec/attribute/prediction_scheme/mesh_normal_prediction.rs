@@ -1,7 +1,5 @@
 use crate::codec::attribute::geom::{canonicalize_integer_vector, integer_vector_to_oct};
-use crate::codec::entropy::rans::RabsCoder;
 use crate::types::{CornerIdx, Cross, VertexIdx};
-use crate::utils::bit_coder::leb128_write;
 
 use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
@@ -220,20 +218,5 @@ pub fn encode_flip_metadata<W>(flips: &[bool], writer: &mut W) -> Result<(), sup
 where
     W: crate::bit_coder::ByteWriter,
 {
-    let freq_count_0 = flips.iter().filter(|&&o| !o).count();
-    let zero_prob =
-        (((freq_count_0 as f32 / flips.len() as f32) * 256.0 + 0.5) as u16).clamp(1, 255) as u8;
-    let mut rabs_coder: RabsCoder = RabsCoder::new(zero_prob as usize, None);
-    writer.write_u8(zero_prob);
-    // rABS decodes last-written-first, so writing in reverse yields traversal
-    // order on decode.
-    for &b in flips.iter().rev() {
-        rabs_coder.write(if b { 1 } else { 0 })?;
-    }
-    let buffer = rabs_coder.flush()?;
-    leb128_write(buffer.len() as u64, writer);
-    for byte in buffer {
-        writer.write_u8(byte);
-    }
-    Ok(())
+    super::encode_rabs_bit_stream(flips, writer)
 }
