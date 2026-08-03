@@ -10,6 +10,7 @@ pub enum Err {
     ConstructionError(String),
 }
 
+/// The point space: the per-corner point map.
 #[derive(Debug, Clone)]
 pub struct DS {
     corner_to_point_map: VecCornerIdx<PointIdx>,
@@ -37,9 +38,7 @@ impl DS {
         self.corner_to_point_map[corner]
     }
 
-    /// The corner-to-point map as a plain slice. Used by the identity data
-    /// structure of the finest attribute, whose vertices coincide with the
-    /// points, so this map is directly its corner-to-vertex map.
+    /// The corner-to-point map as a plain slice.
     pub fn corner_to_point(&self) -> &[PointIdx] {
         self.corner_to_point_map.as_slice()
     }
@@ -57,6 +56,7 @@ impl DS {
     }
 }
 
+/// The seam-aware attribute data structure over the shared point space.
 #[derive(Debug, Clone)]
 pub struct AttributeDS<'a> {
     global_ds: &'a DS,
@@ -120,26 +120,18 @@ impl<'a> AttributeDS<'a> {
     }
 
     #[inline]
+    /// Whether `vertex` lies on an open fan.
     pub fn is_on_boundary(&self, vertex: VertexIdx) -> bool {
         let left_most_corner = self.left_most_corner(vertex);
         self.corner_table.swing_left(left_most_corner).is_none()
     }
 
-    /// Returns the valence (degree) of `vertex`, i.e. the number of edges
-    /// incident to it, with respect to this attribute's connectivity
-    /// (attribute seams break the one-ring, so a seam vertex is counted per
-    /// connectivity fan).
-    ///
-    /// Starting from the left-most corner, it swings right around the vertex
-    /// counting the incident edges. For an interior vertex the fan is closed,
-    /// so the count equals the number of incident faces; for a boundary vertex
-    /// the fan is open, so it is faces + 1.
+    /// The valence of `vertex` in this attribute's connectivity; a boundary fan
+    /// counts faces + 1.
     pub fn vertex_valence(&self, vertex: VertexIdx) -> usize {
         let start = self.left_most_corner(vertex);
         let mut c = start;
         let mut count = 2;
-        // Swing right until the open (right) boundary of the fan, or all the
-        // way around a closed (interior) fan.
         while let Some(next_c) = self.corner_table.swing_right(c) {
             if next_c == start {
                 count -= 1;
@@ -160,28 +152,17 @@ impl<'a> AttributeDS<'a> {
     }
 }
 
-/// The read/write surface the traversal and prediction algorithms need from an
-/// attribute data structure. Implemented by [`AttributeDS`] (the general
-/// seam-aware structure) and [`IdentityDS`] (the point-equals-vertex fast path
-/// used when no attribute carries an interior seam). Algorithms are generic over
-/// this trait so the caller can dispatch a concrete implementation and avoid the
-/// point/seam layer entirely when it is an identity.
+/// The surface the traversal and prediction algorithms need from an
+/// attribute data structure.
 pub trait GenericAttributeDs {
-    /// The connectivity this attribute is traversed over. [`CornerTable`] for the
-    /// identity case, [`AttributeCornerTable`] when seams split the fans.
     type Ct: GenericCornerTable;
 
     fn corner_table(&self) -> &Self::Ct;
     fn vertex_idx(&self, corner: CornerIdx) -> VertexIdx;
     fn point_idx(&self, corner: CornerIdx) -> PointIdx;
-    /// The attribute vertex that `point` belongs to.
-    fn point_to_vertex(&self, point: PointIdx) -> VertexIdx;
     fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx;
-    /// The size of the vertex index space, i.e. an exclusive upper bound for
-    /// every value [`Self::vertex_idx`] can return. This is what per-vertex
-    /// working arrays must be sized by. It equals the number of referenced
-    /// vertices for a compactly numbered structure, but may exceed it when the
-    /// numbering includes phantom (unreferenced) vertex ids.
+    /// Exclusive upper bound of `vertex_idx`; may exceed the referenced count
+    /// when the numbering carries phantom ids.
     fn vertex_index_bound(&self) -> usize;
     fn num_points(&self) -> usize;
     fn num_faces(&self) -> usize;
@@ -189,34 +170,8 @@ pub trait GenericAttributeDs {
     fn att_data(&self) -> &Attribute;
     fn att_data_mut(&mut self) -> &mut Attribute;
 
-    /// Whether this attribute's connectivity differs from the position
-    /// connectivity, i.e. some interior edge is a seam. Always false for the
-    /// identity case, where the attribute rides the position corner table.
-    fn has_interior_seams(&self) -> bool {
-        false
-    }
-
-    /// Whether every corner's point index equals its vertex index, so a
-    /// traversal needs one point-map write per emitted vertex instead of a
-    /// write per fan corner.
-    fn point_equals_vertex(&self) -> bool {
-        false
-    }
-
-    /// Whether every id below [`Self::vertex_index_bound`] is referenced by
-    /// some corner. False when the numbering may contain phantom ids, in which
-    /// case the referenced count must be established by scanning.
-    fn vertex_numbering_is_compact(&self) -> bool {
-        false
-    }
-
-    /// The number of vertices referenced by some corner, i.e. the number of
-    /// values an attribute traversal visits. Equals the bound for a compact
-    /// numbering; established by a corner scan otherwise.
+    /// The number of vertices referenced by some corner.
     fn num_referenced_vertices(&self) -> usize {
-        if self.vertex_numbering_is_compact() {
-            return self.vertex_index_bound();
-        }
         let mut seen = vec![false; self.vertex_index_bound()];
         let mut count = 0;
         for c in 0..self.num_corners() {
@@ -229,17 +184,12 @@ pub trait GenericAttributeDs {
         count
     }
 
-    /// Whether `vertex` lies on an open (boundary) fan, i.e. swinging left from
-    /// its left-most corner reaches the fan's boundary.
     #[inline]
     fn is_on_boundary(&self, vertex: VertexIdx) -> bool {
         let left_most_corner = self.left_most_corner(vertex);
         self.corner_table().swing_left(left_most_corner).is_none()
     }
 
-    /// The valence (incident-edge count) of `vertex` in this attribute's
-    /// connectivity. See [`AttributeDS::vertex_valence`] for the fan-walk
-    /// reasoning; seams break the one-ring, so a seam vertex is counted per fan.
     fn vertex_valence(&self, vertex: VertexIdx) -> usize {
         let start = self.left_most_corner(vertex);
         let mut c = start;
@@ -272,10 +222,6 @@ impl<'a> GenericAttributeDs for AttributeDS<'a> {
         AttributeDS::point_idx(self, corner)
     }
     #[inline]
-    fn point_to_vertex(&self, point: PointIdx) -> VertexIdx {
-        self.point_to_vertex_map[point]
-    }
-    #[inline]
     fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx {
         AttributeDS::left_most_corner(self, vertex)
     }
@@ -303,80 +249,33 @@ impl<'a> GenericAttributeDs for AttributeDS<'a> {
     fn att_data_mut(&mut self) -> &mut Attribute {
         AttributeDS::att_data_mut(self)
     }
-    #[inline]
-    fn has_interior_seams(&self) -> bool {
-        self.corner_table.has_interior_seams()
-    }
-    // The sector decomposition assigns vertex ids sequentially, one fan each.
-    #[inline]
-    fn vertex_numbering_is_compact(&self) -> bool {
-        true
+    fn num_referenced_vertices(&self) -> usize {
+        AttributeDS::num_vertices(self)
     }
     #[inline]
+    /// Whether `vertex` lies on an open fan.
     fn is_on_boundary(&self, vertex: VertexIdx) -> bool {
         AttributeDS::is_on_boundary(self, vertex)
     }
     #[inline]
+    /// The valence of `vertex` in this attribute's connectivity.
     fn vertex_valence(&self, vertex: VertexIdx) -> usize {
         AttributeDS::vertex_valence(self, vertex)
     }
 }
 
-/// Per-vertex left-most corner. The edgebreaker reconstruction already holds
-/// these as seeds (phantom vertices are `None`), so the seamless case borrows
-/// them; the point-fan builder produces a fresh, phantom-free vector with no
-/// longer-lived owner, so the finest case takes ownership.
-enum LeftMost<'a> {
-    Borrowed(&'a [CornerIdx]),
-    Owned(Vec<CornerIdx>),
-}
-
-impl LeftMost<'_> {
-    #[inline]
-    fn get(&self, vertex: usize) -> CornerIdx {
-        match self {
-            LeftMost::Borrowed(s) => s[vertex],
-            LeftMost::Owned(s) => s[vertex],
-        }
-    }
-}
-
-/// The identity attribute data structure: points coincide with vertices, so
-/// [`Self::vertex_idx`] is a single direct load with no point-to-vertex
-/// composition. It is valid for any attribute whose vertices equal the points
-/// it is traversed over:
-///
-/// - a fully seamless mesh, where every attribute rides the position
-///   [`CornerTable`] and the points are the position vertices (`CT =
-///   &CornerTable`, `V = VertexIdx`); or
-/// - the finest attribute of a seamed mesh, whose own seams generate the whole
-///   point refinement so its vertices are the points, traversed over its
-///   [`AttributeCornerTable`] (`CT = AttributeCornerTable`, `V = PointIdx`, the
-///   corner-to-vertex map borrowed from [`DS::corner_to_point`]).
-///
-/// It borrows the corner-to-vertex and left-most-corner maps its source already
-/// produced instead of rebuilding them.
+/// The identity structure for a seamless mesh: points coincide with position
+/// vertices, borrowing the reconstruction's maps.
 pub struct IdentityDS<'a, CT, V> {
     corner_table: CT,
     corner_to_vertex: &'a [V],
-    left_most: LeftMost<'a>,
-    /// Size of the vertex (== point) index space; may include phantom ids.
+    left_most: &'a [CornerIdx],
     index_bound: usize,
     num_faces: usize,
-    /// Whether this attribute's connectivity carries an interior seam. False
-    /// for the seamless case, true for a seamed mesh's finest attribute.
-    interior_seams: bool,
-    /// Whether every id below `index_bound` is referenced by a corner. False
-    /// for the seamless case, whose bound comes from a reconstruction that may
-    /// keep phantom (merged-away) vertex ids.
-    compact_vertices: bool,
     att: Attribute,
 }
 
 impl<'a> IdentityDS<'a, &'a CornerTable, VertexIdx> {
-    /// The identity structure for a fully seamless mesh, borrowing the maps the
-    /// reconstruction produced. `vertex_index_bound` is the reconstruction's
-    /// allocated vertex count, which may include phantom (isolated) vertices.
     pub fn seamless(
         corner_table: &'a CornerTable,
         corner_to_vertex: &'a [VertexIdx],
@@ -387,36 +286,9 @@ impl<'a> IdentityDS<'a, &'a CornerTable, VertexIdx> {
         Self {
             corner_table,
             corner_to_vertex,
-            left_most: LeftMost::Borrowed(vertex_corners),
+            left_most: vertex_corners,
             index_bound: vertex_index_bound,
             num_faces: corner_to_vertex.len() / 3,
-            interior_seams: false,
-            compact_vertices: false,
-            att,
-        }
-    }
-}
-
-impl<'a> IdentityDS<'a, AttributeCornerTable<'a>, PointIdx> {
-    /// The identity structure for the finest attribute of a seamed mesh. Its
-    /// vertices are the points, so its corner-to-vertex map is
-    /// [`DS::corner_to_point`]. The caller must have verified this attribute is
-    /// finest, i.e. its vertex count equals `ds.num_points()`.
-    pub fn finest(
-        ds: &'a DS,
-        corner_table: AttributeCornerTable<'a>,
-        vertex_to_left_most_corner: Vec<CornerIdx>,
-        att: Attribute,
-    ) -> Self {
-        Self {
-            corner_table,
-            corner_to_vertex: ds.corner_to_point(),
-            left_most: LeftMost::Owned(vertex_to_left_most_corner),
-            index_bound: ds.num_points(),
-            num_faces: ds.num_faces(),
-            interior_seams: true,
-            // Points are numbered from the corners, so every id is referenced.
-            compact_vertices: true,
             att,
         }
     }
@@ -440,17 +312,12 @@ where
     }
     #[inline]
     fn point_idx(&self, corner: CornerIdx) -> PointIdx {
-        // Points coincide with vertices in the identity case.
         let v: usize = self.corner_to_vertex[usize::from(corner)].into();
         PointIdx::from(v)
     }
     #[inline]
-    fn point_to_vertex(&self, point: PointIdx) -> VertexIdx {
-        VertexIdx::from(usize::from(point))
-    }
-    #[inline]
     fn left_most_corner(&self, vertex: VertexIdx) -> CornerIdx {
-        self.left_most.get(usize::from(vertex))
+        self.left_most[usize::from(vertex)]
     }
     #[inline]
     fn vertex_index_bound(&self) -> usize {
@@ -476,30 +343,14 @@ where
     fn att_data_mut(&mut self) -> &mut Attribute {
         &mut self.att
     }
-    #[inline]
-    fn has_interior_seams(&self) -> bool {
-        self.interior_seams
-    }
-    #[inline]
-    fn point_equals_vertex(&self) -> bool {
-        true
-    }
-    #[inline]
-    fn vertex_numbering_is_compact(&self) -> bool {
-        self.compact_vertices
-    }
-    // Phantom ids carry the INVALID left-most sentinel, so one sequential
-    // sentinel scan replaces the generic corner scan.
     fn num_referenced_vertices(&self) -> usize {
-        if self.compact_vertices {
-            return self.index_bound;
-        }
         (0..self.index_bound)
-            .filter(|&v| self.left_most.get(v) != CornerIdx::INVALID)
+            .filter(|&v| self.left_most[v] != CornerIdx::INVALID)
             .count()
     }
 }
 
+/// The corner-table surface: the opposite relation and derived swings.
 pub trait GenericCornerTable {
     fn opposite(&self, corner: CornerIdx) -> Option<CornerIdx>;
 
@@ -523,31 +374,24 @@ pub trait GenericCornerTable {
         self.opposite(corner.next())
     }
 
-    /// Same as [`Self::swing_right`], but takes the corner's face index.
-    /// `face` must equal `corner.face_idx()`.
+    /// `face` must equal `corner.face_idx()` in the `_with_face_idx` variants.
     #[inline]
     fn swing_right_with_face_idx(&self, corner: CornerIdx, face: FaceIdx) -> Option<CornerIdx> {
         self.opposite(corner.previous_with_face_idx(face))
             .map(CornerIdx::previous)
     }
 
-    /// Same as [`Self::swing_left`], but takes the corner's face index.
-    /// `face` must equal `corner.face_idx()`.
     #[inline]
     fn swing_left_with_face_idx(&self, corner: CornerIdx, face: FaceIdx) -> Option<CornerIdx> {
         self.opposite(corner.next_with_face_idx(face))
             .map(CornerIdx::next)
     }
 
-    /// Same as [`Self::get_left_corner`], but takes the corner's face index.
-    /// `face` must equal `corner.face_idx()`.
     #[inline]
     fn get_left_corner_with_face_idx(&self, corner: CornerIdx, face: FaceIdx) -> Option<CornerIdx> {
         self.opposite(corner.previous_with_face_idx(face))
     }
 
-    /// Same as [`Self::get_right_corner`], but takes the corner's face index.
-    /// `face` must equal `corner.face_idx()`.
     #[inline]
     fn get_right_corner_with_face_idx(
         &self,
@@ -558,9 +402,7 @@ pub trait GenericCornerTable {
     }
 }
 
-/// Lets a shared reference stand in as a corner table, so a data structure
-/// generic over its corner table type can borrow one (e.g. the position
-/// [`CornerTable`]) instead of owning it.
+/// A shared reference stands in as a corner table.
 impl<T: GenericCornerTable + ?Sized> GenericCornerTable for &T {
     #[inline]
     fn opposite(&self, corner: CornerIdx) -> Option<CornerIdx> {
@@ -568,8 +410,7 @@ impl<T: GenericCornerTable + ?Sized> GenericCornerTable for &T {
     }
 }
 
-/// Per-corner opposite corners, stored compactly: a boundary edge is kept as an
-/// internal sentinel and surfaces as `None` through [`GenericCornerTable`].
+/// Per-corner opposite corners; boundary edges hold an internal sentinel.
 #[derive(Debug, Clone)]
 pub struct CornerTable(VecCornerIdx<CornerIdx>);
 
@@ -589,8 +430,7 @@ impl CornerTable {
         )
     }
 
-    /// Builds a corner table from an opposite array already stored with the
-    /// `CornerIdx::INVALID` boundary sentinel, taking it as-is.
+    /// Takes an opposite array already using the `INVALID` sentinel as-is.
     pub fn from_opposite_sentinels(opposite_corners: Vec<CornerIdx>) -> Self {
         Self(opposite_corners.into())
     }
@@ -604,6 +444,7 @@ impl GenericCornerTable for CornerTable {
     }
 }
 
+/// The position corner table cut by attribute seams.
 #[derive(Debug, Clone)]
 pub struct AttributeCornerTable<'pos_ct> {
     pos_corner_table: &'pos_ct CornerTable,
@@ -636,9 +477,7 @@ impl<'pos_ct> AttributeCornerTable<'pos_ct> {
         self.is_edge_on_seam[corner]
     }
 
-    /// True if any interior (non-boundary) edge is a seam, i.e. this
-    /// attribute's connectivity differs from the position connectivity.
-    /// Boundary edges are always seams and do not count.
+    /// True if any interior edge is a seam.
     pub fn has_interior_seams(&self) -> bool {
         (0..self.is_edge_on_seam.len()).any(|c| {
             let c = CornerIdx::from(c);

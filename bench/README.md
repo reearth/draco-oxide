@@ -75,13 +75,13 @@ All values are normalized by the raw geometry size (the raw KB column of the res
 
 | mesh | oxide heap peak | oxide heap avg | oxide heap RMS | oxide peak RSS | Draco peak RSS |
 |---|--:|--:|--:|--:|--:|
-| DragonAttenuation (P, N, T) | 5.98 | 3.42 | 3.67 | 3.86 | 4.53 |
-| bunny (P, N) | 7.43 | 4.14 | 4.57 | 7.47 | 2.26 |
-| Duck (P, N, T) | 6.41 | 3.34 | 3.69 | 4.64 | 10.37 |
-| torus (P) | 10.39 | 5.72 | 6.33 | 10.61 | 9.94 |
-| bldg_894e93d9 (P, N) | 12.10 | 5.96 | 6.46 | 13.07 | 50.18 |
-| sphere (P, N) | 16.40 | 5.80 | 7.09 | 35.49 | 108.74 |
-| cube_quads (P, N, T) | 11.14 | 5.47 | 5.85 | 392.93 | 2119.44 |
+| DragonAttenuation (P, N, T) | 5.98 | 3.46 | 3.70 | 3.86 | 4.57 |
+| bunny (P, N) | 7.43 | 4.23 | 4.66 | 6.78 | 3.42 |
+| Duck (P, N, T) | 6.41 | 3.39 | 3.73 | 4.23 | 10.30 |
+| torus (P) | 10.39 | 5.75 | 6.37 | 10.11 | 10.05 |
+| bldg_894e93d9 (P, N) | 12.10 | 5.89 | 6.40 | 4.70 | 45.48 |
+| sphere (P, N) | 16.31 | 5.85 | 7.12 | 24.92 | 120.83 |
+| cube_quads (P, N, T) | 11.05 | 5.51 | 5.88 | 202.42 | 1845.58 |
 
 ## Decode memory
 
@@ -91,13 +91,13 @@ All values are normalized by the decoded geometry size (the raw KB column of the
 
 | mesh | oxide heap peak | oxide heap avg | oxide heap RMS | oxide peak RSS | Draco peak RSS |
 |---|--:|--:|--:|--:|--:|
-| DragonAttenuation (P, N, T) | 5.15 | 3.41 | 3.68 | 5.26 | 5.53 |
-| bunny (P, N) | 3.80 | 2.75 | 2.98 | 4.11 | 3.67 |
-| Duck (P, N, T) | 5.45 | 3.81 | 4.13 | 8.63 | 12.93 |
-| torus (P) | 3.99 | 2.79 | 3.04 | 9.50 | 16.33 |
-| bldg_894e93d9 (P, N) | 9.52 | 5.73 | 6.41 | 32.67 | 64.82 |
-| sphere (P, N) | 9.97 | 5.39 | 6.51 | 83.82 | 183.50 |
-| cube_quads (P, N, T) | 17.44 | 8.25 | 9.60 | 988.28 | 2774.33 |
+| DragonAttenuation (P, N, T) | 3.73 | 2.54 | 2.71 | 3.84 | 5.55 |
+| bunny (P, N) | 3.05 | 2.38 | 2.51 | 3.14 | 4.60 |
+| Duck (P, N, T) | 3.84 | 2.71 | 2.89 | 6.72 | 11.83 |
+| torus (P) | 3.32 | 2.44 | 2.62 | 7.16 | 14.55 |
+| bldg_894e93d9 (P, N) | 6.67 | 4.36 | 4.79 | 37.11 | 56.45 |
+| sphere (P, N) | 9.14 | 5.11 | 6.07 | 94.40 | 171.42 |
+| cube_quads (P, N, T) | 10.89 | 5.44 | 6.35 | 773.95 | 2393.30 |
 
 ## Results
 
@@ -105,13 +105,13 @@ Each mesh name is annotated with the attributes it carries: P (position), N (nor
 
 | mesh | faces | raw KB | oxide KB | Draco KB | oxide ratio | Draco ratio | oxide enc ms | Draco enc ms | oxide dec ms | Draco dec ms |
 |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-| DragonAttenuation (P, N, T) | 134995 | 4259.4 | 388.6 | 366.3 | 10.96 | 11.63 | 150 | 70.6 | 22.5 | 33.1 |
-| bunny (P, N) | 69451 | 1630.3 | 65.5 | 67.5 | 24.91 | 24.14 | 48.7 | 18.9 | 4.85 | 8.52 |
-| Duck (P, N, T) | 4212 | 117.3 | 10.9 | 10.1 | 10.77 | 11.60 | 2.84 | 1.48 | 0.461 | 0.728 |
-| torus (P) | 4095 | 72.0 | 3.2 | 2.4 | 22.78 | 29.62 | 1.94 | 0.394 | 0.127 | 0.146 |
-| bldg_894e93d9 (P, N) | 696 | 15.3 | 3.8 | 3.0 | 4.05 | 5.18 | 0.559 | 0.206 | 0.093 | 0.125 |
-| sphere (P, N) | 224 | 5.3 | 1.9 | 0.7 | 2.76 | 8.01 | 0.197 | 0.090 | 0.022 | 0.044 |
-| cube_quads (P, N, T) | 12 | 0.3 | 0.2 | 0.2 | 1.54 | 1.84 | 0.013 | 0.012 | 0.007 | 0.008 |
+| DragonAttenuation (P, N, T) | 134995 | 4259.4 | 387.3 | 366.3 | 11.00 | 11.63 | 163 | 78.3 | 20.0 | 35.8 |
+| bunny (P, N) | 69451 | 1630.3 | 67.7 | 67.5 | 24.08 | 24.14 | 60.2 | 19.9 | 4.73 | 8.90 |
+| Duck (P, N, T) | 4212 | 117.3 | 11.0 | 10.1 | 10.70 | 11.60 | 3.02 | 1.60 | 0.419 | 0.770 |
+| torus (P) | 4095 | 72.0 | 3.2 | 2.4 | 22.78 | 29.62 | 1.89 | 0.379 | 0.118 | 0.139 |
+| bldg_894e93d9 (P, N) | 696 | 15.3 | 3.9 | 3.0 | 3.96 | 5.18 | 0.549 | 0.201 | 0.085 | 0.113 |
+| sphere (P, N) | 224 | 5.3 | 1.9 | 0.7 | 2.79 | 8.01 | 0.179 | 0.082 | 0.019 | 0.040 |
+| cube_quads (P, N, T) | 12 | 0.3 | 0.2 | 0.2 | 1.54 | 1.84 | 0.013 | 0.011 | 0.005 | 0.007 |
 
 Measurement details are in the [Method](#method) section above.
 <!-- report:end -->

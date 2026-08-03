@@ -10,21 +10,21 @@
 <text x="602.0" y="25" fill="#e6edf3">draco-oxide</text>
 <rect x="687.0" y="16" width="10" height="10" rx="2" fill="#3fb950"/>
 <text x="701.0" y="25" fill="#e6edf3">Draco</text>
-<line x1="359.5" y1="58.0" x2="359.5" y2="364.0" stroke="#21262d" stroke-width="1"/>
-<text x="359.5" y="379.0" text-anchor="middle" fill="#9198a1">2</text>
-<line x1="541.1" y1="58.0" x2="541.1" y2="364.0" stroke="#21262d" stroke-width="1"/>
-<text x="541.1" y="379.0" text-anchor="middle" fill="#9198a1">4</text>
+<line x1="358.8" y1="58.0" x2="358.8" y2="364.0" stroke="#21262d" stroke-width="1"/>
+<text x="358.8" y="379.0" text-anchor="middle" fill="#9198a1">2</text>
+<line x1="539.6" y1="58.0" x2="539.6" y2="364.0" stroke="#21262d" stroke-width="1"/>
+<text x="539.6" y="379.0" text-anchor="middle" fill="#9198a1">4</text>
 <line x1="178" y1="58.0" x2="178" y2="364.0" stroke="#3d444d" stroke-width="1"/>
 <text x="170.0" y="83.0" text-anchor="end" fill="#e6edf3">DragonAttenuation (P, N, T)</text>
-<path d="M178.0 64.0 h473.6 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-473.6 Z" fill="url(#bar0)"/>
-<text x="661.6" y="75.0" fill="#9198a1">5.26</text>
+<path d="M178.0 64.0 h342.7 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-342.7 Z" fill="url(#bar0)"/>
+<text x="530.7" y="75.0" fill="#9198a1">3.84</text>
 <path d="M178.0 80.0 h498.0 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-498.0 Z" fill="url(#bar1)"/>
-<text x="686.0" y="91.0" fill="#9198a1">5.53</text>
+<text x="686.0" y="91.0" fill="#9198a1">5.55</text>
 <text x="170.0" y="127.0" text-anchor="end" fill="#e6edf3">bunny (P, N)</text>
-<path d="M178.0 108.0 h368.8 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-368.8 Z" fill="url(#bar0)"/>
-<text x="556.8" y="119.0" fill="#9198a1">4.11</text>
-<path d="M178.0 124.0 h329.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-329.2 Z" fill="url(#bar1)"/>
-<text x="517.2" y="135.0" fill="#9198a1">3.67</text>
+<path d="M178.0 108.0 h279.5 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-279.5 Z" fill="url(#bar0)"/>
+<text x="467.5" y="119.0" fill="#9198a1">3.14</text>
+<path d="M178.0 124.0 h411.9 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-411.9 Z" fill="url(#bar1)"/>
+<text x="599.9" y="135.0" fill="#9198a1">4.60</text>
 <text x="170.0" y="171.0" text-anchor="end" fill="#e6edf3">Duck (P, N, T)</text>
 <text x="184.0" y="163.0" fill="#9198a1">n/a</text>
 <text x="184.0" y="179.0" fill="#9198a1">n/a</text>

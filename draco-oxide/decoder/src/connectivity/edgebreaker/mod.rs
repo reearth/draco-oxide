@@ -1,5 +1,4 @@
-//! Edgebreaker connectivity decode: counts, topology splits, and the driver that
-//! ties traversal, corner-table reconstruction, and point assignment together.
+//! Edgebreaker connectivity decode.
 
 mod reconstruct;
 mod traversal;
@@ -11,16 +10,17 @@ use draco_oxide_core::mesh::ds::CornerTable;
 use draco_oxide_core::utils::bit_coder::leb128_read;
 
 use reconstruct::reconstruct;
+pub use traversal::SeamStats;
 use traversal::{
     decode_topology_splits, StandardTraversalDecoder, TopologySplit, TraversalDecoder,
     ValenceTraversalDecoder,
 };
 
-/// The edgebreaker traversal type ids on the wire.
+/// The traversal type ids on the wire.
 const TRAVERSAL_STANDARD: u8 = 0;
 const TRAVERSAL_VALENCE: u8 = 2;
 
-/// The edgebreaker connectivity header counts, read before the traversal payload.
+/// The connectivity header counts.
 struct Counts {
     num_encoded_vertices: usize,
     num_faces: usize,
@@ -29,9 +29,8 @@ struct Counts {
     num_encoded_split_symbols: usize,
 }
 
-/// Decodes edgebreaker connectivity from `reader`, positioned just after the header
-/// (and metadata). Leaves the reader at the start of the attribute section. Handles
-/// the standard and valence traversals; any other traversal id is unimplemented.
+/// Decodes edgebreaker connectivity, leaving the reader at the attribute
+/// section.
 pub fn decode(reader: &mut Reader<'_>) -> Result<EdgebreakerConnectivity, Err> {
     let traversal_type = reader.read_u8()?;
 
@@ -42,11 +41,14 @@ pub fn decode(reader: &mut Reader<'_>) -> Result<EdgebreakerConnectivity, Err> {
         num_encoded_symbols: leb128_read(reader)? as usize,
         num_encoded_split_symbols: leb128_read(reader)? as usize,
     };
+    // The seam flags of every stream pack into one byte per corner.
+    if counts.num_attribute_data > 8 {
+        return Err(Err::Unimplemented);
+    }
 
     let splits = decode_topology_splits(reader)?;
     let max_num_vertices = counts.num_encoded_vertices + counts.num_encoded_split_symbols;
 
-    // Each arm monomorphizes reconstruction over its concrete traversal.
     match traversal_type {
         TRAVERSAL_STANDARD => {
             let traversal = StandardTraversalDecoder::start(reader, counts.num_attribute_data)?;
@@ -65,9 +67,7 @@ pub fn decode(reader: &mut Reader<'_>) -> Result<EdgebreakerConnectivity, Err> {
     }
 }
 
-/// Reconstructs the corner table and attribute seams for an already-started
-/// traversal, producing the connectivity. Generic over the traversal variant so
-/// its per-symbol decode is monomorphized.
+/// Reconstructs the corner table and seams, monomorphized per traversal.
 fn decode_with<T: TraversalDecoder>(
     mut traversal: T,
     counts: &Counts,
@@ -83,7 +83,12 @@ fn decode_with<T: TraversalDecoder>(
         splits,
     )?;
 
-    let attribute_seams = traversal.decode_attribute_seams(&recon.opposite, counts.num_faces);
+    let (seam_bits, seam_stats) = traversal.decode_attribute_seams(
+        &recon.opposite,
+        counts.num_faces,
+        &recon.corner_to_vertex,
+        recon.vertex_corners.len(),
+    );
 
     Ok(EdgebreakerConnectivity {
         corner_table: CornerTable::from_opposite_sentinels(recon.opposite),
@@ -94,6 +99,7 @@ fn decode_with<T: TraversalDecoder>(
         num_attribute_data: counts.num_attribute_data,
         is_vert_hole: recon.is_vert_hole,
         init_corners: recon.init_corners,
-        attribute_seams,
+        seam_bits,
+        seam_stats,
     })
 }

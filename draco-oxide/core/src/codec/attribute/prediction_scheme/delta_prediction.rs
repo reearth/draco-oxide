@@ -19,8 +19,6 @@ where
     type AdditionalDataForMetadata = ();
 
     fn new(_parents: &[&'parents Attribute], ads: &'parents D) -> Self {
-        // Note: Connectivity is now passed via conn_att parameter instead of parent attributes
-        // For now, use an empty slice as this prediction scheme needs to be updated for the new architecture
         let faces: &[[usize; 3]] = &[];
 
         Self { faces, ads }
@@ -36,9 +34,7 @@ where
             for i in r.clone() {
                 if i == 0 {
                     out.push(i);
-                }
-                // ToDo: Optimize this: 'self.faces' are the sorted array of sorted arrays.
-                else if self
+                } else if self
                     .faces
                     .iter()
                     .any(|f| f.contains(&(i - 1)) && f.contains(&i))
@@ -64,11 +60,14 @@ where
         let prev_v = if let Some(prev_v) = vertices_up_till_now.last() {
             *prev_v
         } else {
-            // If there are no previous vertices, we cannot predict the value.
             return NdVector::zero();
         };
         let prev_pt = self.ads.point_idx(self.ads.left_most_corner(prev_v));
-        att.get(prev_pt)
+        let vals = att.unique_vals_as_slice::<NdVector<N, i32>>();
+        match att.point_map_as_slice() {
+            Some(m) => vals[usize::from(m[usize::from(prev_pt)])],
+            None => vals[usize::from(prev_pt)],
+        }
     }
 }
 
@@ -89,43 +88,3 @@ fn into_ranges(v: Vec<usize>) -> Vec<std::ops::Range<usize>> {
     out.push(start..end + 1);
     out
 }
-
-// ToDo: recover this test.
-// #[cfg(test)]
-// mod tests {
-// 	use crate::{core::attribute::AttributeId, prelude::NdVector};
-
-// use super::*;
-
-// 	#[test]
-// 	fn test_into_ranges() {
-// 		let v = vec![1, 3, 6, 7, 8, 10, 11, 12, 15];
-// 		let r = into_ranges(v);
-// 		assert_eq!(r.len(), 5);
-// 		assert_eq!(r[0], 1..2);
-// 		assert_eq!(r[1], 3..4);
-// 		assert_eq!(r[2], 6..9);
-// 		assert_eq!(r[3], 10..13);
-// 		assert_eq!(r[4], 15..16);
-// 	}
-
-// 	#[test]
-// 	fn test_get_values_impossible_to_predict() {
-// 		let faces = vec![[0, 1, 2], [1, 2, 3], [4, 5, 6], [5, 6, 7]];
-// 		let conn_att = Attribute::from_faces(
-// 			AttributeId::new(0),
-// 			faces.clone(),
-// 			Vec::new()
-// 		);
-// 		let mut delta = DeltaPrediction::<NdVector<3, f32>>::new(&[&conn_att]);
-// 		let mut value_indices = vec![0..8];
-// 		let impossible = delta.get_values_impossible_to_predict(&mut value_indices);
-// 		assert_eq!(impossible.len(), 2);
-// 		assert_eq!(impossible[0], 0..1);
-// 		assert_eq!(impossible[1], 4..5);
-
-// 		assert_eq!(value_indices.len(), 2);
-// 		assert_eq!(value_indices[0], 1..4);
-// 		assert_eq!(value_indices[1], 5..8);
-// 	}
-// }

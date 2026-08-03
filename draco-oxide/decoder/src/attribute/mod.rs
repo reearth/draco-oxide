@@ -1,9 +1,7 @@
-//! Attribute decoding: framing (encoder count, domains, descriptors) and the
-//! driver that sequences, reverses prediction, inverts transforms, and hands back
-//! portable (quantized-integer) attributes.
+//! Attribute decoding: framing, group walks, and point assembly.
 
-mod ds;
 mod inverse_transform;
+mod lazy;
 mod prediction;
 mod sequence;
 mod sequential;
@@ -24,15 +22,18 @@ use draco_oxide_core::codec::attribute::prediction_scheme::mesh_normal_predictio
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::attribute::Portable;
-use draco_oxide_core::mesh::ds::{GenericAttributeDs, GenericCornerTable, IdentityDS};
+use draco_oxide_core::mesh::ds::{CornerTable, GenericAttributeDs, IdentityDS};
 use draco_oxide_core::types::{
     AttributeValueIdx, CornerIdx, NdVector, PointIdx, VecPointIdx, Vector, VertexIdx,
 };
 use draco_oxide_core::utils::bit_coder::leb128_read;
-use ds::{build_attribute_ds, build_ds, GeneralDs, Input};
 
 use inverse_transform::InverseTransform;
 use prediction::Predictor;
+
+/// The identity structure over the position connectivity, shared by every
+/// attribute without interior seams.
+type PlainDs<'a> = IdentityDS<'a, &'a CornerTable, VertexIdx>;
 
 /// The portabilization type ids on the wire.
 const PORT_GENERIC: u8 = 0;
@@ -40,12 +41,10 @@ const PORT_TO_BITS: u8 = 1;
 const PORT_QUANTIZATION_COORDINATE_WISE: u8 = 2;
 const PORT_OCTAHEDRAL: u8 = 3;
 
-/// The attribute-data id (`-1` on the wire) an attribute carries when it rides
-/// the position connectivity rather than a seam stream of its own.
+/// The wire id of an attribute riding the position connectivity.
 const NO_ATTRIBUTE_DATA: u8 = 0xFF;
 
-/// The decoded attribute section: the point-indexed faces plus, per attribute,
-/// the portable integer attribute and its dequantization parameters.
+/// The decoded attribute section.
 pub(crate) struct DecodedAttributes {
     pub faces: Vec<[PointIdx; 3]>,
     pub attributes: Vec<Attribute>,
@@ -54,13 +53,8 @@ pub(crate) struct DecodedAttributes {
 
 /// One attribute's wire descriptor.
 struct Descriptor {
-    /// Index of the attribute connectivity this attribute rides, into the
-    /// connectivity section's seam streams. [`NO_ATTRIBUTE_DATA`] means it
-    /// rides the position connectivity instead.
     att_data_id: u8,
     att_type: AttributeType,
-    /// The declared component type. Only the generic encoder keeps values in
-    /// it; the other encoders force the portable representation to I32.
     component_type: ComponentDataType,
     num_components: usize,
     uid: u32,
@@ -69,16 +63,12 @@ struct Descriptor {
 }
 
 impl Descriptor {
-    /// Whether this attribute can be another attribute's prediction parent.
-    /// The generic encoder builds no portable representation, so an attribute
-    /// it carries is never available to predict from.
+    /// Whether this attribute can be a prediction parent.
     fn is_prediction_parent(&self) -> bool {
         self.att_type == AttributeType::Position && self.port_type != PORT_GENERIC
     }
 
-    /// The component count of the portable (quantized-integer) representation:
-    /// octahedral attributes travel as 2-component values regardless of their
-    /// original dimension.
+    /// Components of the portable representation; octahedral travels as 2.
     fn portable_num_components(&self) -> usize {
         if self.port_type == PORT_OCTAHEDRAL {
             2
@@ -88,7 +78,7 @@ impl Descriptor {
     }
 }
 
-/// Decodes the whole attribute section, positioned right after connectivity.
+/// Decodes the whole attribute section.
 pub(crate) fn decode_attributes(
     reader: &mut Reader<'_>,
     conn: &Connectivity,
@@ -99,15 +89,13 @@ pub(crate) fn decode_attributes(
     }
 }
 
-/// Decodes the attribute section of an edgebreaker stream, where each attribute
-/// is sequenced over a traversal of its own connectivity.
+/// Decodes the attribute section of an edgebreaker stream.
 fn decode_traversed_attributes(
     reader: &mut Reader<'_>,
     conn: &EdgebreakerConnectivity,
 ) -> Result<DecodedAttributes, Err> {
     let num_atts = reader.read_u8()? as usize;
 
-    // Framing part 1: per-attribute connectivity id, domain, and traversal method.
     let mut headers = Vec::with_capacity(num_atts);
     for _ in 0..num_atts {
         let att_data_id = reader.read_u8()?;
@@ -119,7 +107,6 @@ fn decode_traversed_attributes(
         headers.push((att_data_id, domain));
     }
 
-    // Framing part 2: per-attribute descriptors.
     let mut descriptors = Vec::with_capacity(num_atts);
     for (att_data_id, domain) in headers {
         let atts_in_encoder = reader.read_u8()?;
@@ -145,96 +132,134 @@ fn decode_traversed_attributes(
         });
     }
 
-    let num_corners = conn.num_faces * 3;
-
-    // Per-attribute seam edges, in attribute order. An attribute names its seam
-    // stream by `att_data_id`, which is independent of the order the descriptors
-    // arrive in. An attribute on the position domain rides the position
-    // connectivity whatever its id, and carries no encoded seams: boundary edges
-    // (its only seams) are already seams for every attribute through the corner
-    // table itself.
-    let mut seams: Vec<Vec<bool>> = Vec::with_capacity(num_atts);
+    let seam_bits: &[u8] = &conn.seam_bits;
+    let mut masks: Vec<u8> = Vec::with_capacity(num_atts);
+    let mut has_interior: Vec<bool> = Vec::with_capacity(num_atts);
+    let mut stats: Vec<Option<&crate::connectivity::edgebreaker::SeamStats>> =
+        Vec::with_capacity(num_atts);
     for desc in &descriptors {
         if desc.domain == AttributeDomain::Corner && desc.att_data_id != NO_ATTRIBUTE_DATA {
-            let s = conn.attribute_seams.get(desc.att_data_id as usize).ok_or(
-                Err::MalformedAttribute(
-                    "attribute names a seam stream the connectivity did not encode",
-                ),
-            )?;
-            seams.push(s.clone());
+            let d = desc.att_data_id as usize;
+            let st = conn.seam_stats.get(d).ok_or(Err::MalformedAttribute(
+                "attribute names a seam stream the connectivity did not encode",
+            ))?;
+            masks.push(1 << d);
+            has_interior.push(st.has_interior);
+            stats.push(Some(st));
         } else {
-            seams.push(vec![false; num_corners]);
+            masks.push(0);
+            has_interior.push(false);
+            stats.push(None);
         }
     }
 
-    let seam_sets: Vec<&[bool]> = seams.iter().map(|s| s.as_slice()).collect();
     let seeds = sequence::traversal_seeds(conn.num_faces);
 
-    // The placeholder attributes the decoded payloads replace, one per attribute
-    // in descriptor order.
-    let placeholders: Vec<Attribute> = descriptors
-        .iter()
-        .map(|desc| {
-            Attribute::new_empty(
-                AttributeId::new(desc.uid as usize),
-                desc.att_type,
-                desc.domain,
-                ComponentDataType::I32,
-                desc.portable_num_components(),
-            )
-        })
-        .collect();
-
-    // When no attribute carries an interior seam, points coincide with position
-    // vertices for every attribute: the whole point/seam layer of `AttributeDS`
-    // would be an identity map. Take the identity fast path, which reuses the
-    // connectivity the reconstruction already produced instead of rebuilding a
-    // point data structure and per-attribute corner tables.
-    let any_interior_seam = seam_sets.iter().any(|s| {
-        s.iter()
-            .enumerate()
-            .any(|(c, &b)| b && conn.corner_table.opposite(CornerIdx::from(c)).is_some())
-    });
-
-    let (faces, attributes, transforms) = if any_interior_seam {
-        // General path: build the refined point space and each attribute's
-        // sector decomposition.
-        let fan_input = Input {
-            pos_ct: &conn.corner_table,
-            corner_to_vertex: &conn.corner_to_vertex,
-            vertex_corners: &conn.vertex_corners,
-            is_vert_hole: &conn.is_vert_hole,
-            num_vertices: conn.num_vertices,
-            num_corners,
-        };
-        let (ds, fans) = build_ds(fan_input, &seam_sets);
-        let faces: Vec<[PointIdx; 3]> = (0..conn.num_faces)
-            .map(|f| {
-                [
-                    ds.point_idx(CornerIdx::from(3 * f)),
-                    ds.point_idx(CornerIdx::from(3 * f + 1)),
-                    ds.point_idx(CornerIdx::from(3 * f + 2)),
-                ]
-            })
-            .collect();
-        // Attributes with identical seam sets get identical sector
-        // decompositions and hence identical traversals, so they share one
-        // decode walk. Each group id is its smallest member index.
-        let mut group_ids: Vec<usize> = Vec::with_capacity(num_atts);
-        for i in 0..num_atts {
-            let gid = (0..i)
-                .find(|&j| seams[j] == seams[i])
+    let columns_equal =
+        |mi: u8, mj: u8| mi == mj || seam_bits.iter().all(|&b| (b & mi != 0) == (b & mj != 0));
+    let mut group_ids: Vec<usize> = Vec::with_capacity(num_atts);
+    let mut first_plain: Option<usize> = None;
+    for i in 0..num_atts {
+        let gid = if !has_interior[i] {
+            *first_plain.get_or_insert(i)
+        } else {
+            (0..i)
+                .find(|&j| has_interior[j] && columns_equal(masks[j], masks[i]))
                 .map(|j| group_ids[j])
-                .unwrap_or(i);
-            group_ids.push(gid);
+                .unwrap_or(i)
+        };
+        group_ids.push(gid);
+    }
+
+    let shared = lazy::Shared {
+        pos_ct: &conn.corner_table,
+        c2v: &conn.corner_to_vertex,
+    };
+
+    let no_att = Attribute::new_empty(
+        AttributeId::new(0),
+        AttributeType::Invalid,
+        AttributeDomain::Corner,
+        ComponentDataType::I32,
+        1,
+    );
+    let plain_ds = PlainDs::seamless(
+        &conn.corner_table,
+        &conn.corner_to_vertex,
+        &conn.vertex_corners,
+        conn.num_vertices,
+        no_att,
+    );
+
+    let referenced = plain_ds.num_referenced_vertices();
+    let mut group_num_values: Vec<usize> = vec![0; num_atts];
+    for rep in 0..num_atts {
+        if group_ids[rep] != rep {
+            continue;
         }
-        let adss = build_attribute_ds(&ds, &conn.corner_table, fans, seams, placeholders);
-        let (attributes, transforms) =
-            decode_payloads(reader, &descriptors, &adss, &seeds, &group_ids)?;
-        (faces, attributes, transforms)
+        group_num_values[rep] = if has_interior[rep] {
+            let st = stats[rep].expect("a lazy attribute always has a seam stream");
+            st.starts + referenced - st.fans_with_starts
+        } else {
+            referenced
+        };
+    }
+
+    let union_mask: u8 = (0..num_atts)
+        .filter(|&r| group_ids[r] == r && has_interior[r])
+        .map(|r| masks[r])
+        .fold(0, |acc, m| acc | m);
+
+    let ctx = SchedulerCtx {
+        shared,
+        plain_ds: &plain_ds,
+        seam_bits,
+        masks: &masks,
+        has_interior: &has_interior,
+        group_ids: &group_ids,
+        group_num_values: &group_num_values,
+        seeds: &seeds,
+        union_mask,
+    };
+    let decoded = decode_payloads(reader, &descriptors, &ctx)?;
+    let DecodedPayloads {
+        mut attributes,
+        transforms,
+        assembled,
+        rank_maps,
+    } = decoded;
+
+    let faces = if union_mask != 0 {
+        let points = assembled.expect("a lazy group's walk assembled the points");
+        for (i, att) in attributes.iter_mut().enumerate() {
+            let map: Vec<AttributeValueIdx> = if has_interior[i] {
+                let rank = rank_maps[group_ids[i]]
+                    .as_deref()
+                    .expect("every lazy group was walked");
+                points
+                    .rep_corners
+                    .iter()
+                    .map(|&c| AttributeValueIdx::from(rank[usize::from(c)] as usize))
+                    .collect()
+            } else {
+                let old_map = att
+                    .point_map_as_slice()
+                    .expect("plain attributes decode over a vertex-indexed map");
+                points
+                    .rep_corners
+                    .iter()
+                    .map(|&c| old_map[usize::from(conn.corner_to_vertex[usize::from(c)])])
+                    .collect()
+            };
+            att.set_point_to_att_val_map(Some(VecPointIdx::from(map)));
+        }
+        points
+            .corner_to_point
+            .chunks_exact(3)
+            .map(|c| [c[0], c[1], c[2]])
+            .collect()
     } else {
-        // Identity path: points equal position vertices.
-        let faces: Vec<[PointIdx; 3]> = (0..conn.num_faces)
+        (0..conn.num_faces)
             .map(|f| {
                 [
                     PointIdx::from(usize::from(conn.corner_to_vertex[3 * f])),
@@ -242,24 +267,7 @@ fn decode_traversed_attributes(
                     PointIdx::from(usize::from(conn.corner_to_vertex[3 * f + 2])),
                 ]
             })
-            .collect();
-        let adss: Vec<_> = placeholders
-            .into_iter()
-            .map(|placeholder| {
-                IdentityDS::seamless(
-                    &conn.corner_table,
-                    &conn.corner_to_vertex,
-                    &conn.vertex_corners,
-                    conn.num_vertices,
-                    placeholder,
-                )
-            })
-            .collect();
-        // Every attribute rides the position connectivity: one traversal group.
-        let group_ids = vec![0; num_atts];
-        let (attributes, transforms) =
-            decode_payloads(reader, &descriptors, &adss, &seeds, &group_ids)?;
-        (faces, attributes, transforms)
+            .collect()
     };
 
     Ok(DecodedAttributes {
@@ -269,65 +277,64 @@ fn decode_traversed_attributes(
     })
 }
 
-/// Decodes every attribute payload over the shared connectivity `adss`.
-/// Payload blocks are parsed up front in wire order; decode then runs one lazy
-/// traversal per (wave, group), stepping every member attribute at each
-/// emitted corner, so a shared sequence is computed exactly once and never
-/// materialized. Each group walk is handed to [`GroupWalkDs::run_group`],
-/// which monomorphizes the walk on the concrete attribute data structure.
-fn decode_payloads<D: GroupWalkDs>(
+/// The connectivity context the payload scheduler dispatches groups over.
+struct SchedulerCtx<'a> {
+    shared: lazy::Shared<'a>,
+    plain_ds: &'a PlainDs<'a>,
+    seam_bits: &'a [u8],
+    masks: &'a [u8],
+    has_interior: &'a [bool],
+    group_ids: &'a [usize],
+    group_num_values: &'a [usize],
+    seeds: &'a [CornerIdx],
+    union_mask: u8,
+}
+
+/// The scheduler's outputs.
+struct DecodedPayloads {
+    attributes: Vec<Attribute>,
+    transforms: Vec<AttributeTransform>,
+    assembled: Option<lazy::AssembledPoints>,
+    rank_maps: Vec<Option<Vec<u32>>>,
+}
+
+/// Parses every payload, then runs one traversal per (wave, group).
+fn decode_payloads(
     reader: &mut Reader<'_>,
     descriptors: &[Descriptor],
-    adss: &[D],
-    seeds: &[CornerIdx],
-    group_ids: &[usize],
-) -> Result<(Vec<Attribute>, Vec<AttributeTransform>), Err> {
-    // The value count is per traversal group: the walk reaches every
-    // referenced vertex exactly once. The vertex index space may carry phantom
-    // ids (split merges are not compacted when seam data is present), so the
-    // vertex bound alone overcounts.
-    let mut group_num_values: Vec<usize> = vec![0; adss.len()];
-    for rep in 0..adss.len() {
-        if group_ids[rep] == rep {
-            group_num_values[rep] = adss[rep].num_referenced_vertices();
-        }
-    }
+    ctx: &SchedulerCtx<'_>,
+) -> Result<DecodedPayloads, Err> {
+    let num_atts = descriptors.len();
+    let group_ids = ctx.group_ids;
 
-    // Every attribute rides its own encoder here, so its payload and
-    // portabilization blocks are adjacent. Both are read before the first group
-    // walk starts.
-    let mut parsed: Vec<Option<ParsedPayload>> = Vec::with_capacity(adss.len());
-    let mut dequants: Vec<Option<AttributeTransform>> = Vec::with_capacity(adss.len());
+    let mut parsed: Vec<Option<ParsedPayload>> = Vec::with_capacity(num_atts);
+    let mut dequants: Vec<Option<AttributeTransform>> = Vec::with_capacity(num_atts);
     for (i, desc) in descriptors.iter().enumerate() {
-        let num_values = group_num_values[group_ids[i]];
+        let num_values = ctx.group_num_values[group_ids[i]];
         parsed.push(Some(parse_payload_dispatched(reader, num_values, desc)?));
         dequants.push(Some(read_portabilization(reader, desc)?));
     }
 
-    // Waves order the parent dependency: geometric schemes consult the decoded
-    // position attribute, so they generally cannot share the walk that decodes
-    // their parent. Normal prediction is the exception: its prediction never
-    // reads other normals, so it rides the parent's walk with per-vertex
-    // finalization deferred to the moment the one-ring positions complete
-    // (see [`NormalFuser`]). When both waves do use the same traversal, the
-    // first wave's walk records the corners it emits as a byproduct and the
-    // second wave replays them, so a shared sequence is still computed once.
-    let mut recorded_seqs: Vec<Option<Vec<CornerIdx>>> = (0..adss.len()).map(|_| None).collect();
-    // The vertex-to-points adjacency per group, built on first use and shared
-    // by both waves.
-    let mut csrs: Vec<Option<(Vec<usize>, Vec<PointIdx>)>> =
-        (0..adss.len()).map(|_| None).collect();
+    // Any lazy real walk can carry the point assembly; the last rep is a
+    // deterministic choice.
+    let assembly_rep: Option<usize> = (0..num_atts)
+        .rev()
+        .find(|&r| group_ids[r] == r && ctx.has_interior[r]);
+
+    let mut recorded_seqs: Vec<Option<Vec<CornerIdx>>> = (0..num_atts).map(|_| None).collect();
+    let mut rank_maps: Vec<Option<Vec<u32>>> = (0..num_atts).map(|_| None).collect();
+    let mut assembled: Option<lazy::AssembledPoints> = None;
     let mut slots: Vec<Option<(Attribute, AttributeTransform)>> =
-        (0..adss.len()).map(|_| None).collect();
+        (0..num_atts).map(|_| None).collect();
     for wave in 0..2 {
         let parent_wave = wave == 1;
-        for rep in 0..adss.len() {
+        for rep in 0..num_atts {
             if group_ids[rep] != rep {
                 continue;
             }
             let mut members: Vec<usize> = Vec::new();
             let mut deferred: Vec<usize> = Vec::new();
-            for i in 0..adss.len() {
+            for i in 0..num_atts {
                 if group_ids[i] != rep {
                     continue;
                 }
@@ -337,8 +344,6 @@ fn decode_payloads<D: GroupWalkDs>(
                     None => {}
                 }
             }
-            // Normal attributes whose parent position decodes in this very
-            // walk fuse into it instead of waiting for the second wave.
             let mut fused: Vec<(usize, usize)> = Vec::new();
             if !parent_wave {
                 deferred.retain(|&i| {
@@ -364,9 +369,9 @@ fn decode_payloads<D: GroupWalkDs>(
             if members.is_empty() && fused.is_empty() {
                 continue;
             }
-            let num_values = group_num_values[rep];
-            let mut member_adss: Vec<&D> = Vec::with_capacity(members.len());
-            let mut group_members: Vec<GroupMember<'_>> = Vec::with_capacity(members.len());
+            let num_values = ctx.group_num_values[rep];
+
+            let mut parents: Vec<Option<&Attribute>> = Vec::with_capacity(members.len());
             for &i in &members {
                 let parent = if parent_wave {
                     let parent = descriptors[..i].iter().zip(&slots).find_map(|(d, slot)| {
@@ -385,65 +390,107 @@ fn decode_payloads<D: GroupWalkDs>(
                 } else {
                     None
                 };
-                let payload = parsed[i].take().expect("each attribute joins one group");
-                member_adss.push(&adss[i]);
-                group_members.push(GroupMember {
-                    payload,
-                    dequant: dequants[i].take().expect("each attribute joins one group"),
-                    desc: &descriptors[i],
-                    parent,
-                });
+                parents.push(parent);
             }
-            let mut fused_normals: Vec<FusedNormal<'_>> = Vec::with_capacity(fused.len());
-            for &(i, parent_stepper) in &fused {
-                let Some(ParsedPayload::N2(p)) = parsed[i].take() else {
-                    unreachable!("fused attributes are 2-component normals");
-                };
-                let parent_id = AttributeId::new(descriptors[members[parent_stepper]].uid as usize);
-                fused_normals.push(FusedNormal {
-                    payload: p,
-                    dequant: dequants[i].take().expect("each attribute joins one group"),
-                    desc: &descriptors[i],
-                    parent_id,
-                    parent_stepper,
-                });
-            }
-            let result = D::run_group(
-                &adss[rep],
-                &member_adss,
-                GroupCtx {
-                    members: group_members,
-                    fused: fused_normals,
-                    num_values,
-                    seeds,
-                    replay: recorded_seqs[rep].take(),
-                    record_walk: later_wave_members,
-                    csr: &mut csrs[rep],
-                },
-            )?;
-            recorded_seqs[rep] = result.recorded_seq;
-            for (i, r) in members.into_iter().zip(result.members) {
-                slots[i] = Some(r);
-            }
-            for ((i, _), r) in fused.into_iter().zip(result.fused) {
-                slots[i] = Some(r);
+
+            if ctx.has_interior[rep] {
+                debug_assert!(fused.is_empty());
+                let mut lazy_members: Vec<lazy::LazyMember<'_>> = Vec::with_capacity(members.len());
+                for (&i, parent) in members.iter().zip(&parents) {
+                    lazy_members.push(lazy::LazyMember {
+                        payload: parsed[i].take().expect("each attribute joins one group"),
+                        dequant: dequants[i].take().expect("each attribute joins one group"),
+                        desc: &descriptors[i],
+                        parent: *parent,
+                    });
+                }
+                let rank_slot = &mut rank_maps[rep];
+                let assemble =
+                    (Some(rep) == assembly_rep && rank_slot.is_none()).then_some(ctx.union_mask);
+                let outcome = lazy::run_group(
+                    ctx.shared,
+                    ctx.seam_bits,
+                    ctx.masks[rep],
+                    lazy_members,
+                    lazy::LazyIo {
+                        num_values,
+                        seeds: ctx.seeds,
+                        replay: recorded_seqs[rep].take(),
+                        record_walk: later_wave_members,
+                        rank: rank_slot,
+                        assemble,
+                    },
+                )?;
+                recorded_seqs[rep] = outcome.recorded;
+                if outcome.points.is_some() {
+                    assembled = outcome.points;
+                }
+                for (i, r) in members.into_iter().zip(outcome.members) {
+                    slots[i] = Some(r);
+                }
+            } else {
+                let mut group_members: Vec<GroupMember<'_>> = Vec::with_capacity(members.len());
+                for (&i, parent) in members.iter().zip(&parents) {
+                    group_members.push(GroupMember {
+                        payload: parsed[i].take().expect("each attribute joins one group"),
+                        dequant: dequants[i].take().expect("each attribute joins one group"),
+                        desc: &descriptors[i],
+                        parent: *parent,
+                    });
+                }
+                let mut fused_normals: Vec<FusedNormal<'_>> = Vec::with_capacity(fused.len());
+                for &(i, parent_stepper) in &fused {
+                    let Some(ParsedPayload::N2(p)) = parsed[i].take() else {
+                        unreachable!("fused attributes are 2-component normals");
+                    };
+                    let parent_id =
+                        AttributeId::new(descriptors[members[parent_stepper]].uid as usize);
+                    fused_normals.push(FusedNormal {
+                        payload: p,
+                        dequant: dequants[i].take().expect("each attribute joins one group"),
+                        desc: &descriptors[i],
+                        parent_id,
+                        parent_stepper,
+                    });
+                }
+                let result = run_plain_group(
+                    ctx.plain_ds,
+                    GroupCtx {
+                        members: group_members,
+                        fused: fused_normals,
+                        num_values,
+                        seeds: ctx.seeds,
+                        replay: recorded_seqs[rep].take(),
+                        record_walk: later_wave_members,
+                    },
+                )?;
+                recorded_seqs[rep] = result.recorded_seq;
+                for (i, r) in members.into_iter().zip(result.members) {
+                    slots[i] = Some(r);
+                }
+                for ((i, _), r) in fused.into_iter().zip(result.fused) {
+                    slots[i] = Some(r);
+                }
             }
         }
     }
 
-    let mut attributes: Vec<Attribute> = Vec::with_capacity(adss.len());
-    let mut transforms: Vec<AttributeTransform> = Vec::with_capacity(adss.len());
+    let mut attributes: Vec<Attribute> = Vec::with_capacity(num_atts);
+    let mut transforms: Vec<AttributeTransform> = Vec::with_capacity(num_atts);
     for slot in slots {
         let (att, transform) = slot.expect("every attribute belongs to exactly one wave");
         attributes.push(att);
         transforms.push(transform);
     }
-    Ok((attributes, transforms))
+    Ok(DecodedPayloads {
+        attributes,
+        transforms,
+        assembled,
+        rank_maps,
+    })
 }
 
-/// One member attribute's inputs to a group walk: its parsed payload, wire
-/// descriptor, and the decoded parent position when the scheme predicts from
-/// one.
+/// One member attribute's inputs to a plain group walk.
 struct GroupMember<'p> {
     payload: ParsedPayload<'p>,
     dequant: AttributeTransform,
@@ -451,7 +498,7 @@ struct GroupMember<'p> {
     parent: Option<&'p Attribute>,
 }
 
-/// One fused normal attribute's inputs to a group walk (see [`NormalFuser`]).
+/// A normal fused into its parent position's walk.
 struct FusedNormal<'p> {
     payload: Parsed<'p, 2>,
     dequant: AttributeTransform,
@@ -460,116 +507,25 @@ struct FusedNormal<'p> {
     parent_stepper: usize,
 }
 
-/// The variant-independent inputs of one group walk, assembled by the
-/// scheduler in [`decode_payloads`].
+/// The inputs of one plain group walk.
 struct GroupCtx<'p, 'c> {
     members: Vec<GroupMember<'p>>,
     fused: Vec<FusedNormal<'p>>,
     num_values: usize,
     seeds: &'c [CornerIdx],
-    /// The corners recorded by an earlier walk of this group, replayed instead
-    /// of re-traversing.
     replay: Option<Vec<CornerIdx>>,
-    /// Whether the walk must record its corners for a later wave.
     record_walk: bool,
-    /// The group's cached vertex-to-points adjacency, built on first use.
-    csr: &'c mut Option<(Vec<usize>, Vec<PointIdx>)>,
 }
 
-/// The owned results of one group walk: decoded (attribute, transform) pairs
-/// for the members and the fused normals, in input order, plus the walk's
-/// recorded corners when a later wave will replay it.
+/// The owned results of one plain group walk.
 struct GroupResult {
     members: Vec<(Attribute, AttributeTransform)>,
     fused: Vec<(Attribute, AttributeTransform)>,
     recorded_seq: Option<Vec<CornerIdx>>,
 }
 
-/// Group-walk entry point of an attribute data structure. `run_group` hands
-/// the walk to the concrete structure type, so the per-corner body is
-/// monomorphized per variant: a heterogeneous collection ([`GeneralDs`])
-/// dispatches once per group instead of at every hot call.
-trait GroupWalkDs: Sized {
-    /// See [`GenericAttributeDs::num_referenced_vertices`].
-    fn num_referenced_vertices(&self) -> usize;
-
-    /// Runs one traversal walk over `rep`'s connectivity for `ctx`'s member
-    /// attributes. `member_adss` is parallel to `ctx.members`.
-    fn run_group<'p>(
-        rep: &'p Self,
-        member_adss: &[&'p Self],
-        ctx: GroupCtx<'p, '_>,
-    ) -> Result<GroupResult, Err>;
-}
-
-impl<'a, CT, V> GroupWalkDs for IdentityDS<'a, CT, V>
-where
-    IdentityDS<'a, CT, V>: GenericAttributeDs,
-{
-    fn num_referenced_vertices(&self) -> usize {
-        GenericAttributeDs::num_referenced_vertices(self)
-    }
-
-    fn run_group<'p>(
-        rep: &'p Self,
-        member_adss: &[&'p Self],
-        ctx: GroupCtx<'p, '_>,
-    ) -> Result<GroupResult, Err> {
-        run_group_impl(rep, member_adss, ctx)
-    }
-}
-
-impl GroupWalkDs for GeneralDs<'_> {
-    fn num_referenced_vertices(&self) -> usize {
-        match self {
-            GeneralDs::Seamed(d) => GenericAttributeDs::num_referenced_vertices(d),
-            GeneralDs::Finest(d) => GenericAttributeDs::num_referenced_vertices(d),
-        }
-    }
-
-    fn run_group<'p>(
-        rep: &'p Self,
-        member_adss: &[&'p Self],
-        ctx: GroupCtx<'p, '_>,
-    ) -> Result<GroupResult, Err> {
-        // A traversal group is keyed by seam-set equality, and equal seam sets
-        // build identical structures, so every member shares the rep's variant.
-        match rep {
-            GeneralDs::Seamed(r) => {
-                let members: Vec<_> = member_adss
-                    .iter()
-                    .map(|&m| match m {
-                        GeneralDs::Seamed(d) => d,
-                        GeneralDs::Finest(_) => {
-                            unreachable!("group member variant differs from its rep")
-                        }
-                    })
-                    .collect();
-                run_group_impl(r, &members, ctx)
-            }
-            GeneralDs::Finest(r) => {
-                let members: Vec<_> = member_adss
-                    .iter()
-                    .map(|&m| match m {
-                        GeneralDs::Finest(d) => d,
-                        GeneralDs::Seamed(_) => {
-                            unreachable!("group member variant differs from its rep")
-                        }
-                    })
-                    .collect();
-                run_group_impl(r, &members, ctx)
-            }
-        }
-    }
-}
-
-/// Builds the group's steppers and fusers and runs one traversal walk,
-/// monomorphized on the concrete attribute data structure.
-fn run_group_impl<'p, D: GenericAttributeDs>(
-    rep: &'p D,
-    member_adss: &[&'p D],
-    ctx: GroupCtx<'p, '_>,
-) -> Result<GroupResult, Err> {
+/// Builds the group's steppers and fusers and runs one walk.
+fn run_plain_group<'p>(ads: &'p PlainDs<'p>, ctx: GroupCtx<'p, '_>) -> Result<GroupResult, Err> {
     let GroupCtx {
         members,
         fused,
@@ -577,11 +533,9 @@ fn run_group_impl<'p, D: GenericAttributeDs>(
         seeds,
         replay,
         record_walk,
-        csr,
     } = ctx;
-    debug_assert_eq!(members.len(), member_adss.len());
-    let mut steppers: Vec<AnyStepper<'_, D>> = Vec::with_capacity(members.len());
-    for (m, &ads) in members.into_iter().zip(member_adss) {
+    let mut steppers: Vec<AnyStepper<'_, PlainDs<'p>>> = Vec::with_capacity(members.len());
+    for m in members {
         steppers.push(build_stepper(
             m.payload, m.dequant, m.desc, ads, m.parent, num_values,
         )?);
@@ -593,42 +547,32 @@ fn run_group_impl<'p, D: GenericAttributeDs>(
             f.dequant,
             f.desc,
             f.parent_id,
-            rep,
+            ads,
             f.parent_stepper,
             num_values,
         ));
     }
-    let csr_ref = if rep.point_equals_vertex() {
-        None
-    } else {
-        if csr.is_none() {
-            *csr = Some(vertex_points_csr(rep));
-        }
-        csr.as_ref()
-    };
     let recorded_seq = match replay {
         Some(seq) => {
             decode_group(
-                rep,
+                ads,
                 seq.iter().copied(),
                 &mut steppers,
                 &mut fusers,
                 num_values,
                 None,
-                csr_ref,
             )?;
             None
         }
         None => {
             let mut record_seq = record_walk.then(|| Vec::with_capacity(num_values));
             decode_group(
-                rep,
-                Traverser::new(rep, seeds.to_vec()),
+                ads,
+                Traverser::new(ads, seeds.to_vec()),
                 &mut steppers,
                 &mut fusers,
                 num_values,
                 record_seq.as_mut(),
-                csr_ref,
             )?;
             record_seq
         }
@@ -640,10 +584,7 @@ fn run_group_impl<'p, D: GenericAttributeDs>(
     })
 }
 
-/// One attribute's correction stream: DirectCoded corrections stay behind a
-/// live decoder popped in walk order (the walk consumes ranks sequentially,
-/// which is exactly the decoder's output order); raw and LengthCoded ones are
-/// rank-indexed vectors read before the walk.
+/// One attribute's correction stream; lazy streams pop in walk order.
 enum Corrections<'a, const N: usize>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
@@ -656,8 +597,7 @@ impl<const N: usize> Corrections<'_, N>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
-    /// The correction of rank `k`. Lazy streams require the calls to arrive
-    /// with consecutive `k`, which the group walk guarantees.
+    /// The correction of rank `k`; lazy streams require consecutive `k`.
     ///
     /// # Safety
     /// `k` must be less than the stream's value count.
@@ -675,8 +615,7 @@ where
         }
     }
 
-    /// Drains the stream into a rank-indexed vector, for consumers that read
-    /// corrections out of walk order.
+    /// Drains the stream into a rank-indexed vector.
     fn materialize(self, num_values: usize) -> Vec<NdVector<N, i32>> {
         match self {
             Corrections::Eager(v) => v,
@@ -693,10 +632,7 @@ where
     }
 }
 
-/// One attribute's parsed payload block: prediction/transform ids, the
-/// correction stream, and the scheme and transform metadata (in the
-/// scheme-dependent order the encoder writes them). The portabilization
-/// parameters live in their own block, read by [`read_portabilization`].
+/// One attribute's parsed payload block.
 struct Parsed<'a, const N: usize>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
@@ -726,8 +662,7 @@ impl ParsedPayload<'_> {
         }
     }
 
-    /// Whether the scheme predicts from a decoded position attribute, which
-    /// places the attribute in the second decode wave.
+    /// Whether the scheme predicts from a decoded position (second wave).
     fn needs_parent(&self) -> bool {
         matches!(
             self.scheme_ty(),
@@ -737,7 +672,7 @@ impl ParsedPayload<'_> {
     }
 }
 
-/// [`parse_payload`] behind the portable component-count dispatch.
+/// [`parse_payload`] behind the component-count dispatch.
 fn parse_payload_dispatched<'a>(
     reader: &mut Reader<'a>,
     num_values: usize,
@@ -761,10 +696,6 @@ fn parse_payload<'a, const N: usize>(
 where
     NdVector<N, i32>: Vector<N, Component = i32> + Portable,
 {
-    // The generic encoder writes no header at all: the payload is the values
-    // themselves, in their declared component type. Modelled as an unpredicted,
-    // untransformed stream so the reversal walk is shared with every other
-    // encoder.
     if desc.port_type == PORT_GENERIC {
         let values = read_raw_values::<N>(reader, num_values, desc.component_type)?;
         return Ok(Parsed {
@@ -779,11 +710,6 @@ where
     let scheme_ty = prediction::read_scheme_id(reader)?;
     let transform_id = reader.read_u8()?;
 
-    // The correction stream: DirectCoded symbols stay behind a live decoder
-    // drained during the walk (the payload is length-prefixed, so parsing
-    // continues past it), raw values are read eagerly. LengthCoded symbols are
-    // drained here instead, which keeps the walk's per-symbol pop monomorphic
-    // over the DirectCoded decoder.
     let rans_flag = reader.read_u8()?;
     let corrections: Corrections<'a, N> = if rans_flag != 0 {
         match start_symbol_decoder(reader, num_values * N, N)? {
@@ -808,7 +734,6 @@ where
         Corrections::Eager(out)
     };
 
-    // Scheme and transform metadata, in the order the encoder writes them.
     let mut flips = Vec::new();
     let mut orientations = Vec::new();
     let transform = match scheme_ty {
@@ -833,11 +758,7 @@ where
     })
 }
 
-/// Reads a generic attribute's values: `num_values` entries of `N` components,
-/// each the little-endian encoding of one `component_type`, widened into the
-/// i32 the portable representation carries. Floats travel as their bit pattern
-/// and unsigned types as their two's complement; both are reversed by
-/// [`AttributeTransform::Raw`].
+/// Reads a generic attribute's values, widened into the portable i32.
 fn read_raw_values<const N: usize>(
     reader: &mut Reader<'_>,
     num_values: usize,
@@ -846,7 +767,6 @@ fn read_raw_values<const N: usize>(
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
-    // 64-bit components do not fit the i32 portable representation.
     if component_type.size() > 4 {
         return Err(Err::Unimplemented);
     }
@@ -870,9 +790,7 @@ where
     Ok(out)
 }
 
-/// One attribute's state through a group walk: the partially filled attribute,
-/// its predictor, and the parsed correction/transform data. Each emitted corner
-/// advances every stepper of the group by one value.
+/// One attribute's decode state through a plain group walk.
 struct Stepper<'p, const N: usize, D: GenericAttributeDs>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
@@ -929,22 +847,17 @@ where
         })
     }
 
-    /// Decodes this attribute's value of rank `k` at the emitted corner `c`,
-    /// after mapping the corner's fan `points` to `k`.
+    /// Decodes this attribute's value of rank `k` at the emitted corner `c`.
     #[inline]
-    fn step(&mut self, c: CornerIdx, k: usize, points: &[PointIdx], record: &[VertexIdx]) {
+    fn step(&mut self, c: CornerIdx, k: usize, point: PointIdx, record: &[VertexIdx]) {
         // SAFETY: the walk emits at most one corner per distinct vertex, so
         // k < num_values, the length of both the value buffer and any eager
-        // correction vector; `points` holds point ids of the walked structure,
-        // all below the map length the stepper was constructed with.
-        for &p in points {
-            unsafe {
-                self.att
-                    .set_point_att_val_unchecked(p, AttributeValueIdx::from(k));
-            }
+        // correction vector; `point` is a vertex id of the walked structure,
+        // below the map length the stepper was constructed with.
+        unsafe {
+            self.att
+                .set_point_att_val_unchecked(point, AttributeValueIdx::from(k));
         }
-        // Predictions only ever read values at already visited vertices, so
-        // the partially filled attribute is safe to consult.
         let pred = self.predictor.predict(c, record, &self.att);
         let mut corr = unsafe { self.corrections.next_unchecked(k) };
         if self.zigzagged {
@@ -961,8 +874,7 @@ where
     }
 }
 
-/// [`Stepper`] behind the component-count dispatch, so one group walk drives
-/// attributes of different component counts.
+/// [`Stepper`] behind the component-count dispatch.
 enum AnyStepper<'p, D: GenericAttributeDs> {
     N1(Stepper<'p, 1, D>),
     N2(Stepper<'p, 2, D>),
@@ -972,12 +884,12 @@ enum AnyStepper<'p, D: GenericAttributeDs> {
 
 impl<'p, D: GenericAttributeDs> AnyStepper<'p, D> {
     #[inline]
-    fn step(&mut self, c: CornerIdx, k: usize, points: &[PointIdx], record: &[VertexIdx]) {
+    fn step(&mut self, c: CornerIdx, k: usize, point: PointIdx, record: &[VertexIdx]) {
         match self {
-            AnyStepper::N1(s) => s.step(c, k, points, record),
-            AnyStepper::N2(s) => s.step(c, k, points, record),
-            AnyStepper::N3(s) => s.step(c, k, points, record),
-            AnyStepper::N4(s) => s.step(c, k, points, record),
+            AnyStepper::N1(s) => s.step(c, k, point, record),
+            AnyStepper::N2(s) => s.step(c, k, point, record),
+            AnyStepper::N3(s) => s.step(c, k, point, record),
+            AnyStepper::N4(s) => s.step(c, k, point, record),
         }
     }
 
@@ -1024,14 +936,9 @@ fn build_stepper<'p, D: GenericAttributeDs>(
     })
 }
 
-/// A geometric-normal attribute fused into its parent position's walk. The
-/// prediction at a vertex is the sum of its one-ring face normals, which never
-/// reads other normal values, so decode rides the position walk instead of a
-/// second one: during the walk only the point map and per-vertex ranks are
-/// recorded, and once the walk ends (every position decoded by construction)
-/// one sequential face pass computes each cross product exactly once and each
-/// vertex finalizes from its completed sum. The sums equal the eager
-/// full-mesh pass bit for bit (exact i64 sums, order independent).
+/// A normal fused into its parent position's walk: prediction reads no other
+/// normals, so one face pass after the walk finalizes every vertex; exact
+/// i64 sums make it order-independent.
 struct NormalFuser {
     att: Attribute,
     corrections: Vec<NdVector<2, i32>>,
@@ -1039,10 +946,7 @@ struct NormalFuser {
     zigzagged: bool,
     transform: InverseTransform,
     dequant: AttributeTransform,
-    /// Index of the parent position attribute within the group's steppers.
     parent_stepper: usize,
-    /// Traversal rank per vertex, recorded at emit; `usize::MAX` for vertices
-    /// the walk never reaches (phantom ids).
     rank_of: Vec<usize>,
 }
 
@@ -1070,8 +974,6 @@ impl NormalFuser {
         let zigzagged = parsed.transform.corrections_are_zigzagged();
         Self {
             att,
-            // The end-of-walk finalization reads corrections in vertex order,
-            // not rank order, so the stream cannot stay lazy here.
             corrections: parsed.corrections.materialize(num_values),
             flips: parsed.flips,
             zigzagged,
@@ -1082,19 +984,15 @@ impl NormalFuser {
         }
     }
 
-    /// Records the emit of vertex `v` at rank `k`: maps the vertex's `points`
-    /// to `k` and remembers the rank for the end-of-walk finalization.
+    /// Records the emit of vertex `v` at rank `k`.
     #[inline]
-    fn on_emit(&mut self, v: VertexIdx, k: usize, points: &[PointIdx]) {
-        for &p in points {
-            self.att.set_point_att_val(p, AttributeValueIdx::from(k));
-        }
+    fn on_emit(&mut self, v: VertexIdx, k: usize, point: PointIdx) {
+        self.att
+            .set_point_att_val(point, AttributeValueIdx::from(k));
         self.rank_of[usize::from(v)] = k;
     }
 
-    /// Decodes every normal value after the walk: accumulates the face-normal
-    /// sums in one sequential face pass over the completed positions, then
-    /// applies each vertex's flip and correction at its recorded rank.
+    /// Decodes every normal value after the walk.
     fn finish_walk<D: GenericAttributeDs>(&mut self, ads: &D, pos: &Attribute) {
         let center = self.transform.oct_center();
         let sums = accumulate_face_normal_sums(ads, pos, self.rank_of.len());
@@ -1123,35 +1021,8 @@ impl NormalFuser {
     }
 }
 
-/// Builds the vertex-to-points adjacency of `ads` in CSR form:
-/// `points[offsets[v]..offsets[v + 1]]` are the points of vertex `v`.
-fn vertex_points_csr<D: GenericAttributeDs>(ads: &D) -> (Vec<usize>, Vec<PointIdx>) {
-    let num_vertices = ads.vertex_index_bound();
-    let num_points = ads.num_points();
-    let mut offsets = vec![0usize; num_vertices + 1];
-    for p in 0..num_points {
-        offsets[usize::from(ads.point_to_vertex(PointIdx::from(p))) + 1] += 1;
-    }
-    for v in 0..num_vertices {
-        offsets[v + 1] += offsets[v];
-    }
-    let mut cursor = offsets.clone();
-    let mut points = vec![PointIdx::from(0); num_points];
-    for p in 0..num_points {
-        let v = usize::from(ads.point_to_vertex(PointIdx::from(p)));
-        points[cursor[v]] = PointIdx::from(p);
-        cursor[v] += 1;
-    }
-    (offsets, points)
-}
-
-/// Runs one traversal walk for a group of attributes sharing the same
-/// connectivity, stepping every attribute at each emitted corner. Point-map
-/// entries are filled as vertices are emitted: predictions only read neighbors
-/// of already emitted vertices, whose fan corners are already mapped. When
-/// `record_seq` is given, the emitted corners are recorded so a later wave can
-/// replay the walk without recomputing it. `csr` is the vertex-to-points
-/// adjacency from [`vertex_points_csr`]; `None` means points equal vertices.
+/// Runs one walk, stepping every member per emitted corner; entries are
+/// mapped at emit, and predictions only read already-emitted vertices.
 fn decode_group<D: GenericAttributeDs>(
     ads: &D,
     walk: impl Iterator<Item = CornerIdx>,
@@ -1159,41 +1030,20 @@ fn decode_group<D: GenericAttributeDs>(
     fusers: &mut [NormalFuser],
     num_values: usize,
     mut record_seq: Option<&mut Vec<CornerIdx>>,
-    csr: Option<&(Vec<usize>, Vec<PointIdx>)>,
 ) -> Result<(), Err> {
     let mut record: Vec<VertexIdx> = Vec::with_capacity(num_values);
-    #[cfg(debug_assertions)]
-    let mut point_mapped = vec![false; ads.num_points()];
     let mut k = 0;
     for c in walk {
         if let Some(seq) = record_seq.as_mut() {
             seq.push(c);
         }
         let v = ads.vertex_idx(c);
-        let own_point;
-        let points: &[PointIdx] = match csr {
-            None => {
-                own_point = [PointIdx::from(usize::from(v))];
-                &own_point
-            }
-            // SAFETY: the CSR is built from the same `ads` as the walk, so
-            // v < vertex_index_bound = offsets.len() - 1, and the offsets are
-            // monotone prefix sums bounded by vertex_points.len().
-            Some((offsets, vertex_points)) => unsafe {
-                let start = *offsets.get_unchecked(usize::from(v));
-                let end = *offsets.get_unchecked(usize::from(v) + 1);
-                vertex_points.get_unchecked(start..end)
-            },
-        };
-        #[cfg(debug_assertions)]
-        for &p in points {
-            point_mapped[usize::from(p)] = true;
-        }
+        let point = PointIdx::from(usize::from(v));
         for s in steppers.iter_mut() {
-            s.step(c, k, points, &record);
+            s.step(c, k, point, &record);
         }
         for nf in fusers.iter_mut() {
-            nf.on_emit(v, k, points);
+            nf.on_emit(v, k, point);
         }
         record.push(v);
         k += 1;
@@ -1203,26 +1053,14 @@ fn decode_group<D: GenericAttributeDs>(
             "traversal did not reach every attribute vertex",
         ));
     }
-    // Every position is decoded once the walk completes, so the fused normals
-    // can run their sequential face pass and finalize.
     for nf in fusers.iter_mut() {
         let pos = steppers[nf.parent_stepper].att();
         nf.finish_walk(ads, pos);
     }
-    // Phantom points (never referenced by a corner) legitimately stay
-    // unmapped; every referenced point must have been covered by some fan.
-    #[cfg(debug_assertions)]
-    for c in 0..ads.num_corners() {
-        let p = usize::from(ads.point_idx(CornerIdx::from(c)));
-        debug_assert!(point_mapped[p], "fan fill left a referenced point unmapped");
-    }
     Ok(())
 }
 
-/// Parses one attribute's portabilization metadata into the dequantization
-/// parameters surfaced through [`AttributeTransform`]. This block is written
-/// separately from the payload: an encoder carrying several attributes emits
-/// every payload before the first of these.
+/// Parses one attribute's portabilization metadata.
 fn read_portabilization(
     reader: &mut Reader<'_>,
     desc: &Descriptor,

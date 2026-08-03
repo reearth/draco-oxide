@@ -1,15 +1,11 @@
-//! Phase-3 reconstruction (`dequantize` feature): integer attributes back to
-//! their original format, and octahedral values back to unit normals. Mirrors
-//! Google's `TransformAttributesToOriginalFormat`.
+//! Phase-3 reconstruction: integer attributes back to their original format.
 
 use crate::{AttributeTransform, Err};
 use draco_oxide_core::attribute::{Attribute, ComponentDataType};
 use draco_oxide_core::codec::attribute::geom::octahedral_inverse_transform;
-use draco_oxide_core::types::{AttributeValueIdx, NdVector, Vector};
+use draco_oxide_core::types::{NdVector, Vector};
 
-/// Applies `transform` to the portable integer attribute `att`, returning the
-/// attribute in its original (float) format. `AttributeTransform::None`
-/// attributes are passed through unchanged.
+/// Applies `transform` to the portable integer attribute.
 pub(crate) fn dequantize_attribute(
     att: Attribute,
     transform: &AttributeTransform,
@@ -28,8 +24,6 @@ pub(crate) fn dequantize_attribute(
             _ => Err(Err::MalformedAttribute("unsupported number of components")),
         },
         AttributeTransform::Octahedral { bits } => dequantize_octahedral(att, *bits),
-        // Integer components are already their own value; floats travelled as
-        // their bit pattern.
         AttributeTransform::Raw { component_type } => match component_type {
             ComponentDataType::F32 => match att.get_num_components() {
                 1 => reinterpret_f32::<1>(att),
@@ -49,20 +43,21 @@ where
     NdVector<N, i32>: Vector<N, Component = i32>,
     NdVector<N, f32>: Vector<N, Component = f32>,
 {
-    let mut values = Vec::with_capacity(att.num_unique_values());
-    for i in 0..att.num_unique_values() {
-        let bits: NdVector<N, i32> = att.get_unique_val(AttributeValueIdx::from(i));
-        let mut v = NdVector::<N, f32>::zero();
-        for j in 0..N {
-            *v.get_mut(j) = f32::from_bits(*bits.get(j) as u32);
-        }
-        values.push(v);
-    }
+    let vals = att.unique_vals_as_slice::<NdVector<N, i32>>();
+    let values: Vec<NdVector<N, f32>> = vals
+        .iter()
+        .map(|bits| {
+            let mut v = NdVector::<N, f32>::zero();
+            for j in 0..N {
+                *v.get_mut(j) = f32::from_bits(*bits.get(j) as u32);
+            }
+            v
+        })
+        .collect();
     Ok(rebuild(att, values))
 }
 
-/// Inverse of the encoder's coordinate-wise quantization:
-/// `value = min + q * delta_max / (2^bits - 1)`.
+/// Inverse quantization: `value = min + q * delta_max / (2^bits - 1)`.
 fn dequantize_typed<const N: usize>(
     att: Attribute,
     min: &[f32],
@@ -79,22 +74,27 @@ where
     } else {
         0.0
     };
-
-    let mut values = Vec::with_capacity(att.num_unique_values());
-    for i in 0..att.num_unique_values() {
-        let q: NdVector<N, i32> = att.get_unique_val(AttributeValueIdx::from(i));
-        let mut v = NdVector::<N, f32>::zero();
-        for (j, &min_j) in min.iter().enumerate().take(N) {
-            *v.get_mut(j) = min_j + *q.get(j) as f32 * step;
-        }
-        values.push(v);
+    let mut min_arr = [0.0f32; N];
+    for (dst, &src) in min_arr.iter_mut().zip(min.iter().take(N)) {
+        *dst = src;
     }
+
+    let vals = att.unique_vals_as_slice::<NdVector<N, i32>>();
+    let values: Vec<NdVector<N, f32>> = vals
+        .iter()
+        .map(|q| {
+            let mut v = NdVector::<N, f32>::zero();
+            for (j, &min_j) in min_arr.iter().enumerate() {
+                *v.get_mut(j) = min_j + *q.get(j) as f32 * step;
+            }
+            v
+        })
+        .collect();
 
     Ok(rebuild(att, values))
 }
 
-/// Octahedral integers back to unit normals: undo the `[0, 2^bits - 1]` scaling
-/// into the `[-1, 1]` octahedron square, then invert the octahedral mapping.
+/// Octahedral integers back to unit normals.
 fn dequantize_octahedral(att: Attribute, bits: u8) -> Result<Attribute, Err> {
     if att.get_num_components() != 2 {
         return Err(Err::MalformedAttribute(
@@ -103,23 +103,23 @@ fn dequantize_octahedral(att: Attribute, bits: u8) -> Result<Attribute, Err> {
     }
     let scale = ((1u64 << (bits - 1)) - 1) as f32;
 
-    let mut values = Vec::with_capacity(att.num_unique_values());
-    for i in 0..att.num_unique_values() {
-        let q: NdVector<2, i32> = att.get_unique_val(AttributeValueIdx::from(i));
-        let oct = NdVector::<2, f32>::from([
-            *q.get(0) as f32 / scale - 1.0,
-            *q.get(1) as f32 / scale - 1.0,
-        ]);
-        // SAFETY: the output type is three dimensional.
-        let normal: NdVector<3, f32> = unsafe { octahedral_inverse_transform(oct) };
-        values.push(normal);
-    }
+    let vals = att.unique_vals_as_slice::<NdVector<2, i32>>();
+    let values: Vec<NdVector<3, f32>> = vals
+        .iter()
+        .map(|q| {
+            let oct = NdVector::<2, f32>::from([
+                *q.get(0) as f32 / scale - 1.0,
+                *q.get(1) as f32 / scale - 1.0,
+            ]);
+            // SAFETY: the output type is three dimensional.
+            unsafe { octahedral_inverse_transform(oct) }
+        })
+        .collect();
 
     Ok(rebuild(att, values))
 }
 
-/// Rebuilds `att` with `values` as its unique values, keeping identity, type,
-/// and the point-to-value map.
+/// Rebuilds `att` with `values`, keeping identity, type, and point map.
 fn rebuild<Data, const N: usize>(att: Attribute, values: Vec<Data>) -> Attribute
 where
     Data: Vector<N>,

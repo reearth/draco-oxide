@@ -1,10 +1,5 @@
-//! Edgebreaker traversal decoding: the standard variant (CR-light symbol bit
-//! stream) and the valence variant (per-valence-context rANS symbol streams),
-//! plus the shared rabs-coded start-face interior flags and attribute seam bits,
-//! and the topology-split event stream.
-//!
-//! The two variants implement the [`TraversalDecoder`] trait, so `reconstruct`
-//! is generic over the traversal and monomorphizes the per-symbol dispatch away.
+//! Edgebreaker traversal decoding: the standard and valence variants, the
+//! shared start-face and seam streams, and the topology-split stream.
 
 use crate::entropy::rans::RabsDecoder;
 use crate::reader::RevReader;
@@ -12,11 +7,10 @@ use crate::Err;
 use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::connectivity::edgebreaker::symbol_encoder::Symbol;
 use draco_oxide_core::codec::connectivity::edgebreaker::{MAX_VALENCE, MIN_VALENCE};
-use draco_oxide_core::types::CornerIdx;
+use draco_oxide_core::types::{CornerIdx, VertexIdx};
 use draco_oxide_core::utils::bit_coder::leb128_read;
 
-/// Builds a rabs decoder over a self-contained `[prob_zero | leb128 len | bytes]`
-/// sub-stream read from `reader`.
+/// A rabs decoder over a `[prob_zero | leb128 len | bytes]` sub-stream.
 fn start_rabs<'a>(reader: &mut Reader<'a>) -> Result<RabsDecoder<'a>, Err> {
     let prob_zero = reader.read_u8()?;
     let len = leb128_read(reader)? as usize;
@@ -24,7 +18,7 @@ fn start_rabs<'a>(reader: &mut Reader<'a>) -> Result<RabsDecoder<'a>, Err> {
     RabsDecoder::new(rev, prob_zero)
 }
 
-/// LSB-first bit reader over a fixed byte buffer
+/// LSB-first bit reader.
 struct BitSource<'a> {
     bytes: &'a [u8],
     byte_pos: usize,
@@ -59,16 +53,15 @@ impl<'a> BitSource<'a> {
     }
 }
 
-/// A topology-split event, in encoder-symbol-id terms (as stored on the wire).
+/// A topology-split event in encoder-symbol-id terms.
 pub struct TopologySplit {
     pub source_symbol_id: usize,
     pub split_symbol_id: usize,
-    /// True for `RIGHT_FACE_EDGE`, false for `LEFT_FACE_EDGE`.
     pub source_edge_right: bool,
 }
 
-/// Decodes the topology-split event stream: leb128 count, delta-coded id pairs, then
-/// one LSB-first edge bit per split (byte-padded).
+/// Decodes the topology-split stream: leb128 count, delta-coded id pairs,
+/// one edge bit per split.
 pub fn decode_topology_splits(reader: &mut Reader<'_>) -> Result<Vec<TopologySplit>, Err> {
     let num_splits = leb128_read(reader)? as usize;
     let mut splits = Vec::with_capacity(num_splits);
@@ -89,7 +82,6 @@ pub fn decode_topology_splits(reader: &mut Reader<'_>) -> Result<Vec<TopologySpl
         });
     }
 
-    // One edge bit per split, LSB-first, byte-padded (no size prefix).
     if num_splits > 0 {
         let edge_bytes = reader.read_bytes(num_splits.div_ceil(8))?;
         let mut bits = BitSource::new(edge_bytes);
@@ -101,16 +93,86 @@ pub fn decode_topology_splits(reader: &mut Reader<'_>) -> Result<Vec<TopologySpl
     Ok(splits)
 }
 
-/// The rabs-coded sub-streams shared by both traversal variants: one start-face
-/// interior-flag stream and one attribute-seam stream per attribute.
+/// Per-stream seam statistics gathered during the seam scan.
+pub struct SeamStats {
+    /// Whether any interior edge is a seam.
+    pub has_interior: bool,
+    /// Marked corners; each is the left seam of one sector-start corner.
+    pub starts: usize,
+    /// Position vertices with at least one sector start in their fan.
+    pub fans_with_starts: usize,
+}
+
+/// The rabs streams shared by both traversal variants.
 struct SharedStreams<'a> {
     start_face: RabsDecoder<'a>,
     seams: Vec<RabsDecoder<'a>>,
 }
 
+/// The seam-marking state of the scan: packed per-corner flags plus the
+/// running statistics.
+struct SeamAcc {
+    seam_bits: Vec<u8>,
+    starts: Vec<usize>,
+    fans_with_starts: Vec<usize>,
+    marks: Vec<usize>,
+    has_start: Vec<Vec<bool>>,
+}
+
+impl SeamAcc {
+    fn new(num_streams: usize, num_corners: usize, num_vertices: usize) -> Self {
+        Self {
+            seam_bits: vec![0; num_corners],
+            starts: vec![0; num_streams],
+            fans_with_starts: vec![0; num_streams],
+            marks: vec![0; num_streams],
+            has_start: vec![vec![false; num_vertices]; num_streams],
+        }
+    }
+
+    /// Counts the sector start of a seam mark at corner `c` for stream `i`.
+    ///
+    /// # Safety
+    /// `c` must be a corner of the table and `c2v[c.previous()]` must be below
+    /// the vertex count this accumulator was created with.
+    #[inline]
+    unsafe fn count_start(&mut self, i: usize, c: CornerIdx, c2v: &[VertexIdx]) {
+        self.starts[i] += 1;
+        self.marks[i] += 1;
+        let v = usize::from(*c2v.get_unchecked(usize::from(c.previous())));
+        let has = self.has_start[i].get_unchecked_mut(v);
+        if !*has {
+            *has = true;
+            self.fans_with_starts[i] += 1;
+        }
+    }
+
+    /// Sets stream `i`'s seam bit at `c` and counts its sector start.
+    ///
+    /// # Safety
+    /// As for [`Self::count_start`].
+    #[inline]
+    unsafe fn mark(&mut self, i: usize, c: CornerIdx, c2v: &[VertexIdx]) {
+        *self.seam_bits.get_unchecked_mut(usize::from(c)) |= 1 << i;
+        self.count_start(i, c, c2v);
+    }
+
+    fn finish(self, num_boundary_corners: usize) -> (Vec<u8>, Vec<SeamStats>) {
+        let stats = self
+            .marks
+            .iter()
+            .zip(self.starts.iter().zip(&self.fans_with_starts))
+            .map(|(&marks, (&starts, &fans_with_starts))| SeamStats {
+                has_interior: marks > num_boundary_corners,
+                starts,
+                fans_with_starts,
+            })
+            .collect();
+        (self.seam_bits, stats)
+    }
+}
+
 impl<'a> SharedStreams<'a> {
-    /// Reads the start-face rabs stream followed by one seam rabs stream per
-    /// attribute, in the order the encoder wrote them.
     fn read(reader: &mut Reader<'a>, num_attribute_data: usize) -> Result<Self, Err> {
         let start_face = start_rabs(reader)?;
         let mut seams = Vec::with_capacity(num_attribute_data);
@@ -124,155 +186,158 @@ impl<'a> SharedStreams<'a> {
         self.start_face.decode_bit()
     }
 
-    /// Decodes the per-attribute seam edges (port of Google's
-    /// `DecodeAttributeConnectivitiesOnFace`, run over every face in order).
-    /// Returns, per attribute, the `is_edge_on_seam` flag for each corner: a
-    /// boundary edge is an automatic seam for every attribute and reads no
-    /// bit; an interior edge decodes one seam bit per attribute, processed
-    /// once from its lower-id face. Both corners of a seam edge are marked,
-    /// matching `AddSeamEdge`. Consumes the seam streams: the common stream
-    /// counts run monomorphized with the decoder states in locals, so the
-    /// independent rabs chains overlap instead of round-tripping through
-    /// memory at every bit.
+    /// Decodes the seam edges over the final corner table, faces in id order: a
+    /// boundary edge is an automatic seam with no bit; an interior edge decodes
+    /// one bit per stream, once from its lower-id face, marking both corners.
     fn decode_attribute_seams(
         &mut self,
         opposite: &[CornerIdx],
         num_faces: usize,
-    ) -> Vec<Vec<bool>> {
+        c2v: &[VertexIdx],
+        num_vertices: usize,
+    ) -> (Vec<u8>, Vec<SeamStats>) {
         let num_corners = num_faces * 3;
-        let mut is_seam = vec![vec![false; num_corners]; self.seams.len()];
+        let mut acc = SeamAcc::new(self.seams.len(), num_corners, num_vertices);
         let seams = std::mem::take(&mut self.seams);
-        match seams.len() {
-            0 => {}
+        let num_boundary = match seams.len() {
+            0 => 0,
             1 => {
                 let decs: [RabsDecoder<'a>; 1] = seams.try_into().ok().expect("length checked");
-                decode_seams_fixed(decs, opposite, num_faces, &mut is_seam);
+                decode_seams_fixed(decs, opposite, num_faces, c2v, &mut acc)
             }
             2 => {
                 let decs: [RabsDecoder<'a>; 2] = seams.try_into().ok().expect("length checked");
-                decode_seams_fixed(decs, opposite, num_faces, &mut is_seam);
+                decode_seams_fixed(decs, opposite, num_faces, c2v, &mut acc)
             }
-            _ => decode_seams_general(seams, opposite, num_faces, &mut is_seam),
-        }
-        is_seam
+            _ => decode_seams_general(seams, opposite, num_faces, c2v, &mut acc),
+        };
+        acc.finish(num_boundary)
     }
 }
 
-/// The seam-edge scan over `opposite`, monomorphized on the stream count so the
-/// decoder states live in locals for the whole scan.
+/// The seam scan monomorphized on the stream count, decoder states in locals.
+/// Returns the boundary corner count.
 fn decode_seams_fixed<const N: usize>(
     mut decs: [RabsDecoder<'_>; N],
     opposite: &[CornerIdx],
     num_faces: usize,
-    is_seam: &mut [Vec<bool>],
-) {
+    c2v: &[VertexIdx],
+    acc: &mut SeamAcc,
+) -> usize {
     debug_assert!(opposite.len() == num_faces * 3);
+    let mut num_boundary = 0usize;
     for f in 0..num_faces {
         let corner = CornerIdx::from(3 * f);
         for c in [corner, corner.next(), corner.previous()] {
             // SAFETY: c < num_faces * 3 == opposite.len(), and every seam vec
             // has that same length; a non-INVALID `opp` is itself a corner id
-            // below num_faces * 3 (reconstruct's corner-bound contract).
+            // below num_faces * 3 (reconstruct's corner-bound contract), and
+            // c2v holds vertex ids below the reconstruction's vertex count.
             let opp = unsafe { *opposite.get_unchecked(usize::from(c)) };
             if opp == CornerIdx::INVALID {
-                // Boundary edge: an automatic seam for every attribute, no bit.
-                for seam in is_seam.iter_mut() {
-                    unsafe { *seam.get_unchecked_mut(usize::from(c)) = true };
+                num_boundary += 1;
+                // SAFETY: c < num_faces * 3 == seam_bits.len().
+                unsafe {
+                    *acc.seam_bits.get_unchecked_mut(usize::from(c)) = (1u16 << N) as u8 - 1;
+                }
+                for i in 0..N {
+                    unsafe { acc.count_start(i, c, c2v) };
                 }
                 continue;
             }
-            // Each shared edge is decoded once, from its lower-id face.
             if usize::from(opp.face_idx()) < f {
                 continue;
             }
-            for (dec, seam) in decs.iter_mut().zip(is_seam.iter_mut()) {
+            for (i, dec) in decs.iter_mut().enumerate() {
                 if dec.decode_bit() {
                     unsafe {
-                        *seam.get_unchecked_mut(usize::from(c)) = true;
-                        *seam.get_unchecked_mut(usize::from(opp)) = true;
+                        acc.mark(i, c, c2v);
+                        acc.mark(i, opp, c2v);
                     }
                 }
             }
         }
     }
+    num_boundary
 }
 
-/// Fallback for stream counts without a monomorphized scan.
+/// Fallback scan for stream counts without a monomorphization.
 fn decode_seams_general(
     mut decs: Vec<RabsDecoder<'_>>,
     opposite: &[CornerIdx],
     num_faces: usize,
-    is_seam: &mut [Vec<bool>],
-) {
+    c2v: &[VertexIdx],
+    acc: &mut SeamAcc,
+) -> usize {
     debug_assert!(opposite.len() == num_faces * 3);
+    let mut num_boundary = 0usize;
     for f in 0..num_faces {
         let corner = CornerIdx::from(3 * f);
         for c in [corner, corner.next(), corner.previous()] {
             // SAFETY: as in `decode_seams_fixed`.
             let opp = unsafe { *opposite.get_unchecked(usize::from(c)) };
             if opp == CornerIdx::INVALID {
-                for seam in is_seam.iter_mut() {
-                    unsafe { *seam.get_unchecked_mut(usize::from(c)) = true };
+                num_boundary += 1;
+                // SAFETY: c < num_faces * 3 == seam_bits.len().
+                unsafe {
+                    *acc.seam_bits.get_unchecked_mut(usize::from(c)) =
+                        ((1u16 << decs.len()) - 1) as u8;
+                }
+                for i in 0..decs.len() {
+                    unsafe { acc.count_start(i, c, c2v) };
                 }
                 continue;
             }
             if usize::from(opp.face_idx()) < f {
                 continue;
             }
-            for (dec, seam) in decs.iter_mut().zip(is_seam.iter_mut()) {
+            for (i, dec) in decs.iter_mut().enumerate() {
                 if dec.decode_bit() {
                     unsafe {
-                        *seam.get_unchecked_mut(usize::from(c)) = true;
-                        *seam.get_unchecked_mut(usize::from(opp)) = true;
+                        acc.mark(i, c, c2v);
+                        acc.mark(i, opp, c2v);
                     }
                 }
             }
         }
     }
+    num_boundary
 }
 
-/// One edgebreaker traversal variant, driving symbol decode plus the shared
-/// start-face and attribute-seam streams. `reconstruct` is generic over this
-/// trait, so the per-symbol variant dispatch is resolved at monomorphization
-/// rather than per symbol.
+/// One edgebreaker traversal variant.
 pub trait TraversalDecoder {
     /// Decodes the next edgebreaker symbol.
     fn decode_symbol(&mut self) -> Result<Symbol, Err>;
 
-    /// Hook called with the vertices of the active corner (tip, next, previous)
-    /// after each symbol's face is built. Only the valence variant, which tracks
-    /// vertex valences, overrides it; it is a no-op otherwise.
+    /// Hook after each symbol's face; only the valence variant overrides it.
     fn new_active_corner_reached(&mut self, v_corner: usize, v_next: usize, v_prev: usize) {
         let _ = (v_corner, v_next, v_prev);
     }
 
-    /// Hook for the S-symbol vertex merge, when `dest` absorbs `source`. Only the
-    /// valence variant overrides it; it is a no-op otherwise.
+    /// Hook for the S-symbol vertex merge; only the valence variant overrides it.
     fn merge_vertices(&mut self, dest: usize, source: usize) {
         let _ = (dest, source);
     }
 
-    /// Decodes one start-face configuration bit (true = interior face).
+    /// Decodes one start-face configuration bit.
     fn decode_start_face_config(&mut self) -> bool;
 
-    /// Decodes every attribute's seam edges from the per-attribute seam
-    /// streams, consuming them. See [`SharedStreams::decode_attribute_seams`].
     fn decode_attribute_seams(
         &mut self,
         opposite: &[CornerIdx],
         num_faces: usize,
-    ) -> Vec<Vec<bool>>;
+        c2v: &[VertexIdx],
+        num_vertices: usize,
+    ) -> (Vec<u8>, Vec<SeamStats>);
 }
 
-/// Standard traversal: symbols come from a single CR-light bit stream.
+/// Standard traversal: symbols from a single CR-light bit stream.
 pub struct StandardTraversalDecoder<'a> {
     symbols: BitSource<'a>,
     shared: SharedStreams<'a>,
 }
 
 impl<'a> StandardTraversalDecoder<'a> {
-    /// Reads the symbol bit stream, then the shared start-face and seam streams,
-    /// in the order the encoder wrote them.
     pub fn start(reader: &mut Reader<'a>, num_attribute_data: usize) -> Result<Self, Err> {
         let symbol_len = leb128_read(reader)? as usize;
         let symbols = BitSource::new(reader.read_bytes(symbol_len)?);
@@ -282,8 +347,6 @@ impl<'a> StandardTraversalDecoder<'a> {
 }
 
 impl TraversalDecoder for StandardTraversalDecoder<'_> {
-    /// One CR-light code: one bit for `C`, otherwise a leading `1` plus two
-    /// suffix bits forming the pattern `1 | (suffix << 1)`.
     fn decode_symbol(&mut self) -> Result<Symbol, Err> {
         if self.symbols.read_bit() == 0 {
             return Ok(Symbol::C);
@@ -305,19 +368,18 @@ impl TraversalDecoder for StandardTraversalDecoder<'_> {
         &mut self,
         opposite: &[CornerIdx],
         num_faces: usize,
-    ) -> Vec<Vec<bool>> {
-        self.shared.decode_attribute_seams(opposite, num_faces)
+        c2v: &[VertexIdx],
+        num_vertices: usize,
+    ) -> (Vec<u8>, Vec<SeamStats>) {
+        self.shared
+            .decode_attribute_seams(opposite, num_faces, c2v, num_vertices)
     }
 }
 
-/// State of the valence traversal: symbols are grouped by the entropy context
-/// (the clamped valence of the active vertex), and the context of each symbol is
-/// recovered by maintaining the valences of the partially reconstructed mesh,
-/// mirroring the encoder in reverse.
+/// Valence traversal state: per-context symbol lists consumed from the back,
+/// with valences maintained to recover each symbol's context.
 struct ValenceState {
-    /// Per-context symbol ids, consumed from the back.
     context_symbols: Vec<Vec<u64>>,
-    /// Valence of the decoded portion of the mesh per reconstruction vertex.
     vertex_valences: Vec<usize>,
     last_symbol: Option<Symbol>,
     active_context: Option<usize>,
@@ -330,10 +392,6 @@ pub struct ValenceTraversalDecoder<'a> {
 }
 
 impl<'a> ValenceTraversalDecoder<'a> {
-    /// Reads the shared start-face and seam streams, then one rANS symbol stream
-    /// per valence context. `max_num_vertices` bounds the valence table (encoded
-    /// vertices plus split symbols); `num_faces` bounds each context's symbol
-    /// count.
     pub fn start(
         reader: &mut Reader<'a>,
         num_attribute_data: usize,
@@ -371,8 +429,6 @@ impl<'a> ValenceTraversalDecoder<'a> {
 }
 
 impl TraversalDecoder for ValenceTraversalDecoder<'_> {
-    /// The back of the active context's symbol list; the very first symbol has no
-    /// context yet and is always `E`.
     fn decode_symbol(&mut self) -> Result<Symbol, Err> {
         let state = &mut self.state;
         let symbol = match state.active_context {
@@ -397,8 +453,6 @@ impl TraversalDecoder for ValenceTraversalDecoder<'_> {
         Ok(symbol)
     }
 
-    /// Applies the decoded symbol's valence increments and selects the context
-    /// for the next symbol from the valence of the next (active) vertex.
     #[inline]
     fn new_active_corner_reached(&mut self, v_corner: usize, v_next: usize, v_prev: usize) {
         let valences = &mut self.state.vertex_valences;
@@ -429,7 +483,6 @@ impl TraversalDecoder for ValenceTraversalDecoder<'_> {
         self.state.active_context = Some(clamped - MIN_VALENCE);
     }
 
-    /// The merged vertex absorbs the source vertex's valence.
     fn merge_vertices(&mut self, dest: usize, source: usize) {
         self.state.vertex_valences[dest] += self.state.vertex_valences[source];
     }
@@ -442,7 +495,10 @@ impl TraversalDecoder for ValenceTraversalDecoder<'_> {
         &mut self,
         opposite: &[CornerIdx],
         num_faces: usize,
-    ) -> Vec<Vec<bool>> {
-        self.shared.decode_attribute_seams(opposite, num_faces)
+        c2v: &[VertexIdx],
+        num_vertices: usize,
+    ) -> (Vec<u8>, Vec<SeamStats>) {
+        self.shared
+            .decode_attribute_seams(opposite, num_faces, c2v, num_vertices)
     }
 }

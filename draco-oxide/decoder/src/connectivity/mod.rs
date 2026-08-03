@@ -1,6 +1,6 @@
 //! Connectivity decoding, dispatched on the encoder method.
 
-mod edgebreaker;
+pub mod edgebreaker;
 mod sequential;
 
 use crate::Err;
@@ -10,18 +10,14 @@ use draco_oxide_core::mesh::ds::{AttributeCornerTable, CornerTable};
 use draco_oxide_core::types::{CornerIdx, PointIdx, VecCornerIdx, VertexIdx};
 use std::collections::HashMap;
 
-/// The decoded connectivity, in the shape the encoder method produced it.
+/// The decoded connectivity.
 pub enum Connectivity {
-    /// A traversal-encoded corner table; attributes are sequenced over it.
     Edgebreaker(EdgebreakerConnectivity),
-    /// Plain face indices into a flat point space; attributes are sequenced
-    /// linearly over that space.
     Sequential(SequentialConnectivity),
 }
 
 impl Connectivity {
-    /// The corner-table connectivity, or `None` when the stream was encoded
-    /// sequentially and carries none.
+    /// The corner-table connectivity, if edgebreaker-encoded.
     pub fn edgebreaker(&self) -> Option<&EdgebreakerConnectivity> {
         match self {
             Connectivity::Edgebreaker(conn) => Some(conn),
@@ -30,43 +26,32 @@ impl Connectivity {
     }
 }
 
-/// Face indices over a flat point space, with no topology attached.
+/// Face indices over a flat point space.
 pub struct SequentialConnectivity {
-    /// Faces as point triples, in encoded order.
     pub faces: Vec<[PointIdx; 3]>,
-    /// The size of the point space, and hence of every attribute's value list.
     pub num_points: usize,
 }
 
-/// The decoded position connectivity plus the data the attribute stages need.
+/// The decoded position connectivity plus what the attribute stages need.
 pub struct EdgebreakerConnectivity {
-    /// Position corner table (opposite relation over `num_faces * 3` corners).
     pub corner_table: CornerTable,
-    /// Per-corner position vertex.
     pub corner_to_vertex: Vec<VertexIdx>,
-    /// Left-most corner per position vertex (`CornerIdx::INVALID` for isolated
-    /// vertices); a per-fan seed reused by point assignment. Boundary-left-most
-    /// for hole vertices, an arbitrary incident corner otherwise.
+    /// Left-most corner per vertex; boundary-left-most for hole vertices.
     pub vertex_corners: Vec<CornerIdx>,
-    /// Number of position vertices (compacted when there is no attribute data).
     pub num_vertices: usize,
-    /// Number of faces.
     pub num_faces: usize,
-    /// Number of non-position attribute connectivities carried by the stream.
     pub num_attribute_data: usize,
-    /// Per-vertex boundary/hole flag (pre-compaction vertex ids).
     pub is_vert_hole: Vec<bool>,
-    /// Seed corners of each component, in start-face resolution order.
     pub init_corners: Vec<CornerIdx>,
-    /// Per non-position attribute, the decoded `is_edge_on_seam` flag per corner
-    /// (true when the edge opposite the corner is an attribute seam). Indexed
-    /// `[attribute][corner]`, in the stream's attribute order.
-    pub attribute_seams: Vec<Vec<bool>>,
+    /// Packed seams, one byte per corner: bit `i` set when the edge opposite
+    /// the corner is a seam of stream `i`.
+    pub seam_bits: Vec<u8>,
+    /// Seam statistics per stream, parallel to `seam_bits` bits.
+    pub seam_stats: Vec<edgebreaker::SeamStats>,
 }
 
 impl EdgebreakerConnectivity {
-    /// Faces as position-vertex triples, densely relabeled so referenced vertices
-    /// occupy `0..k`. Returns the faces and `k`.
+    /// Faces as densely relabeled position-vertex triples.
     pub fn position_faces(&self) -> (Vec<[usize; 3]>, usize) {
         let mut faces = Vec::with_capacity(self.num_faces);
         for f in 0..self.num_faces {
@@ -87,17 +72,14 @@ impl EdgebreakerConnectivity {
         (faces, remap.len())
     }
 
-    /// The attribute corner table for non-position attribute `i`, built from the
-    /// decoded seam edges over the position corner table.
+    /// The attribute corner table for stream `i`.
     pub fn attribute_corner_table(&self, i: usize) -> AttributeCornerTable<'_> {
-        AttributeCornerTable::new(
-            &self.corner_table,
-            VecCornerIdx::from(self.attribute_seams[i].clone()),
-        )
+        let seams: Vec<bool> = self.seam_bits.iter().map(|&b| b & (1 << i) != 0).collect();
+        AttributeCornerTable::new(&self.corner_table, VecCornerIdx::from(seams))
     }
 }
 
-/// Decodes the connectivity section, dispatching on the header's encoder method.
+/// Decodes the connectivity section.
 pub fn decode_connectivity(
     reader: &mut Reader<'_>,
     encoder_method: EncoderMethod,

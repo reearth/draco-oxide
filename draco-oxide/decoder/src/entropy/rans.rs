@@ -99,7 +99,7 @@ impl<'a> RansDecoder<'a> {
     }
 
     /// Decodes the next symbol index.
-    #[inline]
+    #[inline(always)]
     pub fn read(&mut self) -> usize {
         if self.refill_branchless {
             self.state = self.rev.rans_refill(self.state, self.l_base);

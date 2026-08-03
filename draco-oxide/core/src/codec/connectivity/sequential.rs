@@ -1,11 +1,11 @@
-const TWO_POW_21: usize = 1 << 21;
-const TWO_POW_32: usize = 1 << 32;
+const TWO_POW_21: u64 = 1 << 21;
+const TWO_POW_32: u64 = 1 << 32;
 
-/// The width face indices are stored in for a point space of `point_count`.
-/// `21` selects varint storage; the others are that many fixed bits.
+/// The face-index width for a point space of `point_count`; 21 selects
+/// varint storage. Bounds are u64 so the 2^32 tier exists on 32-bit targets.
 #[inline]
 pub fn index_size_from_vertex_count(point_count: usize) -> Result<usize, Err> {
-    match point_count {
+    match point_count as u64 {
         0..0x100 => Ok(8),
         0x100..0x10000 => Ok(16),
         0x10000..TWO_POW_21 => Ok(21),
