@@ -9,6 +9,10 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
       - name: rustfmt
         run: cargo fmt --all --check
@@ -19,6 +23,10 @@ jobs:
     env:
       RUSTFLAGS: "-D warnings"
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
 
       - name: Cache Rust build
@@ -37,6 +45,10 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
 
       - name: Cache Rust build
@@ -55,6 +67,10 @@ jobs:
     env:
       RUSTFLAGS: "-D warnings"
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
 
       - name: Add wasm32 target
@@ -92,6 +108,10 @@ jobs:
     env:
       DRACO_TAG: "1.5.7"
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
 
       # Cache the built Google Draco tree.
