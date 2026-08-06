@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # Mirror the `tests` job scope: the draco-oxide crates + integration
       # `tests` crate, excluding the cli/analyzer apps. `--all-targets` also
@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # Same scope and two-pass structure as the `warnings` job. `-D warnings`
       # is passed to clippy-driver so any clippy lint fails the build.
@@ -61,7 +61,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # The decoder is the WASM/embedded unit; every feature tier must stay
       # green on wasm32. The size probe builds the linked cdylib per tier and
@@ -105,7 +105,7 @@ jobs:
         run: ./scripts/build-draco.sh
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # Test the draco-oxide crates (draco-oxide, -core, -decoder, draco-nd-vector)
       # and the integration `tests` crate. The cli/analyzer apps are excluded.
