@@ -444,20 +444,26 @@ impl GenericCornerTable for CornerTable {
     }
 }
 
-/// The position corner table cut by attribute seams.
+/// The position corner table cut by attribute seams. When no interior edge is
+/// a seam, the position corner table stands in unchanged; otherwise the cut
+/// opposite relation is materialized so a swing costs a single lookup.
 #[derive(Debug, Clone)]
 pub struct AttributeCornerTable<'pos_ct> {
     pos_corner_table: &'pos_ct CornerTable,
-    is_edge_on_seam: VecCornerIdx<bool>,
+    /// The cut opposite relation (`INVALID` across seam and boundary edges),
+    /// or `None` when no interior edge is a seam.
+    cut_opposite: Option<VecCornerIdx<CornerIdx>>,
 }
 
 impl<'pos_ct> GenericCornerTable for AttributeCornerTable<'pos_ct> {
     #[inline]
     fn opposite(&self, c: CornerIdx) -> Option<CornerIdx> {
-        if self.is_corner_opposite_to_seam_edge(c) {
-            None
-        } else {
-            self.pos_corner_table.opposite(c)
+        match &self.cut_opposite {
+            Some(cut) => {
+                let opp = cut[c];
+                (opp != CornerIdx::INVALID).then_some(opp)
+            }
+            None => self.pos_corner_table.opposite(c),
         }
     }
 }
@@ -467,22 +473,48 @@ impl<'pos_ct> AttributeCornerTable<'pos_ct> {
         pos_corner_table: &'pos_ct CornerTable,
         is_edge_on_seam: VecCornerIdx<bool>,
     ) -> Self {
+        let has_interior_seams = (0..is_edge_on_seam.len()).any(|c| {
+            let c = CornerIdx::from(c);
+            is_edge_on_seam[c] && pos_corner_table.opposite(c).is_some()
+        });
+        if !has_interior_seams {
+            return Self::shared(pos_corner_table);
+        }
+        let cut_opposite = (0..is_edge_on_seam.len())
+            .map(|c| {
+                let c = CornerIdx::from(c);
+                if is_edge_on_seam[c] {
+                    CornerIdx::INVALID
+                } else {
+                    pos_corner_table.opposite(c).unwrap_or(CornerIdx::INVALID)
+                }
+            })
+            .collect::<Vec<_>>();
         Self {
             pos_corner_table,
-            is_edge_on_seam,
+            cut_opposite: Some(cut_opposite.into()),
         }
     }
 
+    /// The table of an attribute with no interior seams: the position corner
+    /// table stands in unchanged.
+    pub fn shared(pos_corner_table: &'pos_ct CornerTable) -> Self {
+        Self {
+            pos_corner_table,
+            cut_opposite: None,
+        }
+    }
+
+    /// True if the edge the corner faces is an attribute seam or a boundary.
+    #[inline]
     pub fn is_corner_opposite_to_seam_edge(&self, corner: CornerIdx) -> bool {
-        self.is_edge_on_seam[corner]
+        self.opposite(corner).is_none()
     }
 
     /// True if any interior edge is a seam.
+    #[inline]
     pub fn has_interior_seams(&self) -> bool {
-        (0..self.is_edge_on_seam.len()).any(|c| {
-            let c = CornerIdx::from(c);
-            self.is_edge_on_seam[c] && self.pos_corner_table.opposite(c).is_some()
-        })
+        self.cut_opposite.is_some()
     }
 
     pub fn pos_corner_table(&self) -> &CornerTable {

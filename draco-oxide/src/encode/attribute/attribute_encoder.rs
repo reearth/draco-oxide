@@ -1,14 +1,13 @@
 use std::{ops, vec};
 
-use crate::encode::entropy::symbol_coding::encode_symbols;
+use crate::encode::entropy::symbol_coding::encode_vector_symbols;
 use draco_oxide_core::attribute::Attribute;
 use draco_oxide_core::attribute::AttributeType;
 use draco_oxide_core::attribute::{AttributeDomain, ComponentDataType};
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::attribute::sequence::Traverser;
 use draco_oxide_core::codec::attribute::Portable;
-use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
-use draco_oxide_core::mesh::ds::AttributeDS;
+use draco_oxide_core::mesh::ds::{AttributeDS, GenericAttributeDs};
 use draco_oxide_core::types::ConfigType;
 use draco_oxide_core::types::{CornerIdx, DataValue, NdVector, PointIdx};
 use thiserror::Error;
@@ -261,6 +260,22 @@ pub(super) enum Sequencing {
     Linear { num_points: usize },
 }
 
+/// Where this attribute's traversal sequence comes from. Attributes without
+/// interior seams share the position connectivity, so their walks are
+/// identical per traversal method: the first such attribute walks and records
+/// the sequence, and later ones replay the recording borrowed. An attribute
+/// with its own connectivity walks lazily and never materializes the full
+/// sequence.
+pub(super) enum SequenceSource<'s> {
+    /// Replay the sequence recorded by an earlier attribute's walk.
+    Shared(&'s [CornerIdx]),
+    /// Walk this attribute's connectivity into the given buffer for later
+    /// attributes to replay.
+    Record(&'s mut Vec<CornerIdx>),
+    /// Drive this attribute's lazy walk without recording.
+    Own,
+}
+
 pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, 'ds, W> {
     cfg: Config,
     writer: &'writer mut W,
@@ -269,9 +284,8 @@ pub(super) struct AttributeEncoder<'parents, 'encoder, 'writer, 'ds, W> {
     sequencing: Sequencing,
     /// Corners of the edgebreaker traversal, used to seed this attribute's sequencing.
     corners_of_edgebreaker: &'encoder [CornerIdx],
-    /// Traversal sequence shared by all attributes without interior seams;
-    /// `None` when this attribute has its own connectivity.
-    precomputed_sequence: Option<Vec<CornerIdx>>,
+    /// This attribute's traversal sequence source.
+    sequence: SequenceSource<'encoder>,
 }
 
 impl<'parents, 'encoder, 'writer, 'ds, W> AttributeEncoder<'parents, 'encoder, 'writer, 'ds, W>
@@ -286,7 +300,7 @@ where
         writer: &'writer mut W,
         cfg: Config,
         sequencing: Sequencing,
-        precomputed_sequence: Option<Vec<CornerIdx>>,
+        sequence: SequenceSource<'encoder>,
     ) -> Self {
         AttributeEncoder {
             cfg,
@@ -295,18 +309,7 @@ where
             ads,
             sequencing,
             corners_of_edgebreaker,
-            precomputed_sequence,
-        }
-    }
-
-    /// The traversal sequence of this attribute: the shared precomputed one if
-    /// present, otherwise a fresh walk.
-    fn take_sequence(&mut self) -> Vec<CornerIdx> {
-        match self.precomputed_sequence.take() {
-            Some(s) => s,
-            None => {
-                Traverser::new(&self.ads, self.corners_of_edgebreaker.to_vec()).compute_seqeunce()
-            }
+            sequence,
         }
     }
 
@@ -358,8 +361,19 @@ where
     /// geometry-derived predicted normals. The input normal values are never read;
     /// only the connectivity-derived value count (the traversal length) is used.
     fn encode_zero_correction_normal(mut self) -> Result<(Attribute, Vec<u8>), Err> {
-        let sequence = self.take_sequence();
-        let num_values = sequence.len();
+        let num_values = match std::mem::replace(&mut self.sequence, SequenceSource::Own) {
+            SequenceSource::Shared(s) => s.len(),
+            SequenceSource::Record(buf) => {
+                buf.extend(Traverser::new(
+                    &self.ads,
+                    self.corners_of_edgebreaker.to_vec(),
+                ));
+                buf.len()
+            }
+            SequenceSource::Own => {
+                Traverser::new(&self.ads, self.corners_of_edgebreaker.to_vec()).count()
+            }
+        };
 
         const N: usize = 2;
 
@@ -374,8 +388,8 @@ where
 
         self.writer.write_u8(self.cfg.rans_encoding as u8);
         if self.cfg.rans_encoding {
-            let symbols = vec![0u64; num_values * N];
-            encode_symbols(symbols, N, SymbolEncodingMethod::DirectCoded, self.writer)?;
+            let zeros = vec![NdVector::<N, i32>::zero(); num_values];
+            encode_vector_symbols(&zeros, self.writer)?;
         } else {
             let zero = NdVector::<N, i32>::zero();
             for _ in 0..num_values {
@@ -496,10 +510,7 @@ where
         NdVector<N, i32>: Vector<N, Component = i32> + Portable,
     {
         // Taken before the prediction scheme borrows `self.ads`.
-        let sequence = match self.sequencing {
-            Sequencing::Traversal => Some(self.take_sequence()),
-            Sequencing::Linear { .. } => None,
-        };
+        let sequence = std::mem::replace(&mut self.sequence, SequenceSource::Own);
 
         let mut prediction_scheme = prediction_scheme::PredictionScheme::new(
             self.cfg.group_cfgs[0].prediction_scheme.ty.clone(),
@@ -517,13 +528,41 @@ where
         // Predict and transform the values
         match self.sequencing {
             Sequencing::Traversal => {
+                let ads = &self.ads;
                 let mut sequence_record = Vec::new();
-                for c in sequence.expect("a traversal sequence is taken up front") {
+                let mut step = |c: CornerIdx| {
                     let val = prediction_scheme.predict(c, &sequence_record, &port_att);
-                    let v = self.ads.vertex_idx(c);
+                    let v = ads.vertex_idx(c);
                     sequence_record.push(v);
-                    let p = self.ads.global_ds().point_idx(c);
+                    let p = ads.global_ds().point_idx(c);
                     transform.map_with_tentative_metadata(port_att.get(p), val);
+                };
+                match sequence {
+                    SequenceSource::Shared(s) => s.iter().copied().for_each(step),
+                    // Recording materializes the sequence regardless, and the
+                    // walk runs measurably faster unfused, so fill first and
+                    // replay.
+                    SequenceSource::Record(buf) => {
+                        *buf = Traverser::new(ads, self.corners_of_edgebreaker.to_vec())
+                            .compute_seqeunce();
+                        buf.iter().copied().for_each(step);
+                    }
+                    // The walk and the prediction loop thrash each other's
+                    // cache when interleaved per corner, so the lazy walk fills
+                    // a bounded chunk that is then replayed in batch.
+                    SequenceSource::Own => {
+                        let chunk_len = 1024.min(ads.vertex_index_bound());
+                        let mut walker = Traverser::new(ads, self.corners_of_edgebreaker.to_vec());
+                        let mut chunk = Vec::with_capacity(chunk_len);
+                        loop {
+                            chunk.clear();
+                            chunk.extend(walker.by_ref().take(chunk_len));
+                            if chunk.is_empty() {
+                                break;
+                            }
+                            chunk.iter().copied().for_each(&mut step);
+                        }
+                    }
                 }
             }
             // A linear sequence carries no connectivity, so the only prediction
@@ -545,12 +584,7 @@ where
 
         self.writer.write_u8(self.cfg.rans_encoding as u8);
         if self.cfg.rans_encoding {
-            // ToDo: This can be a lot smarter.
-            let symbols = output
-                .iter()
-                .flat_map(|v| (0..N).map(|i| *v.get(i) as u64))
-                .collect::<Vec<_>>();
-            encode_symbols(symbols, N, SymbolEncodingMethod::DirectCoded, self.writer)?;
+            encode_vector_symbols(&output, self.writer)?;
         } else {
             // If RANS encoding is not used, we write the output directly
             for value in output {

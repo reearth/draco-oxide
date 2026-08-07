@@ -19,7 +19,8 @@ mod chart;
 use draco_oxide::core::attribute::AttributeType;
 use draco_oxide::core::mesh::Mesh;
 use draco_oxide::core::types::ConfigType;
-use draco_oxide::encode::{encode, Config};
+use draco_oxide::decode::Decoder;
+use draco_oxide::encode::{encode, Config, Encoder};
 use draco_oxide::io::obj::load_obj;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -174,7 +175,7 @@ fn mem_child(codec: &str, input: &Path) {
         "oxide" => {
             let bytes = std::fs::read(input).expect("read drc");
             Box::new(move || {
-                let decoded = draco_oxide::decode::decode(&bytes).expect("oxide decode");
+                let decoded = Decoder::new().decode(&bytes).expect("oxide decode");
                 std::hint::black_box(&decoded);
             })
         }
@@ -182,7 +183,9 @@ fn mem_child(codec: &str, input: &Path) {
             let mesh = load_obj(input.to_str().expect("obj path")).expect("obj load");
             Box::new(move || {
                 let mut out = Vec::new();
-                encode(mesh, &mut out, Config::default()).expect("oxide encode");
+                Encoder::new()
+                    .encode(mesh, &mut out, Config::default())
+                    .expect("oxide encode");
                 std::hint::black_box(&out);
             })
         }
@@ -402,26 +405,37 @@ fn bench_oxide(mesh: &Mesh, obj: &Path) -> CodecResult {
 
     // The mesh clone inside the timed closure is a plain buffer copy, negligible
     // next to the encode itself.
+    //
+    // Every timed run constructs its own Encoder/Decoder: the instances may
+    // come to hold reusable resources across runs, and the bench must keep
+    // measuring the cold single-run cost, matching how the Draco side runs.
     let encode_ms = time_median_ms(|| {
         let mut out = Vec::with_capacity(compressed_bytes);
-        encode(mesh.clone(), &mut out, Config::default()).expect("draco-oxide encode");
+        Encoder::new()
+            .encode(mesh.clone(), &mut out, Config::default())
+            .expect("draco-oxide encode");
     });
 
     let decode_ms = time_median_ms(|| {
-        draco_oxide::decode::decode(&buffer).expect("draco-oxide decode");
+        Decoder::new().decode(&buffer).expect("draco-oxide decode");
     });
 
     // The input clone happens before the window opens, so the stats are memory
-    // on top of the held input mesh, matching the subprocess RSS delta.
+    // on top of the held input mesh, matching the subprocess RSS delta. The
+    // codec instances are constructed inside the window for the same fairness
+    // reason as the timed runs: any resources they come to hold count as one
+    // cold run's memory.
     let mesh_for_heap = mesh.clone();
     alloc_track::start_window();
     let mut encoded = Vec::new();
-    encode(mesh_for_heap, &mut encoded, Config::default()).expect("draco-oxide encode");
+    Encoder::new()
+        .encode(mesh_for_heap, &mut encoded, Config::default())
+        .expect("draco-oxide encode");
     let encode_heap = alloc_track::end_window();
     drop(encoded);
 
     alloc_track::start_window();
-    let decoded = draco_oxide::decode::decode(&buffer).expect("draco-oxide decode");
+    let decoded = Decoder::new().decode(&buffer).expect("draco-oxide decode");
     let decode_heap = alloc_track::end_window();
     drop(decoded);
 

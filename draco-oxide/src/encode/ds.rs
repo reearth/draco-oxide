@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use draco_oxide_core::attribute::{Attribute, AttributeType};
 use draco_oxide_core::mesh::ds::{
     AttributeCornerTable, AttributeDS, CornerTable, GenericCornerTable, DS,
@@ -54,9 +52,18 @@ pub(crate) fn build_attribute_ds<'a>(
     pos_corner_table: &'a CornerTable,
     attributes: Vec<Attribute>,
 ) -> Vec<AttributeDS<'a>> {
+    // The first position attribute defined the corner table's vertices
+    // (`build_global_ds`), so its values agree across every interior edge by
+    // construction and its seam scan can be skipped.
+    let pos_reference = attributes
+        .iter()
+        .position(|att| att.get_attribute_type() == AttributeType::Position);
     attributes
         .into_iter()
-        .map(|att| build_single_attribute_ds(ds, pos_corner_table, att))
+        .enumerate()
+        .map(|(i, att)| {
+            build_single_attribute_ds(ds, pos_corner_table, att, pos_reference == Some(i))
+        })
         .collect()
 }
 
@@ -67,14 +74,19 @@ fn build_single_attribute_ds<'a>(
     ds: &'a DS,
     pos_corner_table: &'a CornerTable,
     att: Attribute,
+    is_pos_reference: bool,
 ) -> AttributeDS<'a> {
     let num_corners = ds.num_corners();
     let num_points = ds.num_points();
 
-    let is_edge_on_seam = compute_seam_edges(pos_corner_table, num_corners, |c| {
-        att.get_unique_val_idx(ds.point_idx(c))
-    });
-    let corner_table = AttributeCornerTable::new(pos_corner_table, is_edge_on_seam);
+    let corner_table = if is_pos_reference {
+        AttributeCornerTable::shared(pos_corner_table)
+    } else {
+        let is_edge_on_seam = compute_seam_edges(pos_corner_table, num_corners, |c| {
+            att.get_unique_val_idx(ds.point_idx(c))
+        });
+        AttributeCornerTable::new(pos_corner_table, is_edge_on_seam)
+    };
 
     // Safety contract: a point-keyed map is a function only if every point's
     // corners lie in a single seam-separated sector. `sort_mesh` establishes
@@ -173,9 +185,11 @@ pub(crate) fn build_global_ds(
         })
         .collect::<Vec<[VertexIdx; 3]>>();
 
-    sort_mesh(&pos_faces, &mut mesh_faces, attributes);
+    let edge_pairs = manifold_edge_pairs(&pos_faces);
 
-    let corner_table = compute_corner_table(&pos_faces);
+    sort_mesh(&pos_faces, &edge_pairs, &mut mesh_faces, attributes);
+
+    let corner_table = compute_corner_table(pos_faces.len() * 3, &edge_pairs);
 
     let corner_to_point_map: VecCornerIdx<PointIdx> = mesh_faces
         .iter()
@@ -204,6 +218,7 @@ pub(crate) fn build_global_ds(
 /// encoded bitstream is unaffected.
 fn sort_mesh(
     pos_faces: &[[VertexIdx; 3]],
+    edge_pairs: &[[CornerIdx; 2]],
     mesh_faces: &mut [[PointIdx; 3]],
     attributes: &mut [Attribute],
 ) {
@@ -211,15 +226,7 @@ fn sort_mesh(
 
     let mut parent: Vec<usize> = (0..num_corners).collect();
 
-    for corners in edge_coboundary(pos_faces).values() {
-        if corners.len() != 2 {
-            continue;
-        }
-        let c1 = CornerIdx::from(corners[0]);
-        let c2 = CornerIdx::from(corners[1]);
-        if !edge_orientation_consistent(pos_faces, c1, c2) {
-            continue;
-        }
+    for &[c1, c2] in edge_pairs {
         // Consistent winding pairs the endpoints as c1.next() <-> c2.previous()
         // and c1.previous() <-> c2.next().
         let point = |c: CornerIdx| mesh_faces[usize::from(c) / 3][usize::from(c) % 3];
@@ -242,16 +249,25 @@ fn sort_mesh(
         attributes.windows(2).all(|w| w[0].len() == w[1].len()),
         "attributes must share one point space"
     );
-    let mut first_root: HashMap<PointIdx, usize> = HashMap::new();
-    let mut minted: HashMap<(PointIdx, usize), PointIdx> = HashMap::new();
+    // Corners are joined only across point-exact edges, so every corner in a
+    // component carries the same point: a component's root alone identifies the
+    // point minted for it, and the owning root can be stored per point. Both
+    // maps are therefore plain index lookups. `usize::MAX` marks a point whose
+    // owner is not yet decided.
+    let num_points = attributes.first().expect("attributes is non-empty").len();
+    let mut owner_root: Vec<usize> = vec![usize::MAX; num_points];
+    let mut minted: Vec<PointIdx> = vec![PointIdx::INVALID; num_corners];
     for c in 0..num_corners {
         let root = uf_find(&mut parent, c);
         let p = mesh_faces[c / 3][c % 3];
-        let owner = *first_root.entry(p).or_insert(root);
-        if owner == root {
+        let owner = &mut owner_root[usize::from(p)];
+        if *owner == usize::MAX {
+            *owner = root;
+        }
+        if *owner == root {
             continue;
         }
-        let np = *minted.entry((p, root)).or_insert_with(|| {
+        if minted[root] == PointIdx::INVALID {
             let mut np: Option<PointIdx> = None;
             for att in attributes.iter_mut() {
                 let m = att.mint(p);
@@ -263,9 +279,9 @@ fn sort_mesh(
                     None => np = Some(m),
                 }
             }
-            np.expect("attributes is non-empty")
-        });
-        mesh_faces[c / 3][c % 3] = np;
+            minted[root] = np.expect("attributes is non-empty");
+        }
+        mesh_faces[c / 3][c % 3] = minted[root];
     }
 }
 
@@ -285,25 +301,111 @@ fn uf_union(parent: &mut [usize], a: usize, b: usize) {
     }
 }
 
-/// Groups the corners by the undirected position edge they are opposite to:
-/// for each edge (a sorted vertex pair), the corners facing it. An edge's
-/// group size is its face-adjacency count; exactly 2 means a manifold edge.
-fn edge_coboundary(pos_faces: &[[VertexIdx; 3]]) -> HashMap<(usize, usize), Vec<usize>> {
-    let pos_vertex = |c: CornerIdx| usize::from(pos_faces[usize::from(c) / 3][usize::from(c) % 3]);
+/// The two corners facing each manifold undirected position edge, ordered by
+/// that edge's vertex pair. An edge's face-adjacency count is how many corners
+/// face it; only a count of exactly 2 makes the edge manifold, and edges with
+/// any other count are omitted. Edges whose two faces disagree on winding are
+/// omitted as well, so each connected component of the resulting opposite
+/// relation is a consistently-oriented manifold-with-boundary without any
+/// triangle being rewound. Rewinding would flip a face's geometric normal away
+/// from its stored normal attribute, which normal prediction relies on; a
+/// non-orientable input instead falls apart into oriented patches.
+fn manifold_edge_pairs(pos_faces: &[[VertexIdx; 3]]) -> Vec<[CornerIdx; 2]> {
+    let num_corners = pos_faces.len() * 3;
 
-    let mut coboundary: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
-    for c in 0..pos_faces.len() * 3 {
-        let c = CornerIdx::from(c);
-        let next = pos_vertex(c.next());
-        let prev = pos_vertex(c.previous());
-        let entry = if next < prev {
-            (next, prev)
+    // Corner `f * 3 + i` faces the edge spanning its next and previous corners,
+    // i.e. face slots `(i + 1) % 3` and `(i + 2) % 3`. Index types are
+    // `u32`-backed, so the narrowing is lossless.
+    let edge_of = |f: usize, i: usize| -> [u32; 2] {
+        let face = &pos_faces[f];
+        let a = usize::from(face[(i + 1) % 3]) as u32;
+        let b = usize::from(face[(i + 2) % 3]) as u32;
+        if a < b {
+            [a, b]
         } else {
-            (prev, next)
-        };
-        coboundary.entry(entry).or_default().push(c.into());
+            [b, a]
+        }
+    };
+
+    let mut num_vertices = 0usize;
+    for face in pos_faces {
+        for v in face {
+            num_vertices = num_vertices.max(usize::from(*v) + 1);
+        }
     }
-    coboundary
+
+    // Group the corners by the edge they face with a two-pass counting sort on
+    // the edge's endpoints, upper first then lower. Position indices are dense,
+    // so both passes are O(corners). A comparison sort would cost
+    // O(corners log corners) and degrades badly on meshes where a single vertex
+    // carries most of the corners.
+
+    // Pass one buckets by the upper endpoint, carrying the lower one.
+    let mut head_hi = vec![0u32; num_vertices + 1];
+    for f in 0..pos_faces.len() {
+        for i in 0..3 {
+            head_hi[edge_of(f, i)[1] as usize + 1] += 1;
+        }
+    }
+    counts_to_offsets(&mut head_hi);
+    let mut by_hi = vec![[0u32; 2]; num_corners];
+    let mut cursor = head_hi.clone();
+    for f in 0..pos_faces.len() {
+        for i in 0..3 {
+            let [lo, hi] = edge_of(f, i);
+            let slot = &mut cursor[hi as usize];
+            by_hi[*slot as usize] = [lo, (f * 3 + i) as u32];
+            *slot += 1;
+        }
+    }
+
+    // Pass two buckets by the lower endpoint. Walking `by_hi` bucket by bucket
+    // recovers each entry's upper endpoint, and keeps the pass stable, so a
+    // lower-endpoint bucket comes out ordered by upper endpoint: an edge's
+    // corners are then adjacent.
+    let mut head_lo = vec![0u32; num_vertices + 1];
+    for entry in &by_hi {
+        head_lo[entry[0] as usize + 1] += 1;
+    }
+    counts_to_offsets(&mut head_lo);
+    let mut by_lo = vec![[0u32; 2]; num_corners];
+    let mut cursor = head_lo.clone();
+    for hi in 0..num_vertices {
+        for &[lo, c] in &by_hi[head_hi[hi] as usize..head_hi[hi + 1] as usize] {
+            let slot = &mut cursor[lo as usize];
+            by_lo[*slot as usize] = [hi as u32, c];
+            *slot += 1;
+        }
+    }
+
+    let mut pairs = Vec::new();
+    for v in 0..num_vertices {
+        let bucket = &by_lo[head_lo[v] as usize..head_lo[v + 1] as usize];
+        let mut i = 0;
+        while i < bucket.len() {
+            let mut j = i + 1;
+            while j < bucket.len() && bucket[j][0] == bucket[i][0] {
+                j += 1;
+            }
+            if j - i == 2 {
+                let c1 = CornerIdx::from(bucket[i][1] as usize);
+                let c2 = CornerIdx::from(bucket[i + 1][1] as usize);
+                if edge_orientation_consistent(pos_faces, c1, c2) {
+                    pairs.push([c1, c2]);
+                }
+            }
+            i = j;
+        }
+    }
+    pairs
+}
+
+/// Turns per-bucket counts held at `counts[bucket + 1]` into bucket start
+/// offsets, in place. `counts[0]` must be 0.
+fn counts_to_offsets(counts: &mut [u32]) {
+    for i in 1..counts.len() {
+        counts[i] += counts[i - 1];
+    }
 }
 
 /// Whether the two faces at corners `c` / `opp` (each opposite the same shared
@@ -316,49 +418,18 @@ fn edge_orientation_consistent(pos_faces: &[[VertexIdx; 3]], c: CornerIdx, opp: 
 }
 
 /// Builds the corner table for the given position faces: opposite corners are
-/// linked across every edge shared by exactly two consistently-wound faces;
-/// every other edge is a boundary. Non-manifold points must have been split
-/// beforehand (`sort_mesh`).
-fn compute_corner_table(pos_faces: &[[VertexIdx; 3]]) -> CornerTable {
-    let num_corners = pos_faces.len() * 3;
+/// linked across every edge in `edge_pairs` (the manifold, consistently-wound
+/// edges); every other edge is a boundary. Non-manifold points must have been
+/// split beforehand (`sort_mesh`).
+fn compute_corner_table(num_corners: usize, edge_pairs: &[[CornerIdx; 2]]) -> CornerTable {
+    let mut opposite: Vec<CornerIdx> = vec![CornerIdx::INVALID; num_corners];
 
-    let mut opposite: Vec<Option<CornerIdx>> = vec![None; num_corners];
-
-    for corners in edge_coboundary(pos_faces).values() {
-        if corners.len() != 2 {
-            continue;
-        }
-        let c1 = CornerIdx::from(corners[0]);
-        let c2 = CornerIdx::from(corners[1]);
-        opposite[corners[0]] = Some(c2);
-        opposite[corners[1]] = Some(c1);
+    for &[c1, c2] in edge_pairs {
+        opposite[usize::from(c1)] = c2;
+        opposite[usize::from(c2)] = c1;
     }
 
-    cut_orientation_seams(&mut opposite, pos_faces);
-
-    CornerTable::from_opposites(opposite)
-}
-
-/// Cuts the opposite relation at every edge whose two incident faces disagree
-/// on winding, so each connected component becomes a consistently-oriented
-/// manifold-with-boundary without any triangle being rewound. Rewinding would
-/// flip a face's geometric normal away from its stored normal attribute,
-/// which normal prediction relies on; a non-orientable input instead falls
-/// apart into oriented patches.
-fn cut_orientation_seams(corner_table: &mut [Option<CornerIdx>], pos_faces: &[[VertexIdx; 3]]) {
-    for c in 0..pos_faces.len() * 3 {
-        let Some(opp_c) = corner_table[c] else {
-            continue;
-        };
-        if usize::from(opp_c) < c {
-            continue;
-        }
-        let c = CornerIdx::from(c);
-        if !edge_orientation_consistent(pos_faces, c, opp_c) {
-            corner_table[usize::from(c)] = None;
-            corner_table[usize::from(opp_c)] = None;
-        }
-    }
+    CornerTable::from_opposite_sentinels(opposite)
 }
 
 #[cfg(test)]

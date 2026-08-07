@@ -106,41 +106,67 @@ pub enum AttributeTransform {
     },
 }
 
-/// Decode a draco stream into a [`PortableMesh`] with quantized-integer
-/// attributes. Always available, on every target.
-pub fn decode_portable(bytes: &[u8]) -> Result<PortableMesh, Err> {
-    let mut reader = Reader::new(bytes);
-    let header = header::decode_header(&mut reader)?;
-    if header.metadata {
-        metadata::decode_metadata(&mut reader)?;
-    }
-    let conn = connectivity::decode_connectivity(&mut reader, header.encoder_method)?;
-    let decoded = attribute::decode_attributes(&mut reader, &conn)?;
+/// The mesh decoder. It carries no state yet; reusable per-run resources
+/// (scratch buffers, tables) will live here so consecutive decodes on one
+/// instance can share them.
+#[derive(Default)]
+pub struct Decoder {}
 
-    let mut mesh = Mesh::new();
-    mesh.faces = decoded.faces;
-    mesh.attributes = decoded.attributes;
-    Ok(PortableMesh {
-        mesh,
-        transforms: decoded.transforms,
-    })
+impl Decoder {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    /// Decodes a draco stream into a [`PortableMesh`] with quantized-integer
+    /// attributes. Always available, on every target.
+    pub fn decode_portable(&mut self, bytes: &[u8]) -> Result<PortableMesh, Err> {
+        let mut reader = Reader::new(bytes);
+        let header = header::decode_header(&mut reader)?;
+        if header.metadata {
+            metadata::decode_metadata(&mut reader)?;
+        }
+        let conn = connectivity::decode_connectivity(&mut reader, header.encoder_method)?;
+        let decoded = attribute::decode_attributes(&mut reader, &conn)?;
+
+        let mut mesh = Mesh::new();
+        mesh.faces = decoded.faces;
+        mesh.attributes = decoded.attributes;
+        Ok(PortableMesh {
+            mesh,
+            transforms: decoded.transforms,
+        })
+    }
+
+    /// Decodes a draco stream into a [`Mesh`] with original-format (float)
+    /// attributes.
+    ///
+    /// Equivalent to [`Self::decode_portable`] followed by applying each
+    /// [`AttributeTransform`].
+    #[cfg(feature = "dequantize")]
+    pub fn decode(&mut self, bytes: &[u8]) -> Result<Mesh, Err> {
+        let PortableMesh {
+            mut mesh,
+            transforms,
+        } = self.decode_portable(bytes)?;
+        let attributes = std::mem::take(&mut mesh.attributes);
+        mesh.attributes = attributes
+            .into_iter()
+            .zip(&transforms)
+            .map(|(att, transform)| attribute::dequantize::dequantize_attribute(att, transform))
+            .collect::<Result<_, _>>()?;
+        Ok(mesh)
+    }
 }
 
-/// Decode a draco stream into a [`Mesh`] with original-format (float) attributes.
-///
-/// Equivalent to [`decode_portable`] followed by applying each
-/// [`AttributeTransform`].
+/// Decodes a draco stream into a [`PortableMesh`] with quantized-integer
+/// attributes, with a freshly constructed [`Decoder`].
+pub fn decode_portable(bytes: &[u8]) -> Result<PortableMesh, Err> {
+    Decoder::new().decode_portable(bytes)
+}
+
+/// Decodes a draco stream into a [`Mesh`] with original-format (float)
+/// attributes, with a freshly constructed [`Decoder`].
 #[cfg(feature = "dequantize")]
 pub fn decode(bytes: &[u8]) -> Result<Mesh, Err> {
-    let PortableMesh {
-        mut mesh,
-        transforms,
-    } = decode_portable(bytes)?;
-    let attributes = std::mem::take(&mut mesh.attributes);
-    mesh.attributes = attributes
-        .into_iter()
-        .zip(&transforms)
-        .map(|(att, transform)| attribute::dequantize::dequantize_attribute(att, transform))
-        .collect::<Result<_, _>>()?;
-    Ok(mesh)
+    Decoder::new().decode(bytes)
 }

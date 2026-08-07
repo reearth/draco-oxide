@@ -297,8 +297,36 @@ pub enum Err {
     MetadataError(#[from] metadata::Err),
 }
 
-/// Encodes the input mesh into a provided byte stream using the provided configuration.
+/// The mesh encoder. It carries no state yet; reusable per-run resources
+/// (scratch buffers, tables) will live here so consecutive encodes on one
+/// instance can share them.
+#[derive(Default)]
+pub struct Encoder {}
+
+impl Encoder {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    /// Encodes the input mesh into a provided byte stream using the provided configuration.
+    pub fn encode<W>(&mut self, mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err>
+    where
+        W: ByteWriter,
+    {
+        encode_impl(mesh, writer, cfg)
+    }
+}
+
+/// Encodes the input mesh into a provided byte stream using the provided
+/// configuration, with a freshly constructed [`Encoder`].
 pub fn encode<W>(mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err>
+where
+    W: ByteWriter,
+{
+    Encoder::new().encode(mesh, writer, cfg)
+}
+
+fn encode_impl<W>(mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err>
 where
     W: ByteWriter,
 {

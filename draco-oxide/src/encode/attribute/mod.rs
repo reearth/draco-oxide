@@ -13,14 +13,14 @@ use std::collections::HashMap;
 use draco_oxide_core::attribute::{Attribute, AttributeDomain, AttributeType, ComponentDataType};
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
-use draco_oxide_core::codec::attribute::sequence::{PredictionDegreeTraverser, Traverser};
+use draco_oxide_core::codec::attribute::sequence::PredictionDegreeTraverser;
 use draco_oxide_core::codec::connectivity::edgebreaker::TraversalType;
 use draco_oxide_core::codec::header::EncoderMethod;
 use draco_oxide_core::mesh::ds::AttributeDS;
 use draco_oxide_core::types::{ConfigType, CornerIdx};
 use draco_oxide_core::utils::bit_coder::leb128_write;
 
-use attribute_encoder::Sequencing;
+use attribute_encoder::{SequenceSource, Sequencing};
 
 pub fn encode_attributes<W>(
     adss: Vec<AttributeDS>,
@@ -126,7 +126,11 @@ where
     //
     // Attributes without interior seams share the position connectivity, so
     // attributes walking it with the same traversal method have identical
-    // sequences; each method's walk runs once and is reused.
+    // sequences. Mirroring the decoder, the first attribute of each method
+    // records the walk and later attributes replay the recording borrowed;
+    // an attribute with its own connectivity walks lazily inside its encoder.
+    // Prediction-degree traversal has no lazy walk and is materialized up
+    // front.
     let mut shared_sequences: Vec<(TraversalType, Vec<CornerIdx>)> = Vec::new();
     for (ads, traversal) in adss.into_iter().zip(traversals) {
         #[cfg(feature = "evaluation")]
@@ -139,25 +143,24 @@ where
             .collect::<Vec<_>>();
 
         let sequence = if ads.corner_table().has_interior_seams() {
-            None
+            SequenceSource::Own
         } else {
-            let seq = match shared_sequences.iter().find(|(t, _)| *t == traversal) {
-                Some((_, s)) => s.clone(),
-                None => {
-                    let s = match traversal {
-                        TraversalType::DepthFirst => {
-                            Traverser::new(&ads, corners_of_edgebreaker.clone()).compute_seqeunce()
-                        }
-                        TraversalType::PredictionDegree => {
+            match shared_sequences.iter().position(|(t, _)| *t == traversal) {
+                Some(i) => SequenceSource::Shared(&shared_sequences[i].1),
+                None => match traversal {
+                    TraversalType::DepthFirst => {
+                        shared_sequences.push((traversal, Vec::new()));
+                        SequenceSource::Record(&mut shared_sequences.last_mut().unwrap().1)
+                    }
+                    TraversalType::PredictionDegree => {
+                        let s =
                             PredictionDegreeTraverser::new(&ads, corners_of_edgebreaker.clone())
-                                .compute_seqeunce()
-                        }
-                    };
-                    shared_sequences.push((traversal, s.clone()));
-                    s
-                }
-            };
-            Some(seq)
+                                .compute_seqeunce();
+                        shared_sequences.push((traversal, s));
+                        SequenceSource::Shared(&shared_sequences.last().unwrap().1)
+                    }
+                },
+            }
         };
 
         let ty = ads.att_data().get_attribute_type();
@@ -245,7 +248,7 @@ where
                 .encoder_config_for(ty, component_ty, len)
                 .for_sequential(),
             Sequencing::Linear { num_points },
-            None,
+            attribute_encoder::SequenceSource::Own,
         );
         port_infos.push(encoder.encode::<true, false>()?.1);
 

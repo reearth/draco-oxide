@@ -8,11 +8,28 @@ const SECOND_POW_14: usize = 1 << 14;
 const SECOND_POW_22: usize = 1 << 22;
 const SECOND_POW_30: usize = 1 << 30;
 
+/// Multiplier for exact division by `f` via a 63-bit fixed-point reciprocal:
+/// `x / f == (x * magic) >> 63` for every `x < 2^63 / f`. The rANS state at
+/// division time is bounded by `(l_base >> precision) * f * 2^8`, far below
+/// that limit for every precision and base this codec uses.
+fn div_magic(f: usize) -> u64 {
+    ((1u128 << 63) / f as u128) as u64 + 1
+}
+
+#[inline]
+fn div_rem_by_magic(x: usize, f: usize, magic: u64) -> (usize, usize) {
+    let q = ((x as u128 * magic as u128) >> 63) as usize;
+    (q, x - q * f)
+}
+
 pub struct RansCoder {
     state: usize,
     writer: Vec<u8>,
     l_rans_base: usize,
     rans_symbols: Vec<RansSymbol>,
+    /// Per-symbol reciprocal for the frequency division; 0 for zero-frequency
+    /// symbols, which must never be written.
+    div_magics: Vec<u64>,
     precision: usize,
 }
 
@@ -25,6 +42,16 @@ impl RansCoder {
         let l_rans_base = l_rans_base.unwrap_or((1 << precision) << 2);
 
         let rans_symbols = rans_symbol_table(&freq_counts, precision)?;
+        let div_magics = rans_symbols
+            .iter()
+            .map(|s| {
+                if s.freq_count == 0 {
+                    0
+                } else {
+                    div_magic(s.freq_count as usize)
+                }
+            })
+            .collect();
 
         let writer: Vec<u8> = Vec::new();
         Ok(RansCoder {
@@ -32,6 +59,7 @@ impl RansCoder {
             writer,
             l_rans_base,
             rans_symbols,
+            div_magics,
             precision,
         })
     }
@@ -47,9 +75,8 @@ impl RansCoder {
             self.writer.write_u8((self.state & 0xFF) as u8);
             self.state >>= 8;
         }
-        self.state = ((self.state / freq_count) << self.precision)
-            + self.state % freq_count
-            + symbol.freq_cumulative as usize;
+        let (q, r) = div_rem_by_magic(self.state, freq_count, self.div_magics[idx]);
+        self.state = (q << self.precision) + r + symbol.freq_cumulative as usize;
         Ok(())
     }
 
@@ -80,6 +107,9 @@ impl RansCoder {
 pub struct RabsCoder {
     state: usize,
     freq_count_0: usize,
+    /// Reciprocals for dividing by the zero and one frequencies; 0 when that
+    /// frequency is 0, in which case the matching bit must never be written.
+    div_magics: [u64; 2],
     writer: Vec<u8>,
     l_rabs_base: usize,
 }
@@ -87,10 +117,13 @@ pub struct RabsCoder {
 impl RabsCoder {
     pub fn new(freq_count_0: usize, l_rabs_base: Option<usize>) -> Self {
         let l_rabs_base = l_rabs_base.unwrap_or(L_RANS_BASE);
+        let freq_count_1 = (1 << DEFAULT_RABS_PRECISION) - freq_count_0;
+        let magic = |f: usize| if f == 0 { 0 } else { div_magic(f) };
         let writer = Vec::new();
         RabsCoder {
             state: l_rabs_base,
             freq_count_0,
+            div_magics: [magic(freq_count_0), magic(freq_count_1)],
             writer,
             l_rabs_base,
         }
@@ -98,17 +131,16 @@ impl RabsCoder {
 
     pub fn write(&mut self, value: u8) -> Result<(), Err> {
         let freq_count_1 = (1 << DEFAULT_RABS_PRECISION) - self.freq_count_0;
-        let freq_count = if value > 0 {
-            freq_count_1
+        let (freq_count, magic) = if value > 0 {
+            (freq_count_1, self.div_magics[1])
         } else {
-            self.freq_count_0
+            (self.freq_count_0, self.div_magics[0])
         };
         if self.state >= ((self.l_rabs_base >> DEFAULT_RABS_PRECISION) * freq_count) << 8 {
             self.writer.write_u8((self.state & 0xFF) as u8);
             self.state >>= 8;
         }
-        let q = self.state / freq_count;
-        let r = self.state % freq_count;
+        let (q, r) = div_rem_by_magic(self.state, freq_count, magic);
         self.state = (q << DEFAULT_RABS_PRECISION) + r + (if value > 0 { 0 } else { freq_count_1 });
         Ok(())
     }

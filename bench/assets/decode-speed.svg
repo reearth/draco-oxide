@@ -10,46 +10,46 @@
 <text x="602.0" y="25" fill="#e6edf3">draco-oxide</text>
 <rect x="687.0" y="16" width="10" height="10" rx="2" fill="#3fb950"/>
 <text x="701.0" y="25" fill="#e6edf3">Draco</text>
-<line x1="339.2" y1="58.0" x2="339.2" y2="364.0" stroke="#21262d" stroke-width="1"/>
-<text x="339.2" y="379.0" text-anchor="middle" fill="#9198a1">200</text>
-<line x1="500.5" y1="58.0" x2="500.5" y2="364.0" stroke="#21262d" stroke-width="1"/>
-<text x="500.5" y="379.0" text-anchor="middle" fill="#9198a1">400</text>
-<line x1="661.7" y1="58.0" x2="661.7" y2="364.0" stroke="#21262d" stroke-width="1"/>
-<text x="661.7" y="379.0" text-anchor="middle" fill="#9198a1">600</text>
+<line x1="345.0" y1="58.0" x2="345.0" y2="364.0" stroke="#21262d" stroke-width="1"/>
+<text x="345.0" y="379.0" text-anchor="middle" fill="#9198a1">200</text>
+<line x1="511.9" y1="58.0" x2="511.9" y2="364.0" stroke="#21262d" stroke-width="1"/>
+<text x="511.9" y="379.0" text-anchor="middle" fill="#9198a1">400</text>
+<line x1="678.9" y1="58.0" x2="678.9" y2="364.0" stroke="#21262d" stroke-width="1"/>
+<text x="678.9" y="379.0" text-anchor="middle" fill="#9198a1">600</text>
 <line x1="178" y1="58.0" x2="178" y2="364.0" stroke="#3d444d" stroke-width="1"/>
 <text x="170.0" y="83.0" text-anchor="end" fill="#e6edf3">DragonAttenuation (P, N, T)</text>
-<path d="M178.0 64.0 h172.1 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-172.1 Z" fill="url(#bar0)"/>
-<text x="360.1" y="75.0" fill="#9198a1">218</text>
-<path d="M178.0 80.0 h94.1 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-94.1 Z" fill="url(#bar1)"/>
-<text x="282.1" y="91.0" fill="#9198a1">122</text>
+<path d="M178.0 64.0 h170.9 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-170.9 Z" fill="url(#bar0)"/>
+<text x="358.9" y="75.0" fill="#9198a1">210</text>
+<path d="M178.0 80.0 h96.9 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-96.9 Z" fill="url(#bar1)"/>
+<text x="284.9" y="91.0" fill="#9198a1">121</text>
 <text x="170.0" y="127.0" text-anchor="end" fill="#e6edf3">bunny (P, N)</text>
-<path d="M178.0 108.0 h280.7 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-280.7 Z" fill="url(#bar0)"/>
-<text x="468.7" y="119.0" fill="#9198a1">353</text>
-<path d="M178.0 124.0 h147.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-147.2 Z" fill="url(#bar1)"/>
-<text x="335.2" y="135.0" fill="#9198a1">188</text>
+<path d="M178.0 108.0 h268.8 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-268.8 Z" fill="url(#bar0)"/>
+<text x="456.8" y="119.0" fill="#9198a1">327</text>
+<path d="M178.0 124.0 h144.7 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-144.7 Z" fill="url(#bar1)"/>
+<text x="332.7" y="135.0" fill="#9198a1">178</text>
 <text x="170.0" y="171.0" text-anchor="end" fill="#e6edf3">Duck (P, N, T)</text>
-<path d="M178.0 152.0 h226.9 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-226.9 Z" fill="url(#bar0)"/>
-<text x="414.9" y="163.0" fill="#9198a1">286</text>
-<path d="M178.0 168.0 h121.8 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-121.8 Z" fill="url(#bar1)"/>
-<text x="309.8" y="179.0" fill="#9198a1">156</text>
+<path d="M178.0 152.0 h224.7 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-224.7 Z" fill="url(#bar0)"/>
+<text x="412.7" y="163.0" fill="#9198a1">274</text>
+<path d="M178.0 168.0 h119.7 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-119.7 Z" fill="url(#bar1)"/>
+<text x="307.7" y="179.0" fill="#9198a1">148</text>
 <text x="170.0" y="215.0" text-anchor="end" fill="#e6edf3">torus (P)</text>
 <path d="M178.0 196.0 h498.0 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-498.0 Z" fill="url(#bar0)"/>
-<text x="686.0" y="207.0" fill="#9198a1">623</text>
-<path d="M178.0 212.0 h425.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-425.2 Z" fill="url(#bar1)"/>
-<text x="613.2" y="223.0" fill="#9198a1">532</text>
+<text x="686.0" y="207.0" fill="#9198a1">601</text>
+<path d="M178.0 212.0 h399.8 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-399.8 Z" fill="url(#bar1)"/>
+<text x="587.8" y="223.0" fill="#9198a1">484</text>
 <text x="170.0" y="259.0" text-anchor="end" fill="#e6edf3">bldg_894e93d9 (P, N)</text>
-<path d="M178.0 240.0 h145.1 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-145.1 Z" fill="url(#bar0)"/>
-<text x="333.1" y="251.0" fill="#9198a1">185</text>
-<path d="M178.0 256.0 h108.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-108.2 Z" fill="url(#bar1)"/>
-<text x="296.2" y="267.0" fill="#9198a1">139</text>
+<path d="M178.0 240.0 h144.4 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-144.4 Z" fill="url(#bar0)"/>
+<text x="332.4" y="251.0" fill="#9198a1">178</text>
+<path d="M178.0 256.0 h101.7 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-101.7 Z" fill="url(#bar1)"/>
+<text x="289.7" y="267.0" fill="#9198a1">127</text>
 <text x="170.0" y="303.0" text-anchor="end" fill="#e6edf3">sphere (P, N)</text>
-<path d="M178.0 284.0 h222.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-222.3 Z" fill="url(#bar0)"/>
-<text x="410.3" y="295.0" fill="#9198a1">281</text>
-<path d="M178.0 300.0 h104.6 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-104.6 Z" fill="url(#bar1)"/>
-<text x="292.6" y="311.0" fill="#9198a1">135</text>
+<path d="M178.0 284.0 h203.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-203.3 Z" fill="url(#bar0)"/>
+<text x="391.3" y="295.0" fill="#9198a1">248</text>
+<path d="M178.0 300.0 h98.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-98.3 Z" fill="url(#bar1)"/>
+<text x="286.3" y="311.0" fill="#9198a1">123</text>
 <text x="170.0" y="347.0" text-anchor="end" fill="#e6edf3">cube_quads (P, N, T)</text>
-<path d="M178.0 328.0 h53.1 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-53.1 Z" fill="url(#bar0)"/>
-<text x="241.1" y="339.0" fill="#9198a1">70.8</text>
-<path d="M178.0 344.0 h36.4 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-36.4 Z" fill="url(#bar1)"/>
-<text x="224.4" y="355.0" fill="#9198a1">50.1</text>
+<path d="M178.0 328.0 h50.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-50.2 Z" fill="url(#bar0)"/>
+<text x="238.2" y="339.0" fill="#9198a1">64.9</text>
+<path d="M178.0 344.0 h32.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-32.3 Z" fill="url(#bar1)"/>
+<text x="220.3" y="355.0" fill="#9198a1">43.5</text>
 </svg>

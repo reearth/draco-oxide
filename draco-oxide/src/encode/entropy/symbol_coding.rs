@@ -3,6 +3,7 @@ use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::codec::entropy::rans;
 use draco_oxide_core::codec::entropy::rans::RansSymbolEncoder;
 use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
+use draco_oxide_core::types::{NdVector, Vector};
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Err {
@@ -27,7 +28,7 @@ where
     // ToDo: Add the logic to dynamically determine the config
     match config {
         SymbolEncodingMethod::LengthCoded => {
-            let mut bit_lengths = Vec::new();
+            let mut bit_lengths = Vec::with_capacity(symbols.len() / num_components);
             for i in 0..symbols.len() / num_components {
                 let mut max_bit_length = 0;
                 for j in 0..num_components {
@@ -73,25 +74,20 @@ where
         freq_counts[bit_length] += 1;
     }
 
-    let mut values = Vec::new();
     let mut encoder = RansSymbolEncoder::new(writer, freq_counts, None, 12)?;
     for i in (0..symbols.len() / num_components).rev() {
-        let bit_length = bit_lengths[i] as usize;
-        encoder.write(bit_length)?;
-
-        // Values are always encoded in the normal order
-        let j = symbols.len() - num_components - i * num_components;
-        let value_bit_length = bit_lengths[j / num_components];
-        for c in 0..num_components {
-            values.push((value_bit_length, symbols[j + c]));
-        }
+        encoder.write(bit_lengths[i] as usize)?;
     }
     encoder.flush()?;
 
-    // Append the values to the end of the target buffer.
+    // Values are always encoded in the normal order, appended to the end of
+    // the target buffer.
     let mut writer: BitWriter<_> = BitWriter::spown_from(writer);
-    for val in values.into_iter() {
-        writer.write_bits(val);
+    for i in 0..symbols.len() / num_components {
+        let value_bit_length = bit_lengths[i];
+        for c in 0..num_components {
+            writer.write_bits((value_bit_length, symbols[i * num_components + c]));
+        }
     }
     Ok(())
 }
@@ -103,14 +99,57 @@ fn encode_symbols_direct_coded<W>(symbols: Vec<u64>, writer: &mut W) -> Result<(
 where
     W: ByteWriter,
 {
-    let mut freq_counts = Vec::with_capacity(symbols.len());
+    encode_direct_coded_streams(
+        symbols.iter().map(|&s| s as usize),
+        symbols.iter().rev().map(|&s| s as usize),
+        writer,
+    )
+}
+
+/// Encodes per-value correction vectors with the raw rANS scheme, reading the
+/// components in place. The stream is identical to flattening the components
+/// into `u64` symbols and calling [`encode_symbols`] with `DirectCoded`, but
+/// no flat symbol array is materialized.
+pub fn encode_vector_symbols<W, const N: usize>(
+    values: &[NdVector<N, i32>],
+    writer: &mut W,
+) -> Result<(), Err>
+where
+    W: ByteWriter,
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    SymbolEncodingMethod::DirectCoded.write_to(writer);
+    encode_direct_coded_streams(
+        values
+            .iter()
+            .flat_map(|v| (0..N).map(move |i| *v.get(i) as usize)),
+        values
+            .iter()
+            .rev()
+            .flat_map(|v| (0..N).rev().map(move |i| *v.get(i) as usize)),
+        writer,
+    )
+}
+
+/// The raw rANS scheme over two reads of the same symbol stream: `forward`
+/// yields every symbol once for the frequency table, and `reversed` must
+/// yield exactly the same symbols in reverse for the rANS feed.
+fn encode_direct_coded_streams<W>(
+    forward: impl Iterator<Item = usize>,
+    reversed: impl Iterator<Item = usize>,
+    writer: &mut W,
+) -> Result<(), Err>
+where
+    W: ByteWriter,
+{
+    let mut freq_counts: Vec<usize> = Vec::new();
     let mut max_symbol = 0;
-    for &s in symbols.iter() {
+    for s in forward {
         if s >= max_symbol {
             max_symbol = s;
-            freq_counts.resize((max_symbol + 1) as usize, 0);
+            freq_counts.resize(max_symbol + 1, 0);
         }
-        freq_counts[s as usize] += 1;
+        freq_counts[s] += 1;
     }
     let num_unique_symbols = freq_counts.iter().filter(|&&c| c > 0).count();
 
@@ -129,8 +168,8 @@ where
         _ => 20,
     };
     let mut encoder = RansSymbolEncoder::new(writer, freq_counts, None, precision)?;
-    for s in symbols.into_iter().rev() {
-        encoder.write(s as usize)?;
+    for s in reversed {
+        encoder.write(s)?;
     }
     encoder.flush()?;
     Ok(())

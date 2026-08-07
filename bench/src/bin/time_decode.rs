@@ -29,8 +29,13 @@ fn main() {
         let mut buffer = Vec::new();
         encode(mesh, &mut buffer, Config::default()).expect("encode");
 
+        // A fresh Decoder per run: the instance may come to hold reusable
+        // resources across decodes, and the harness must keep measuring the
+        // cold single-run cost.
         let ms = median_ms(|| {
-            let decoded = draco_oxide::decode::decode(&buffer).expect("decode");
+            let decoded = draco_oxide::decode::Decoder::new()
+                .decode(&buffer)
+                .expect("decode");
             std::hint::black_box(&decoded);
         });
         println!(
