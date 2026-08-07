@@ -1,0 +1,36 @@
+# Encodes with the standard (non-valence) edgebreaker traversal.
+#
+# The symbol stream rides the CrLight bit encoder instead of the valence
+# contexts; the stream must be decodable by the reference decoder, and both
+# decoders must reconstruct the same geometry. The comparison against the
+# source mesh is bounded by the quantization error, the cross-decoder
+# comparison by parity alone.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "sphere.obj"
+output = "oxide.drc"
+[operations.cfg.edgebreaker]
+traversal = "Standard"
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "google_decoded.obj"
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "oxide.drc"
+output = "oxide_decoded.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "sphere.obj"
+input2 = "google_decoded.obj"
+methods = [{ method = "L2Norm", max = 0.001 }]
+
+[[operations]]
+op = "Comparison"
+input1 = "google_decoded.obj"
+input2 = "oxide_decoded.obj"
+methods = [{ method = "L2Norm", max = 0.00001 }]

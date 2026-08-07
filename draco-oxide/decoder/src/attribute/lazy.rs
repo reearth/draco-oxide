@@ -373,58 +373,41 @@ pub(super) fn run_group(
         )?);
     }
 
+    // The walk emits corners in rank order, so the emitted sequence plus the
+    // completed rank map replays the walk exactly (the `rank < k` guards read
+    // the decode-time state either way).
     let mut points = None;
-    let recorded = match replay {
+    let (seq, walked) = match replay {
         Some(seq) => {
             debug_assert!(assemble.is_none(), "assembly runs on a real walk");
-            let rank_map = rank.as_deref().ok_or(Err::MalformedAttribute(
-                "replayed traversal group was never walked",
-            ))?;
-            for (k, &c) in seq.iter().enumerate() {
-                for s in steppers.iter_mut() {
-                    s.step(c, k, rank_map);
-                }
-            }
-            if seq.len() != num_values {
-                return Err(Err::MalformedAttribute(
-                    "traversal did not reach every attribute vertex",
-                ));
-            }
-            None
+            (seq, false)
         }
         None => {
             let mut walker =
                 Walker::new(shared.pos_ct, seam_bits, mask, seeds, assemble, num_values);
-            let mut record_seq = record_walk.then(|| Vec::with_capacity(num_values));
-            walker.drive(|c, k, rank_map| {
-                if let Some(seq) = record_seq.as_mut() {
-                    seq.push(c);
-                }
-                for s in steppers.iter_mut() {
-                    s.step(c, k, rank_map);
-                }
-            });
-            if walker.next_rank as usize != num_values {
-                return Err(Err::MalformedAttribute(
-                    "traversal did not reach every attribute vertex",
-                ));
-            }
+            let mut seq = Vec::with_capacity(num_values);
+            walker.drive(|c, _, _| seq.push(c));
             points = walker.asm.take().map(Assembler::finish);
             *rank = Some(walker.rank);
-            record_seq
+            (seq, true)
         }
     };
-
-    let rank_map = rank
-        .as_deref()
-        .expect("the walk or replay filled the rank map");
+    if seq.len() != num_values {
+        return Err(Err::MalformedAttribute(
+            "traversal did not reach every attribute vertex",
+        ));
+    }
+    let rank_map = rank.as_deref().ok_or(Err::MalformedAttribute(
+        "replayed traversal group was never walked",
+    ))?;
     for s in steppers.iter_mut() {
+        s.run(&seq, rank_map);
         s.finalize(rank_map);
     }
 
     Ok(LazyOutcome {
         members: steppers.into_iter().map(AnyLazyStepper::finish).collect(),
-        recorded,
+        recorded: (walked && record_walk).then_some(seq),
         points,
     })
 }
@@ -491,23 +474,70 @@ where
         })
     }
 
-    /// Decodes rank `k` at corner `c`; normal attributes wait for [`Self::finalize`].
-    #[inline]
-    fn step(&mut self, c: CornerIdx, k: usize, rank: &[u32]) {
-        if matches!(self.predictor, LazyPredictor::Normal { .. }) {
-            return;
-        }
-        let pred = self.predictor.predict(c, k, rank, &self.vals);
-        // SAFETY: the walk emits at most one corner per sector and the value
-        // buffer holds one entry per sector, so k < num_values.
-        let mut corr = unsafe { self.corrections.next_unchecked(k) };
-        if self.zigzagged {
-            for i in 0..N {
-                *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
-            }
-        }
-        unsafe {
-            *self.vals.get_unchecked_mut(k) = self.transform.compute_original(pred, corr);
+    /// Decodes every value along the emitted corner sequence `seq` over the
+    /// completed rank map; normal attributes wait for [`Self::finalize`].
+    /// Consulted neighbors are never the current sector, so `rank < k` means
+    /// decoded, on walks and replays alike.
+    fn run(&mut self, seq: &[CornerIdx], rank: &[u32]) {
+        let LazyStepper {
+            vals,
+            predictor,
+            transform,
+            corrections,
+            zigzagged,
+            ..
+        } = self;
+        match predictor {
+            LazyPredictor::Normal { .. } => {}
+            LazyPredictor::NoPrediction => run_steps(
+                seq,
+                rank,
+                vals,
+                corrections,
+                transform,
+                *zigzagged,
+                |_, _, _, _| NdVector::zero(),
+            ),
+            LazyPredictor::Delta => run_steps(
+                seq,
+                rank,
+                vals,
+                corrections,
+                transform,
+                *zigzagged,
+                |_, k, _, vals| delta_predict(k, vals),
+            ),
+            LazyPredictor::Parallelogram {
+                pos_ct,
+                seam_bits,
+                mask,
+            } => run_steps(
+                seq,
+                rank,
+                vals,
+                corrections,
+                transform,
+                *zigzagged,
+                |c, k, rank, vals| {
+                    parallelogram_predict(c, k, rank, vals, pos_ct, seam_bits, *mask)
+                },
+            ),
+            LazyPredictor::TexCoords {
+                c2v,
+                pos_map,
+                pos_vals,
+                orientations,
+            } => run_steps(
+                seq,
+                rank,
+                vals,
+                corrections,
+                transform,
+                *zigzagged,
+                |c, k, rank, vals| {
+                    texcoords_predict(c, k, rank, vals, c2v, pos_map, pos_vals, orientations)
+                },
+            ),
         }
     }
 
@@ -525,6 +555,11 @@ where
         else {
             return;
         };
+        // Folds at monomorphization; other component counts carry no body.
+        assert!(
+            N == 2,
+            "normal prediction is only for 2D octahedral vectors"
+        );
         let num_values = self.vals.len();
 
         let pos32 = |c: CornerIdx| -> NdVector<3, i32> {
@@ -593,13 +628,12 @@ enum AnyLazyStepper<'p> {
 }
 
 impl<'p> AnyLazyStepper<'p> {
-    #[inline]
-    fn step(&mut self, c: CornerIdx, k: usize, rank: &[u32]) {
+    fn run(&mut self, seq: &[CornerIdx], rank: &[u32]) {
         match self {
-            AnyLazyStepper::N1(s) => s.step(c, k, rank),
-            AnyLazyStepper::N2(s) => s.step(c, k, rank),
-            AnyLazyStepper::N3(s) => s.step(c, k, rank),
-            AnyLazyStepper::N4(s) => s.step(c, k, rank),
+            AnyLazyStepper::N1(s) => s.run(seq, rank),
+            AnyLazyStepper::N2(s) => s.run(seq, rank),
+            AnyLazyStepper::N3(s) => s.run(seq, rank),
+            AnyLazyStepper::N4(s) => s.run(seq, rank),
         }
     }
 
@@ -700,6 +734,11 @@ where
                 mask,
             },
             PredictionSchemeType::MeshPredictionForTextureCoordinates => {
+                if N != 2 {
+                    return Err(Err::MalformedAttribute(
+                        "texture coordinate prediction requires a 2-component attribute",
+                    ));
+                }
                 let pos = parent.ok_or(Err::MalformedAttribute(
                     "geometric prediction requires an already decoded position attribute",
                 ))?;
@@ -713,6 +752,11 @@ where
                 }
             }
             PredictionSchemeType::MeshNormalPrediction => {
+                if N != 2 {
+                    return Err(Err::MalformedAttribute(
+                        "normal prediction requires a 2-component octahedral attribute",
+                    ));
+                }
                 if oct_center <= 0 {
                     return Err(Err::MalformedAttribute(
                         "normal prediction needs an octahedral prediction transform",
@@ -743,75 +787,94 @@ where
             }
         })
     }
+}
 
-    /// Predicts rank `k` at corner `c`. Consulted neighbors are never the
-    /// current sector, so `rank < k` means decoded, on walks and replays alike.
-    #[inline]
-    fn predict(
-        &mut self,
-        c: CornerIdx,
-        k: usize,
-        rank: &[u32],
-        vals: &[NdVector<N, i32>],
-    ) -> NdVector<N, i32> {
-        match self {
-            LazyPredictor::NoPrediction => NdVector::zero(),
-            LazyPredictor::Delta => {
-                if k > 0 {
-                    vals[k - 1]
-                } else {
-                    NdVector::zero()
-                }
+/// The per-value decode loop, monomorphic over `predict`. `seq` must hold
+/// exactly as many corners as the value buffer holds values.
+#[inline]
+fn run_steps<const N: usize>(
+    seq: &[CornerIdx],
+    rank: &[u32],
+    vals: &mut [NdVector<N, i32>],
+    corrections: &mut Corrections<'_, N>,
+    transform: &InverseTransform,
+    zigzagged: bool,
+    mut predict: impl FnMut(CornerIdx, usize, &[u32], &[NdVector<N, i32>]) -> NdVector<N, i32>,
+) where
+    NdVector<N, i32>: Vector<N, Component = i32> + Portable,
+{
+    for (k, &c) in seq.iter().enumerate() {
+        let pred = predict(c, k, rank, vals);
+        // SAFETY: the caller checked the sequence against the value count, so
+        // k is below the length of both the value buffer and any eager
+        // correction vector.
+        let mut corr = unsafe { corrections.next_unchecked(k) };
+        if zigzagged {
+            for i in 0..N {
+                *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
             }
-            LazyPredictor::Parallelogram {
-                pos_ct,
-                seam_bits,
-                mask,
-            } => {
-                // SAFETY: `c` and its face-mates and opposite are corners of
-                // the table, below the per-corner lengths of `seam` and
-                // `rank`; every assigned rank is below the walk's value count,
-                // the length of `vals`.
-                // A neighbor is decoded iff its rank is below `k`: during the
-                // walk every assigned rank but the current sector's is below
-                // `k` (UNRANKED never is), and on a replay, where the rank map
-                // is already complete, the comparison recovers the decode-time
-                // state.
-                let kk = k as u32;
-                unsafe {
-                    let opp = if *seam_bits.get_unchecked(usize::from(c)) & *mask != 0 {
-                        None
-                    } else {
-                        pos_ct.opposite(c)
-                    };
-                    if let Some(opp) = opp {
-                        let r_opp = *rank.get_unchecked(usize::from(opp));
-                        let r_next = *rank.get_unchecked(usize::from(c.next()));
-                        let r_prev = *rank.get_unchecked(usize::from(c.previous()));
-                        if r_opp < kk && r_next < kk && r_prev < kk {
-                            return *vals.get_unchecked(r_next as usize)
-                                + *vals.get_unchecked(r_prev as usize)
-                                - *vals.get_unchecked(r_opp as usize);
-                        }
-                    }
-                }
-                if k > 0 {
-                    vals[k - 1]
-                } else {
-                    NdVector::zero()
-                }
-            }
-            LazyPredictor::TexCoords {
-                c2v,
-                pos_map,
-                pos_vals,
-                orientations,
-            } => texcoords_predict(c, k, rank, vals, c2v, pos_map, pos_vals, orientations),
-            LazyPredictor::Normal { .. } => {
-                unreachable!("normal prediction decodes in finalize, after the walk")
+        }
+        unsafe {
+            *vals.get_unchecked_mut(k) = transform.compute_original(pred, corr);
+        }
+    }
+}
+
+/// The preceding value, taken as zero at the first one.
+#[inline]
+fn delta_predict<const N: usize>(k: usize, vals: &[NdVector<N, i32>]) -> NdVector<N, i32>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    if k > 0 {
+        vals[k - 1]
+    } else {
+        NdVector::zero()
+    }
+}
+
+/// Parallelogram prediction over the seam-cut connectivity; falls back to
+/// delta when the opposite face's sectors are not all decoded.
+#[inline]
+fn parallelogram_predict<const N: usize>(
+    c: CornerIdx,
+    k: usize,
+    rank: &[u32],
+    vals: &[NdVector<N, i32>],
+    pos_ct: &CornerTable,
+    seam_bits: &[u8],
+    mask: u8,
+) -> NdVector<N, i32>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    // SAFETY: `c` and its face-mates and opposite are corners of
+    // the table, below the per-corner lengths of `seam` and
+    // `rank`; every assigned rank is below the walk's value count,
+    // the length of `vals`.
+    // A neighbor is decoded iff its rank is below `k`: during the
+    // walk every assigned rank but the current sector's is below
+    // `k` (UNRANKED never is), and on a replay, where the rank map
+    // is already complete, the comparison recovers the decode-time
+    // state.
+    let kk = k as u32;
+    unsafe {
+        let opp = if *seam_bits.get_unchecked(usize::from(c)) & mask != 0 {
+            None
+        } else {
+            pos_ct.opposite(c)
+        };
+        if let Some(opp) = opp {
+            let r_opp = *rank.get_unchecked(usize::from(opp));
+            let r_next = *rank.get_unchecked(usize::from(c.next()));
+            let r_prev = *rank.get_unchecked(usize::from(c.previous()));
+            if r_opp < kk && r_next < kk && r_prev < kk {
+                return *vals.get_unchecked(r_next as usize) + *vals.get_unchecked(r_prev as usize)
+                    - *vals.get_unchecked(r_opp as usize);
             }
         }
     }
+    delta_predict(k, vals)
 }
 
 /// The parent position at a corner; out-of-range indices read as zero.
@@ -865,7 +928,11 @@ fn texcoords_predict<const N: usize>(
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
-    debug_assert_eq!(N, 2, "texture coordinate prediction is only for 2D vectors");
+    // Folds at monomorphization; other component counts carry no body.
+    assert!(
+        N == 2,
+        "texture coordinate prediction is only for 2D vectors"
+    );
     let next_c = c.next();
     let prev_c = c.previous();
     let kk = k as u32;

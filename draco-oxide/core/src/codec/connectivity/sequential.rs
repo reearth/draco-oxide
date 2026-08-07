@@ -21,20 +21,11 @@ pub enum Err {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
-    #[allow(unused)]
     Compressed,
     DirectIndices,
 }
 
 impl Method {
-    #[allow(unused)]
-    pub fn from_id(id: u8) -> Self {
-        match id {
-            0 => Self::Compressed,
-            1 => Self::DirectIndices,
-            _ => panic!("Unknown method id: {}", id),
-        }
-    }
     pub fn get_id(&self) -> u8 {
         match self {
             Self::Compressed => 0,

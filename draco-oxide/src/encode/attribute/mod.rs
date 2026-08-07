@@ -1,12 +1,11 @@
 pub(crate) mod attribute_encoder;
 pub(crate) mod portabilization;
+pub mod prediction_metadata;
 pub(crate) mod prediction_transform;
 
 use crate::encode::attribute::portabilization::PortabilizationType;
 pub use crate::encode::attribute::portabilization::Quantization;
 pub use crate::encode::attribute::prediction_transform::PredictionTransformType;
-#[cfg(feature = "evaluation")]
-use crate::eval;
 
 use std::collections::HashMap;
 
@@ -33,20 +32,12 @@ pub fn encode_attributes<W>(
 where
     W: ByteWriter,
 {
-    #[cfg(feature = "evaluation")]
-    eval::scope_begin("attributes", writer);
-
-    let result = match cfg.connectivity.encoder_method() {
+    match cfg.connectivity.encoder_method() {
         EncoderMethod::Edgebreaker => {
             encode_traversed_attributes(adss, corners_of_edgebreaker, writer, cfg)
         }
         EncoderMethod::Sequential => encode_linear_attributes(adss, writer, cfg),
-    };
-
-    #[cfg(feature = "evaluation")]
-    eval::scope_end(writer);
-
-    result
+    }
 }
 
 /// Encodes each attribute over a traversal of its own connectivity, one
@@ -63,8 +54,6 @@ where
     // Write the number of attribute encoders/decoders (In draco-oxide, this is the same as the number of attributes as
     // each attribute has its own encoder/decoder)
     writer.write_u8(adss.len() as u8);
-    #[cfg(feature = "evaluation")]
-    eval::write_json_pair("attributes count", adss.len().into(), writer);
 
     // The resolved traversal method per attribute. Prediction-degree traversal
     // is defined over the position connectivity only, so an attribute with
@@ -99,9 +88,6 @@ where
         traversals[i].write_to(writer);
     }
 
-    #[cfg(feature = "evaluation")]
-    eval::array_scope_begin("attributes", writer);
-
     let mut port_atts: Vec<Attribute> = Vec::new();
     for att in &adss {
         // Write 1 to indicate that the encoder is for one attribute.
@@ -133,9 +119,6 @@ where
     // front.
     let mut shared_sequences: Vec<(TraversalType, Vec<CornerIdx>)> = Vec::new();
     for (ads, traversal) in adss.into_iter().zip(traversals) {
-        #[cfg(feature = "evaluation")]
-        eval::scope_begin("attribute", writer);
-
         let parents_ids = ads.att_data().get_parents();
         let parents = parents_ids
             .iter()
@@ -165,31 +148,24 @@ where
 
         let ty = ads.att_data().get_attribute_type();
         let component_ty = ads.att_data().get_component_type();
-        let len = ads.att_data().len();
         let encoder = attribute_encoder::AttributeEncoder::new(
             ads,
             &parents,
             &corners_of_edgebreaker,
             writer,
-            cfg.attribute.encoder_config_for(ty, component_ty, len),
+            cfg.attribute.encoder_config_for(ty, component_ty),
             Sequencing::Traversal,
             sequence,
         );
 
         // This encoder carries one attribute, so its portabilization metadata
         // belongs immediately after its payload.
-        let (port_att, port_info) = encoder.encode::<true, false>()?;
+        let (port_att, port_info) = encoder.encode::<true>()?;
         port_atts.push(port_att);
         for byte in port_info {
             writer.write_u8(byte);
         }
-
-        #[cfg(feature = "evaluation")]
-        eval::scope_end(writer);
     }
-
-    #[cfg(feature = "evaluation")]
-    eval::array_scope_end(writer);
 
     Ok(())
 }
@@ -207,8 +183,6 @@ where
 {
     // One attribute encoder carries every attribute.
     writer.write_u8(1);
-    #[cfg(feature = "evaluation")]
-    eval::write_json_pair("attributes count", adss.len().into(), writer);
 
     leb128_write(adss.len() as u64, writer);
     for ads in &adss {
@@ -227,33 +201,23 @@ where
         .write_to(writer);
     }
 
-    #[cfg(feature = "evaluation")]
-    eval::array_scope_begin("attributes", writer);
-
     let num_points = adss[0].global_ds().num_points();
     let mut port_infos = Vec::with_capacity(adss.len());
     for ads in adss {
-        #[cfg(feature = "evaluation")]
-        eval::scope_begin("attribute", writer);
-
         let ty = ads.att_data().get_attribute_type();
         let component_ty = ads.att_data().get_component_type();
-        let len = ads.att_data().len();
         let encoder = attribute_encoder::AttributeEncoder::new(
             ads,
             &[],
             &[],
             writer,
             cfg.attribute
-                .encoder_config_for(ty, component_ty, len)
+                .encoder_config_for(ty, component_ty)
                 .for_sequential(),
             Sequencing::Linear { num_points },
             attribute_encoder::SequenceSource::Own,
         );
-        port_infos.push(encoder.encode::<true, false>()?.1);
-
-        #[cfg(feature = "evaluation")]
-        eval::scope_end(writer);
+        port_infos.push(encoder.encode::<true>()?.1);
     }
 
     // The encoder emits every payload before the first portabilization block.
@@ -261,15 +225,13 @@ where
         writer.write_u8(byte);
     }
 
-    #[cfg(feature = "evaluation")]
-    eval::array_scope_end(writer);
-
     Ok(())
 }
 
 /// Per-attribute encoding configuration, keyed by attribute type. Any type
 /// without an explicit override falls back to the built-in `default_for(ty, len)`
-/// behaviour, so `Config::default()` reproduces the previous hardcoded pipeline.
+/// behaviour, so `Config::default()` encodes every attribute with the built-in
+/// defaults for its type.
 #[derive(Clone, Debug)]
 pub struct Config {
     overrides: HashMap<AttributeType, AttributeConfig>,
@@ -351,25 +313,23 @@ impl Config {
             .unwrap_or(TraversalType::DepthFirst)
     }
 
-    /// Resolves the per-attribute encoder config for an attribute of type `ty`
-    /// with `len` values, honoring any override and otherwise falling back to the
-    /// built-in default.
+    /// Resolves the per-attribute encoder config for an attribute of type `ty`,
+    /// honoring any override and otherwise falling back to the built-in default.
     fn encoder_config_for(
         &self,
         ty: AttributeType,
         component_ty: ComponentDataType,
-        len: usize,
     ) -> attribute_encoder::Config {
         let Some(over) = self.overrides.get(&ty) else {
-            return attribute_encoder::Config::default_for(ty, component_ty, len);
+            return attribute_encoder::Config::default_for(ty, component_ty);
         };
 
         // Start from the zero-correction base for PredictedOnly normals, else the
         // regular per-type default; then patch in any explicit knobs.
         let mut base = if over.normal_encoding == Some(NormalEncoding::PredictedOnly) {
-            attribute_encoder::Config::predicted_normals(len)
+            attribute_encoder::Config::predicted_normals()
         } else {
-            attribute_encoder::Config::default_for(ty, component_ty, len)
+            attribute_encoder::Config::default_for(ty, component_ty)
         };
 
         if let Some(scheme) = &over.prediction {
@@ -385,9 +345,11 @@ impl Config {
     }
 }
 
+/// Errors from attribute encoding.
 #[remain::sorted]
 #[derive(thiserror::Error, Debug)]
 pub enum Err {
+    /// Encoding of a single attribute failed.
     #[error("Attribute encoding error: {0}")]
     AttributeError(#[from] attribute_encoder::Err),
 }

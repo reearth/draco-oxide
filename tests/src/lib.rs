@@ -23,7 +23,7 @@ use serde::Deserialize;
 
 use draco_oxide::core::mesh::Mesh;
 use draco_oxide::core::types::ConfigType;
-use draco_oxide::encode::{self as oxide_encode, encode as oxide_encode_fn};
+use draco_oxide::encode::{self as oxide_encode, encode_mesh as oxide_encode_fn};
 use draco_oxide::io::obj::load_obj;
 
 mod render;
@@ -102,6 +102,15 @@ pub enum Operation {
     /// validated here; it is validated by being decoded, via
     /// [`Operation::DracoDecode`] or [`Operation::DracoOxideDecode`].
     Validation { input: String, fmt: FormatName },
+    /// Assert an artifact's exact byte length and FNV-1a hash (`fnv1a` is a
+    /// decimal or 0x-hex string; the value exceeds TOML's integer range).
+    /// `DUMP_ENCODE_FINGERPRINTS` prints computed fingerprints instead of
+    /// asserting, for rebaselining.
+    Fingerprint {
+        input: String,
+        len: usize,
+        fnv1a: String,
+    },
     /// Compare two artifacts under one or more comparison methods. Each
     /// method asserts its own pass/fail predicate (e.g. a distance threshold).
     Comparison {
@@ -352,6 +361,30 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                 let path = resolve_input(input);
                 validate(&label, &path, fmt);
             }
+            Operation::Fingerprint { input, len, fnv1a } => {
+                let path = resolve_input(input);
+                let bytes = std::fs::read(&path)
+                    .unwrap_or_else(|e| panic!("{label} failed to read {}: {e}", path.display()));
+                let hash = fnv1a_hash(&bytes);
+                if std::env::var("DUMP_ENCODE_FINGERPRINTS").is_ok() {
+                    eprintln!(
+                        "{label} {}: len = {}, fnv1a = \"{hash:#x}\"",
+                        path.display(),
+                        bytes.len()
+                    );
+                    continue;
+                }
+                let expected = parse_u64(fnv1a).unwrap_or_else(|| {
+                    panic!("{label} fnv1a {fnv1a:?} is not a decimal or 0x-hex u64")
+                });
+                assert_eq!(
+                    (bytes.len(), hash),
+                    (*len, expected),
+                    "{label} encoded output changed for {} (got len = {}, fnv1a = \"{hash:#x}\")",
+                    path.display(),
+                    bytes.len(),
+                );
+            }
             Operation::Comparison {
                 input1,
                 input2,
@@ -479,7 +512,26 @@ fn op_kind(op: &Operation) -> &'static str {
         Operation::DracoEncode { .. } => "DracoEncode",
         Operation::DracoDecode { .. } => "DracoDecode",
         Operation::Validation { .. } => "Validation",
+        Operation::Fingerprint { .. } => "Fingerprint",
         Operation::Comparison { .. } => "Comparison",
+    }
+}
+
+/// FNV-1a over an artifact's bytes. Deterministic, dependency-free.
+fn fnv1a_hash(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Parses a u64 from a decimal or `0x`-prefixed hex string.
+fn parse_u64(s: &str) -> Option<u64> {
+    match s.strip_prefix("0x") {
+        Some(hex) => u64::from_str_radix(hex, 16).ok(),
+        None => s.parse().ok(),
     }
 }
 

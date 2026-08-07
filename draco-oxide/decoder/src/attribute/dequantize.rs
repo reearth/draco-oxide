@@ -59,9 +59,13 @@ where
     NdVector<N, u16>: Vector<N, Component = u16>,
     NdVector<N, u32>: Vector<N, Component = u32>,
 {
+    // Gated types cannot reach here: descriptors declaring them were rejected
+    // at parse, so their fall-through to the untouched pass is dead code.
     match component_type {
+        #[cfg(feature = "rare-component-types")]
         ComponentDataType::I8 => narrow_to::<i8, N>(att),
         ComponentDataType::U8 => narrow_to::<u8, N>(att),
+        #[cfg(feature = "rare-component-types")]
         ComponentDataType::I16 => narrow_to::<i16, N>(att),
         ComponentDataType::U16 => narrow_to::<u16, N>(att),
         ComponentDataType::U32 => narrow_to::<u32, N>(att),

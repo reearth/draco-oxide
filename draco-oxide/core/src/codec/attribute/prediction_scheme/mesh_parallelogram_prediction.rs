@@ -18,10 +18,6 @@ impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'pare
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
-    const ID: u32 = 2;
-
-    type AdditionalDataForMetadata = ();
-
     fn new(_parents: &[&'parents Attribute], ads: &'parents D) -> Self {
         Self {
             visited: vec![false; ads.vertex_index_bound()],
@@ -30,15 +26,8 @@ where
         }
     }
 
-    fn get_values_impossible_to_predict(
-        &mut self,
-        _seq: &mut Vec<std::ops::Range<usize>>,
-    ) -> Vec<std::ops::Range<usize>> {
-        unimplemented!();
-    }
-
     #[inline]
-    fn predict(
+    fn predict<const ENCODING: bool>(
         &mut self,
         c: CornerIdx,
         vertices_up_till_now: &[VertexIdx],

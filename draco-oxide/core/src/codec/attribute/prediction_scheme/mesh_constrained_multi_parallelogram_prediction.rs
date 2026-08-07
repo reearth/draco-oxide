@@ -9,28 +9,41 @@
 //! parallelograms minus one. When no parallelogram is used, the previously
 //! processed value serves as the prediction.
 
-use super::{encode_rabs_bit_stream, PredictionSchemeImpl};
+use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
 use crate::codec::entropy::shannon::{binary_entropy, signed_to_symbol, ShannonEntropyTracker};
 use crate::mesh::ds::{GenericAttributeDs, GenericCornerTable};
 use crate::types::{CornerIdx, NdVector, PointIdx, Vector, VertexIdx};
-use crate::utils::bit_coder::leb128_write;
 
 /// The most parallelograms a single prediction may combine.
 pub const MAX_PARALLELOGRAMS: usize = 4;
 
-/// The decoded crease bits, one stream per context, consumed in walk order.
-pub struct DecodedCreases {
+/// The crease bits, one stream per parallelogram-count context. The encoder
+/// appends with [`Creases::push`], the decoder installs a decoded set and walks
+/// it with [`Creases::next`]; `pos` is unused in the encode direction.
+#[derive(Default)]
+pub struct Creases {
     bits: [Vec<bool>; MAX_PARALLELOGRAMS],
     pos: [usize; MAX_PARALLELOGRAMS],
 }
 
-impl DecodedCreases {
+impl Creases {
     pub fn new(bits: [Vec<bool>; MAX_PARALLELOGRAMS]) -> Self {
         Self {
             bits,
             pos: [0; MAX_PARALLELOGRAMS],
         }
+    }
+
+    /// The bit streams, in context order.
+    pub fn bits(&self) -> &[Vec<bool>; MAX_PARALLELOGRAMS] {
+        &self.bits
+    }
+
+    /// Appends a bit to context `ctx`.
+    #[inline]
+    fn push(&mut self, ctx: usize, bit: bool) {
+        self.bits[ctx].push(bit);
     }
 
     /// The next bit of context `ctx`; a malformed stream that runs out of bits
@@ -68,8 +81,9 @@ pub struct MeshConstrainedMultiParallelogramPrediction<
     /// running sequence.
     visited: Vec<bool>,
     synced: usize,
-    /// Encoder-side crease decisions, per context.
-    is_crease: [Vec<bool>; MAX_PARALLELOGRAMS],
+    /// Crease decisions per context: recorded by `predict::<true>`, consumed by
+    /// `predict::<false>`.
+    creases: Creases,
     /// Encoder-side residual entropy, driving the configuration selection.
     entropy: ShannonEntropyTracker,
     total_parallelograms: [u64; MAX_PARALLELOGRAMS],
@@ -198,39 +212,15 @@ where
         (total as f64 * binary_entropy(total, total_used)).ceil() as i64
     }
 
-    /// The decode-side prediction at corner `c`, choosing the parallelograms
-    /// the given crease bits select.
-    pub fn predict_given_creases(
-        &mut self,
-        c: CornerIdx,
-        vertices_up_till_now: &[VertexIdx],
-        attribute: &Attribute,
-        creases: &mut DecodedCreases,
-    ) -> NdVector<N, i32> {
-        self.sync(vertices_up_till_now);
-        let map = attribute.point_map_as_slice();
-        let vals = attribute.unique_vals_as_slice::<NdVector<N, i32>>();
-        let read = |p: PointIdx| -> NdVector<N, i32> {
-            match map {
-                Some(m) => vals[usize::from(m[usize::from(p)])],
-                None => vals[usize::from(p)],
-            }
-        };
-        let Some(&last_v) = vertices_up_till_now.last() else {
-            return NdVector::<N, i32>::zero();
-        };
-        let (preds, n) = self.gather(c, &read);
-        let mut mask = 0u8;
-        for j in 0..n {
-            if !creases.next(n - 1) {
-                mask |= 1 << j;
-            }
-        }
-        if mask == 0 {
-            read(self.ads.point_idx(self.ads.left_most_corner(last_v)))
-        } else {
-            Self::combine(&preds[..n], mask)
-        }
+    /// The crease bits recorded while encoding.
+    pub fn creases(&self) -> &Creases {
+        &self.creases
+    }
+
+    /// Installs the crease bits decoded from the stream, to be consumed by
+    /// `predict::<false>`.
+    pub fn set_creases(&mut self, creases: Creases) {
+        self.creases = creases;
     }
 }
 
@@ -239,15 +229,11 @@ impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'pare
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
-    const ID: u32 = 4;
-
-    type AdditionalDataForMetadata = ();
-
     fn new(_parents: &[&'parents Attribute], ads: &'parents D) -> Self {
         Self {
             visited: vec![false; ads.vertex_index_bound()],
             synced: 0,
-            is_crease: Default::default(),
+            creases: Creases::default(),
             entropy: ShannonEntropyTracker::new(),
             total_parallelograms: [0; MAX_PARALLELOGRAMS],
             total_used_parallelograms: [0; MAX_PARALLELOGRAMS],
@@ -255,18 +241,12 @@ where
         }
     }
 
-    fn get_values_impossible_to_predict(
-        &mut self,
-        _seq: &mut Vec<std::ops::Range<usize>>,
-    ) -> Vec<std::ops::Range<usize>> {
-        unimplemented!();
-    }
-
     /// The encode-side prediction at corner `c`: evaluates every subset of the
     /// available parallelograms (plus the delta fallback) against the running
     /// residual entropy, records the winning subset's crease bits, and returns
     /// its prediction.
-    fn predict(
+    #[inline]
+    fn predict<const ENCODING: bool>(
         &mut self,
         c: CornerIdx,
         vertices_up_till_now: &[VertexIdx],
@@ -286,6 +266,20 @@ where
             // the value itself and no crease bits are recorded.
             return NdVector::<N, i32>::zero();
         };
+        if !ENCODING {
+            let (preds, n) = self.gather(c, &read);
+            let mut mask = 0u8;
+            for j in 0..n {
+                if !self.creases.next(n - 1) {
+                    mask |= 1 << j;
+                }
+            }
+            return if mask == 0 {
+                read(self.ads.point_idx(self.ads.left_most_corner(last_v)))
+            } else {
+                Self::combine(&preds[..n], mask)
+            };
+        }
         let actual = read(self.ads.point_idx(c));
         let delta_pred = read(self.ads.point_idx(self.ads.left_most_corner(last_v)));
         let (preds, n) = self.gather(c, &read);
@@ -318,7 +312,7 @@ where
         if n > 0 {
             self.total_used_parallelograms[n - 1] += best_mask.count_ones() as u64;
             for j in 0..n {
-                self.is_crease[n - 1].push(best_mask & (1 << j) == 0);
+                self.creases.push(n - 1, best_mask & (1 << j) == 0);
             }
         }
         let mut symbols = [0u32; N];
@@ -327,18 +321,5 @@ where
         }
         self.entropy.push(&symbols);
         best_pred
-    }
-
-    fn encode_prediction_metadtata<W>(&self, writer: &mut W) -> Result<(), super::Err>
-    where
-        W: crate::bit_coder::ByteWriter,
-    {
-        for bits in &self.is_crease {
-            leb128_write(bits.len() as u64, writer);
-            if !bits.is_empty() {
-                encode_rabs_bit_stream(bits, writer)?;
-            }
-        }
-        Ok(())
     }
 }

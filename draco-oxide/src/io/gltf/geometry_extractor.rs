@@ -2,41 +2,59 @@
 
 use serde_json::Value;
 
+/// Errors from reading geometry out of glTF accessors.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The referenced accessor index does not exist.
     #[error("Accessor {0} not found")]
     AccessorNotFound(u64),
+    /// The referenced buffer view index does not exist.
     #[error("BufferView {0} not found")]
     BufferViewNotFound(u64),
+    /// The accessor has no buffer view to read from.
     #[error("Accessor {0} has no bufferView (may be Draco-compressed)")]
     NoBufferView(u64),
+    /// The buffer view references a buffer index that is not available.
     #[error("Buffer index {0} out of range")]
     BufferOutOfRange(u64),
+    /// A read would extend past the end of the binary buffer.
     #[error("Buffer read out of bounds: offset {offset}, size {size}, buffer len {buffer_len}")]
     OutOfBounds {
         offset: usize,
         size: usize,
         buffer_len: usize,
     },
+    /// The accessor uses a componentType code that is not supported.
     #[error("Unsupported component type: {0}")]
     UnsupportedComponentType(u32),
+    /// The accessor uses a type string that is not supported.
     #[error("Unsupported accessor type: {0}")]
     UnsupportedAccessorType(String),
+    /// A required accessor or buffer view field is missing from the JSON.
     #[error("Missing required field: {0}")]
     MissingField(String),
 }
 
+/// A glTF accessor component type, with the discriminant equal to the glTF
+/// componentType code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentType {
+    /// Signed 8-bit integer.
     Byte = 5120,
+    /// Unsigned 8-bit integer.
     UnsignedByte = 5121,
+    /// Signed 16-bit integer.
     Short = 5122,
+    /// Unsigned 16-bit integer.
     UnsignedShort = 5123,
+    /// Unsigned 32-bit integer.
     UnsignedInt = 5125,
+    /// 32-bit IEEE float.
     Float = 5126,
 }
 
 impl ComponentType {
+    /// Converts a glTF componentType code to a [`ComponentType`].
     pub fn from_u32(value: u32) -> Result<Self, Error> {
         match value {
             5120 => Ok(Self::Byte),
@@ -49,6 +67,7 @@ impl ComponentType {
         }
     }
 
+    /// The size of one component of this type in bytes.
     pub fn byte_size(self) -> usize {
         match self {
             Self::Byte | Self::UnsignedByte => 1,
@@ -58,23 +77,35 @@ impl ComponentType {
     }
 }
 
+/// The fields of a glTF accessor needed to read its data.
 #[derive(Debug, Clone)]
 pub struct AccessorInfo {
+    /// Index of the buffer view the accessor reads from.
     pub buffer_view_idx: u64,
+    /// Byte offset of the accessor within its buffer view.
     pub byte_offset: usize,
+    /// Component type of the accessor's elements.
     pub component_type: ComponentType,
+    /// Number of elements in the accessor.
     pub count: usize,
+    /// The glTF accessor type string ("SCALAR", "VEC3", ...).
     pub accessor_type: String,
 }
 
+/// The fields of a glTF buffer view needed to read its data.
 #[derive(Debug, Clone)]
 pub struct BufferViewInfo {
+    /// Index of the buffer the view reads from.
     pub buffer_idx: u64,
+    /// Byte offset of the view within its buffer.
     pub byte_offset: usize,
+    /// Length of the view in bytes.
     pub byte_length: usize,
+    /// Byte stride between elements, if the view is interleaved.
     pub byte_stride: Option<usize>,
 }
 
+/// Reads the accessor at `accessor_idx` from the glTF JSON.
 pub fn get_accessor_info(json: &Value, accessor_idx: u64) -> Result<AccessorInfo, Error> {
     let accessor = json
         .get("accessors")
@@ -115,6 +146,7 @@ pub fn get_accessor_info(json: &Value, accessor_idx: u64) -> Result<AccessorInfo
     })
 }
 
+/// Reads the buffer view at `buffer_view_idx` from the glTF JSON.
 pub fn get_buffer_view_info(json: &Value, buffer_view_idx: u64) -> Result<BufferViewInfo, Error> {
     let bv = json
         .get("bufferViews")
@@ -156,6 +188,8 @@ fn component_count(accessor_type: &str) -> Result<usize, Error> {
     }
 }
 
+/// Reads an accessor's data as a flat `f32` vector, converting each component
+/// from its stored type.
 pub fn read_accessor_as_f32(
     json: &Value,
     buffer: &[u8],
@@ -206,6 +240,8 @@ pub fn read_accessor_as_f32(
     Ok(result)
 }
 
+/// Reads a scalar accessor's data as a `u32` vector, converting each value
+/// from its stored type.
 pub fn read_accessor_as_u32(
     json: &Value,
     buffer: &[u8],
@@ -297,6 +333,7 @@ fn read_component_as_u32(buffer: &[u8], offset: usize, ct: ComponentType) -> Res
     })
 }
 
+/// Reads an accessor's data as 3-component `f32` vectors.
 pub fn read_accessor_as_vec3(
     json: &Value,
     buffer: &[u8],
@@ -305,6 +342,7 @@ pub fn read_accessor_as_vec3(
     read_accessor_as_array::<3>(json, buffer, accessor_idx)
 }
 
+/// Reads an accessor's data as 2-component `f32` vectors.
 pub fn read_accessor_as_vec2(
     json: &Value,
     buffer: &[u8],
@@ -313,6 +351,7 @@ pub fn read_accessor_as_vec2(
     read_accessor_as_array::<2>(json, buffer, accessor_idx)
 }
 
+/// Reads an accessor's data as 4-component `f32` vectors.
 pub fn read_accessor_as_vec4(
     json: &Value,
     buffer: &[u8],
@@ -369,6 +408,8 @@ fn read_accessor_as_array<const N: usize>(
     Ok(result)
 }
 
+/// Reads a scalar accessor's data as an `f32` vector, converting each value
+/// from its stored type.
 pub fn read_accessor_as_scalar_f32(
     json: &Value,
     buffer: &[u8],

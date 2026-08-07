@@ -17,14 +17,16 @@ fn vector_to_f64_array<Data: Vector<N>, const N: usize>(v: &Data) -> [f64; N] {
     out
 }
 
+/// Errors produced while reading attribute framing fields from a stream.
 #[derive(Debug, thiserror::Error)]
 pub enum Err {
-    /// Invalid attribute domain id
+    /// An attribute domain id outside the known range.
     #[error("Invalid attribute domain id: {0}")]
     InvalidAttributeDomainId(u8),
-    /// Reader error
+    /// A byte reader ran out of data or otherwise failed.
     #[error("Reader error: {0}")]
     ReaderError(#[from] crate::bit_coder::ReaderErr),
+    /// A data type id outside the known range.
     #[error("Invalid DataTypeId: {0}")]
     InvalidDataTypeId(u8),
 }
@@ -61,6 +63,8 @@ pub struct Attribute {
 }
 
 impl Attribute {
+    /// Creates an attribute from a vector of values with a placeholder id,
+    /// removing duplicate values and recording the point-to-value map.
     pub fn new<Data, const N: usize>(
         data: Vec<Data>,
         att_type: AttributeType,
@@ -85,6 +89,8 @@ impl Attribute {
         out
     }
 
+    /// Creates an attribute with no values, with the given type, domain, and
+    /// component layout.
     pub fn new_empty(
         id: AttributeId,
         att_type: AttributeType,
@@ -104,6 +110,8 @@ impl Attribute {
         }
     }
 
+    /// Creates an attribute from a vector of values with the given id,
+    /// removing duplicate values and recording the point-to-value map.
     pub fn from<Data, const N: usize>(
         id: AttributeId,
         data: Vec<Data>,
@@ -128,6 +136,8 @@ impl Attribute {
         out
     }
 
+    /// Creates an attribute from a vector of values with the given id, keeping
+    /// the values as-is on the implicit identity point-to-value map.
     pub fn from_without_removing_duplicates<Data, const N: usize>(
         id: AttributeId,
         data: Vec<Data>,
@@ -150,6 +160,7 @@ impl Attribute {
         }
     }
 
+    /// Returns the value attached to the given point.
     pub fn get<Data, const N: usize>(&self, p_idx: PointIdx) -> Data
     where
         Data: Vector<N>,
@@ -158,6 +169,7 @@ impl Attribute {
         self.buffer.get(self.get_unique_val_idx(p_idx))
     }
 
+    /// Returns the unique value at the given value index.
     pub fn get_unique_val<Data, const N: usize>(&self, val_idx: AttributeValueIdx) -> Data
     where
         Data: Vector<N>,
@@ -166,35 +178,17 @@ impl Attribute {
         self.buffer.get(val_idx)
     }
 
+    /// Returns the component data type of the values.
     pub fn get_component_type(&self) -> ComponentDataType {
         self.buffer.get_component_type()
     }
 
-    #[inline]
-    #[allow(unused)]
-    pub fn set_component_type(&mut self, component_type: ComponentDataType) {
-        self.buffer.set_component_type(component_type);
-    }
-
-    #[inline]
-    #[allow(unused)]
-    pub fn set_num_components(&mut self, num_components: usize) {
-        self.buffer.set_num_components(num_components);
-    }
-
+    /// Returns the unique values as raw bytes.
     pub fn get_data_as_bytes(&self) -> &[u8] {
         self.buffer.as_slice_u8()
     }
 
-    #[inline]
-    #[allow(unused)]
-    pub fn get_as_bytes(&self, i: usize) -> &[u8] {
-        &self.buffer.as_slice_u8()[i
-            * self.buffer.get_num_components()
-            * self.buffer.get_component_type().size()
-            ..(i + 1) * self.buffer.get_num_components() * self.buffer.get_component_type().size()]
-    }
-
+    /// Replaces the point-to-value map. `None` means the identity mapping.
     pub fn set_point_to_att_val_map(
         &mut self,
         point_to_att_val_map: Option<VecPointIdx<AttributeValueIdx>>,
@@ -202,6 +196,7 @@ impl Attribute {
         self.point_to_att_val_map = point_to_att_val_map;
     }
 
+    /// Consumes the attribute and returns its point-to-value map, if any.
     pub fn take_point_to_att_val_map(self) -> Option<VecPointIdx<AttributeValueIdx>> {
         self.point_to_att_val_map
     }
@@ -241,32 +236,39 @@ impl Attribute {
         }
     }
 
+    /// Returns the id of the attribute.
     #[inline]
     pub fn get_id(&self) -> AttributeId {
         self.id
     }
 
+    /// Returns the number of components per value.
     #[inline]
     pub fn get_num_components(&self) -> usize {
         self.buffer.get_num_components()
     }
 
+    /// Returns the semantic type of the attribute.
     #[inline]
     pub fn get_attribute_type(&self) -> AttributeType {
         self.att_type
     }
 
+    /// Returns the domain the attribute is defined on.
     #[inline]
     pub fn get_domain(&self) -> AttributeDomain {
         self.domain
     }
 
+    /// Returns the ids of the attributes this attribute depends on.
     #[inline]
     pub fn get_parents(&self) -> &Vec<AttributeId> {
         self.parents.as_ref()
     }
 
-    /// The number of values of the attribute.
+    /// The number of points the attribute covers. Points sharing a value are
+    /// counted individually; see [`Self::num_unique_values`] for the stored
+    /// value count.
     #[inline(always)]
     pub fn len(&self) -> usize {
         if let Some(f) = &self.point_to_att_val_map {
@@ -282,6 +284,7 @@ impl Attribute {
         self.len() == 0
     }
 
+    /// The number of unique values stored in the buffer.
     #[inline(always)]
     pub fn num_unique_values(&self) -> usize {
         self.buffer.len()
@@ -309,6 +312,8 @@ impl Attribute {
         new_idx
     }
 
+    /// Returns the index of the unique value attached to the given point.
+    /// Panics if the point index is out of bounds.
     #[inline]
     pub fn get_unique_val_idx(&self, idx: PointIdx) -> AttributeValueIdx {
         let idx_usize = usize::from(idx);
@@ -326,17 +331,21 @@ impl Attribute {
         }
     }
 
+    /// Sets the name of the attribute.
     #[inline]
     pub fn set_name(&mut self, name: String) {
         self.name = Some(name);
     }
 
+    /// Returns the name of the attribute, if any.
     #[inline]
     pub fn get_name(&self) -> Option<&String> {
         self.name.as_ref()
     }
 
-    /// returns the data values as a slice of values casted to the given type.
+    /// Returns the unique values as a slice of `Data`. Panics unless the size
+    /// of `Data` equals the byte size of one value (component size times
+    /// component count).
     #[inline]
     pub fn unique_vals_as_slice<Data>(&self) -> &[Data] {
         assert_eq!(
@@ -346,7 +355,9 @@ impl Attribute {
         unsafe { self.buffer.as_slice::<Data>() }
     }
 
-    /// returns the data values as a mutable slice of values casted to the given type.
+    /// Returns the unique values as a mutable slice of `Data`. Panics unless
+    /// the size of `Data` equals the byte size of one value (component size
+    /// times component count).
     #[inline]
     pub fn unique_vals_as_slice_mut<Data>(&mut self) -> &mut [Data] {
         assert_eq!(
@@ -356,18 +367,21 @@ impl Attribute {
         unsafe { self.buffer.as_slice_mut::<Data>() }
     }
 
-    /// returns the data values as a slice of values casted to the given type.
+    /// Returns the unique values as a slice of `Data` without checking the size.
     /// # Safety
-    /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
+    /// The buffer's data must be properly aligned for `Data` and the size of
+    /// `Data` must equal the byte size of one value.
     #[inline]
     pub unsafe fn unique_vals_as_slice_unchecked<Data>(&self) -> &[Data] {
         // Safety: upheld
         self.buffer.as_slice::<Data>()
     }
 
-    /// returns the data values as a mutable slice of values casted to the given type.
+    /// Returns the unique values as a mutable slice of `Data` without checking
+    /// the size.
     /// # Safety
-    /// This function assumes that the buffer's data is properly aligned and matches the type `Data`.
+    /// The buffer's data must be properly aligned for `Data` and the size of
+    /// `Data` must equal the byte size of one value.
     #[inline]
     pub unsafe fn unique_vals_as_slice_unchecked_mut<Data>(&mut self) -> &mut [Data] {
         // Safety: upheld
@@ -430,6 +444,8 @@ impl Attribute {
         }
     }
 
+    /// Consumes the attribute and returns its unique values. Panics unless
+    /// `Data` matches the attribute's component type and count.
     pub fn take_values<Data, const N: usize>(self) -> Vec<Data>
     where
         Data: Vector<N>,
@@ -440,6 +456,9 @@ impl Attribute {
         unsafe { self.buffer.into_vec_unchecked::<Data, N>() }
     }
 
+    /// Splits the attribute into its unique values, its point-to-value map,
+    /// and the emptied attribute carrying the remaining metadata. Panics
+    /// unless `Data` matches the attribute's component type and count.
     pub fn into_parts<Data, const N: usize>(
         mut self,
     ) -> (Vec<Data>, Option<VecPointIdx<AttributeValueIdx>>, Self)
@@ -460,6 +479,8 @@ impl Attribute {
         (data, point_to_att_val_map, self)
     }
 
+    /// Sets the values of an empty attribute. Panics if the attribute already
+    /// has values or `Data` does not match its component type and count.
     pub fn set_values<Data, const N: usize>(&mut self, data: Vec<Data>)
     where
         Data: Vector<N>,
@@ -470,6 +491,8 @@ impl Attribute {
         self.buffer = buffer::attribute::AttributeBuffer::from_vec(data);
     }
 
+    /// Deduplicates equal values, compacting the buffer and recording the
+    /// point-to-value map.
     pub fn remove_duplicate_values<Data, const N: usize>(&mut self)
     where
         Data: Vector<N>,
@@ -542,78 +565,6 @@ impl Attribute {
         self.buffer.retain_indices(&keep_indices);
     }
 
-    #[allow(unused)]
-    pub fn remove<Data, const N: usize>(&mut self, p_idx: PointIdx) {
-        let p_idx_usize = usize::from(p_idx);
-        assert!(
-            p_idx_usize < self.len(),
-            "Point index out of bounds: {}",
-            p_idx_usize
-        );
-        if let Some(ref mut point_to_att_val_map) = self.point_to_att_val_map {
-            // update the mapping
-            if (0..point_to_att_val_map.len())
-                .map(PointIdx::from)
-                .filter(|&p| p != p_idx)
-                .any(|p| point_to_att_val_map[p] == point_to_att_val_map[p_idx])
-            {
-                // if there are other vertices with the same value, we just remove the mapping
-                point_to_att_val_map.remove(p_idx);
-            } else {
-                let removed_unique_val_idx = point_to_att_val_map.remove(p_idx);
-                self.buffer.remove::<Data, N>(removed_unique_val_idx.into());
-                // update the mapping for the remaining vertices
-                for p in 0..point_to_att_val_map.len() {
-                    let p = PointIdx::from(p);
-                    if point_to_att_val_map[p] > removed_unique_val_idx {
-                        point_to_att_val_map[p] = (usize::from(point_to_att_val_map[p]) - 1).into();
-                    }
-                }
-            }
-        } else {
-            // no mapping, just remove the value
-            let a_idx = AttributeValueIdx::from(usize::from(p_idx));
-            self.remove_unique_val::<Data, N>(a_idx);
-        }
-    }
-
-    #[allow(unused)]
-    pub fn remove_dyn(&mut self, p_idx: PointIdx) {
-        assert!(
-            usize::from(p_idx) < self.len(),
-            "Point index out of bounds: {}",
-            usize::from(p_idx)
-        );
-        match self.get_component_type().size() * self.get_num_components() {
-            1 => self.remove::<u8, 1>(p_idx),
-            2 => self.remove::<u16, 1>(p_idx),
-            4 => self.remove::<u32, 1>(p_idx),
-            6 => self.remove::<u16, 3>(p_idx),
-            8 => self.remove::<u64, 1>(p_idx),
-            12 => self.remove::<u32, 3>(p_idx),
-            16 => self.remove::<u64, 2>(p_idx),
-            18 => self.remove::<u64, 3>(p_idx),
-            _ => panic!(
-                "Unsupported component size: {}",
-                self.get_component_type().size()
-            ),
-        }
-    }
-
-    #[allow(unused)]
-    pub fn remove_unique_val<Data, const N: usize>(&mut self, val_idx: AttributeValueIdx) {
-        let val_idx = usize::from(val_idx);
-        assert!(
-            val_idx < self.num_unique_values(),
-            "Attribute value index out of bounds: {}",
-            val_idx
-        );
-        self.buffer.remove::<Data, N>(val_idx);
-        if let Some(ref mut _point_to_att_val_map) = self.point_to_att_val_map {
-            unimplemented!();
-        }
-    }
-
     pub fn remove_unique_val_dyn(&mut self, val_idx: usize) {
         assert!(
             val_idx < self.num_unique_values(),
@@ -679,18 +630,30 @@ impl Attribute {
     }
 }
 
+/// The data type of a single attribute component.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 pub enum ComponentDataType {
+    /// Signed 8-bit integer.
     I8,
+    /// Unsigned 8-bit integer.
     U8,
+    /// Signed 16-bit integer.
     I16,
+    /// Unsigned 16-bit integer.
     U16,
+    /// Signed 32-bit integer.
     I32,
+    /// Unsigned 32-bit integer.
     U32,
+    /// Signed 64-bit integer.
     I64,
+    /// Unsigned 64-bit integer.
     U64,
+    /// 32-bit floating point.
     F32,
+    /// 64-bit floating point.
     F64,
+    /// Placeholder for an unknown or unset type.
     Invalid,
 }
 
@@ -751,13 +714,13 @@ impl ComponentDataType {
         )
     }
 
-    /// returns the data type as a string.
+    /// Writes the wire id of the data type.
     #[inline]
     pub fn write_to<W: ByteWriter>(self, writer: &mut W) {
         writer.write_u8(self.get_id());
     }
 
-    /// returns the data type from the given id, or `None` if the id is unknown.
+    /// Returns the data type for the given id, or `None` if the id is unknown.
     #[inline]
     pub fn from_id(id: usize) -> Option<Self> {
         match id {
@@ -783,21 +746,33 @@ impl ComponentDataType {
     }
 }
 
+/// The semantic type of an attribute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum AttributeType {
+    /// Vertex positions.
     Position,
+    /// Normal vectors.
     Normal,
+    /// Color values.
     Color,
+    /// Texture coordinates.
     TextureCoordinate,
+    /// Application-specific data with no dedicated semantics.
     Custom,
+    /// Tangent vectors.
     Tangent,
+    /// Material identifiers.
     Material,
+    /// Skinning joint indices.
     Joint,
+    /// Skinning joint weights.
     Weight,
+    /// Placeholder for an unknown or unset type.
     Invalid,
 }
 
 impl AttributeType {
+    /// Returns the attribute types this type requires as parents.
     pub fn get_minimum_dependency(&self) -> Vec<Self> {
         match self {
             Self::Position => Vec::new(),
@@ -848,7 +823,7 @@ impl AttributeType {
         writer.write_u8(self.wire_type().get_id());
     }
 
-    /// Reads the attribute type from the reader.
+    /// Returns the attribute type for the given wire id.
     #[inline]
     pub fn from_id(id: u8) -> Result<Self, Err> {
         match id {
@@ -902,10 +877,12 @@ impl AttributeDomain {
     }
 }
 
+/// A unique identifier of an attribute within a mesh.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 pub struct AttributeId(usize);
 
 impl AttributeId {
+    /// Creates an id with the given value.
     pub fn new(id: usize) -> Self {
         Self(id)
     }
@@ -974,61 +951,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 1, 2, 0, 1, 3],
         )
-    }
-
-    #[test]
-    fn test_remove() {
-        let positions = vec![
-            NdVector::from([0.0f32, 0.0, 0.0]), // vertex 0 (unique)
-            NdVector::from([1.0f32, 0.0, 0.0]), // vertex 1 (unique)
-            NdVector::from([2.0f32, 0.0, 0.0]), // vertex 2 (unique)
-            NdVector::from([3.0f32, 0.0, 0.0]), // vertex 3 (unique)
-            NdVector::from([2.0f32, 0.0, 0.0]), // vertex 4 (duplicate of vertex 2)
-            NdVector::from([5.0f32, 0.0, 0.0]), // vertex 5 (unique)
-        ];
-
-        let mut att = Attribute::new(
-            positions,
-            AttributeType::Position,
-            AttributeDomain::Position,
-            vec![],
-        );
-
-        assert_eq!(att.len(), 6);
-        assert_eq!(att.num_unique_values(), 5);
-        assert_eq!(
-            &att.point_to_att_val_map
-                .as_ref()
-                .unwrap()
-                .iter()
-                .map(|&i| usize::from(i))
-                .collect::<Vec<_>>(),
-            &vec![0, 1, 2, 3, 2, 4]
-        );
-        att.remove::<NdVector<3, f32>, 3>(PointIdx::from(2)); // remove vertex 2
-        assert_eq!(att.len(), 5);
-        assert_eq!(att.num_unique_values(), 5);
-        assert_eq!(
-            &att.point_to_att_val_map
-                .as_ref()
-                .unwrap()
-                .iter()
-                .map(|&i| usize::from(i))
-                .collect::<Vec<_>>(),
-            &vec![0, 1, 3, 2, 4]
-        );
-        att.remove::<NdVector<3, f32>, 3>(PointIdx::from(1)); // remove vertex 1
-        assert_eq!(att.len(), 4);
-        assert_eq!(att.num_unique_values(), 4);
-        assert_eq!(
-            &att.point_to_att_val_map
-                .as_ref()
-                .unwrap()
-                .iter()
-                .map(|&i| usize::from(i))
-                .collect::<Vec<_>>(),
-            &vec![0, 2, 1, 3]
-        );
     }
 
     /// Attribute types outside the stock decoder's range write as generic.

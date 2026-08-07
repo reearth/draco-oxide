@@ -6,9 +6,6 @@ use draco_oxide_core::types::DataValue;
 use draco_oxide_core::types::NdVector;
 use draco_oxide_core::types::{AttributeValueIdx, Vector};
 
-#[cfg(feature = "evaluation")]
-use crate::eval;
-
 use super::Config;
 use super::PortabilizationImpl;
 
@@ -31,9 +28,6 @@ where
     where
         W: ByteWriter,
     {
-        #[cfg(feature = "evaluation")]
-        eval::write_json_pair("portabilization", "ToBits".into(), _writer);
-
         Self {
             att,
             _marker: std::marker::PhantomData,

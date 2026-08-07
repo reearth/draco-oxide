@@ -1,0 +1,51 @@
+# Round-trips a city-scale PLATEAU LOD2 building tile (81k faces after
+# degenerate-face cleanup, ECEF-scale float32 coordinates) through the
+# reference decoder and our decoder. The huge coordinate extent makes this the
+# quantization stress case among the fixtures; Ssim comparisons are
+# scale-independent, and the cross-decoder check is exact-parity.
+#
+# Data: PLATEAU Chiyoda-ku; see bldg_chiyoda_lod2.obj for the source citation.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "bldg_chiyoda_lod2.obj"
+output = "oxide.drc"
+# The tile spans ~1 km, so the 11-bit default is half-meter steps; 16 bits
+# puts the quantization error at ~1.6 cm.
+[operations.cfg.attributes.Position]
+quantization = { bits = 16 }
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "google_decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "google_decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "oxide.drc"
+output = "oxide_decoded.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "bldg_chiyoda_lod2.obj"
+input2 = "google_decoded.obj"
+methods = [
+    { method = "Ssim", min = 0.98, color_by = "Geometry" },
+    { method = "Ssim", min = 0.98, color_by = "Normal" },
+]
+
+# At this coordinate magnitude (~1e7) the f32 ULP is 1.0, so the decoders'
+# dequantization may differ by float rounding up to an ULP per component;
+# the bound allows that while still catching any real divergence, which
+# would be at least one 16-bit quantization step times the ~160 m block
+# scale seen when parity actually breaks.
+[[operations]]
+op = "Comparison"
+input1 = "google_decoded.obj"
+input2 = "oxide_decoded.obj"
+methods = [{ method = "L2Norm", max = 2.0 }]

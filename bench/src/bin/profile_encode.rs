@@ -19,7 +19,7 @@ fn encode_region(mesh: &Mesh, reps: usize) -> usize {
         // cold single-run cost.
         let mut buffer = Vec::new();
         Encoder::new()
-            .encode(mesh.clone(), &mut buffer, Config::default())
+            .encode_mesh(mesh.clone(), &mut buffer, Config::default())
             .expect("encode");
         last = buffer.len();
         std::hint::black_box(&buffer);

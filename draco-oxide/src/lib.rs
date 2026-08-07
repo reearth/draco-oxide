@@ -1,4 +1,19 @@
-// lib.rs
+//! `draco-oxide` is a high-performance Draco codec written in pure Rust,
+//! targeting the current Draco bitstreams: 2.2 for triangular meshes and 2.3
+//! for point clouds.
+//!
+//! [`encode::Encoder`] compresses a [`Mesh`] or a [`PointCloud`] into a Draco
+//! stream under an [`encode::Config`] or [`encode::PointCloudConfig`]; the free
+//! [`encode::encode_mesh`] and [`encode::encode_point_cloud`] functions are
+//! one-shot wrappers. Behind the default `decoder` feature, the decoder crate
+//! is re-exported as [`decode`]. The [`io`] module loads and writes OBJ files
+//! and transcodes glTF/GLB assets with Draco-compressed mesh primitives.
+//!
+//! Streams are interoperable with the reference C++ implementation in both
+//! directions.
+//!
+//! Decode-only consumers (e.g. WASM viewers) should depend on the
+//! `draco-oxide-decoder` crate directly, which never links the encoder.
 
 /// Re-export of the shared core crate (`draco-oxide-core`): the geometry/attribute
 /// data model, numeric primitives (`core::types`), and the codec algorithms shared
@@ -6,12 +21,12 @@
 pub use draco_oxide_core as core;
 
 // Re-export the core data-model types a caller needs to drive the encoder, so
-// depending on `draco-oxide` alone is enough — no separate `draco-oxide-core`
+// depending on `draco-oxide` alone is enough, no separate `draco-oxide-core`
 // import just to name a `Mesh`, build one, or reach `Config::default()`. The full
 // surface remains available under `draco_oxide::core`.
 
-/// The geometry container consumed by [`encode`](encode::encode), and the builder
-/// used to assemble one.
+/// The geometry container the encoder consumes, and the builder used to
+/// assemble one.
 ///
 /// Everything needed to drive the encoder is reachable from `draco_oxide` alone:
 ///
@@ -30,6 +45,9 @@ pub use draco_oxide_core as core;
 /// fn _drives(_m: Mesh, _a: Attribute, _v: NdVector<3, f32>) {}
 /// ```
 pub use draco_oxide_core::mesh::{builder::MeshBuilder, Mesh};
+
+/// The point cloud container the encoder consumes.
+pub use draco_oxide_core::point_cloud::PointCloud;
 
 /// The attribute data model: a vertex attribute and the enums describing it.
 pub use draco_oxide_core::attribute::{
@@ -52,14 +70,8 @@ pub mod encode;
 #[cfg(feature = "decoder")]
 pub use draco_oxide_decoder as decode;
 
-/// Cross-crate round-trip / integration tests relocated from `draco-oxide-core`
-/// and `draco-oxide-decoder` (they need the encoder + io + decoder together).
+// White-box tests over crate-private encoder internals (data structures,
+// traversal, entropy, connectivity); black-box integration tests live in the
+// `tests` crate.
 #[cfg(test)]
-mod roundtrip_tests;
-
-/// Evaluation module contains the evaluation functions for the encoder and the decoder.
-/// When enabled, draco-oxide encoder will spit out the evaluation data mixed with encoded data,
-/// and then the `EvalWriter` is used to filter out the evaluation data. This functionality is
-/// most often used in the development and testing phase.
-#[cfg(feature = "evaluation")]
-pub mod eval;
+mod white_box_tests;

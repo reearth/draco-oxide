@@ -199,40 +199,13 @@ impl AttributeBuffer {
         std::slice::from_raw_parts_mut(self.as_ptr() as *mut Data, self.len)
     }
 
-    /// Consumes the buffer and reinterprets its allocation as a `Vec<Data>`.
-    /// # Safety
-    /// The buffer's allocation must be compatible with a `Vec<Data>`, i.e. it
-    /// must have been allocated by the global allocator with a capacity (in
-    /// bytes) equal to `self.len * size_of::<Data>()`. The `Data` type and
-    /// component count are validated at runtime by this function.
-    #[allow(unused)]
-    pub unsafe fn into_vec<Data, const N: usize>(self) -> Vec<Data>
-    where
-        Data: Vector<N>,
-    {
-        assert_eq!(
-            Data::Component::get_dyn(),
-            self.component_type,
-            "Data type mismatch: Cannot push data of type {:?} into attribute buffer of type {:?}",
-            Data::Component::get_dyn(),
-            self.component_type
-        );
-        assert!(
-            N == self.num_components,
-            "Number of components mismatch: Cannot push data with {} components into attribute buffer with {} components",
-            N, self.num_components
-        );
-
-        self.into_vec_unchecked()
-    }
-
     /// Consumes the buffer and reinterprets its allocation as a `Vec<Data>`
     /// without validating the element type.
     /// # Safety
-    /// In addition to the allocation-compatibility requirement of
-    /// [`into_vec`](Self::into_vec), the caller must ensure that `Data` matches
-    /// the buffer's component type and that `N` equals its component count;
-    /// these are only checked under `safety_assert`.
+    /// The buffer's allocation must be compatible with a `Vec<Data>` (global
+    /// allocator, capacity in bytes equal to `self.len * size_of::<Data>()`),
+    /// `Data` must match the buffer's component type, and `N` its component
+    /// count; the latter two are only checked under `safety_assert`.
     pub unsafe fn into_vec_unchecked<Data, const N: usize>(self) -> Vec<Data>
     where
         Data: Vector<N>,
@@ -588,25 +561,6 @@ impl MaybeInitAttributeBuffer {
             num_components,
             initialized_elements,
         }
-    }
-
-    /// Returns a slice of all the values in the buffer casted to the static type `Data`.
-    /// Safety: Callers must know exactly which part of resulting slice is valid. \
-    /// Dereferencing the uninitialized part of the slice is undefined behavior.
-    /// Moreover, 'num_components * component_type.size()' must equal 'std::mem::size_of::<Data>()'.
-    #[allow(unused)]
-    pub fn as_slice_unchecked<Data, const N: usize>(&self) -> &[Data]
-    where
-        Data: Vector<N>,
-        Data::Component: DataValue,
-    {
-        safety_assert_eq!(
-            mem::size_of::<Data>(), self.component_type.size() * self.num_components,
-            "Cannot create slice: Trying to cast to {}, but the buffer stores elements of type {}D vector of {:?}, which has size {}",
-            mem::size_of::<Data>(), self.num_components, self.component_type, self.component_type.size(),
-        );
-        // Safety: upheld.
-        unsafe { std::slice::from_raw_parts(self.data.as_ptr() as *const Data, self.len) }
     }
 
     #[allow(unused)]

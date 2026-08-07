@@ -1,21 +1,16 @@
 use crate::bit_coder::{ByteWriter, Reader, ReaderErr};
 
-pub mod rans;
 pub mod shannon;
 
 pub const L_RANS_BASE: usize = 4096;
-pub const DEFAULT_RANS_PRECISION: usize = 12;
-pub const DEFAULT_RABS_PRECISION: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymbolEncodingMethod {
-    #[allow(unused)]
     LengthCoded,
     DirectCoded,
 }
 
 impl SymbolEncodingMethod {
-    #[allow(unused)]
     pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, Err> {
         let method = reader.read_u8()?;
         match method {
@@ -36,21 +31,21 @@ impl SymbolEncodingMethod {
 }
 
 /// One alphabet entry of a rANS distribution. The fields fit in `u32` because
-/// frequencies sum to `2^RANS_PRECISION` and the precision never exceeds 20.
+/// frequencies sum to `2^precision` and the precision never exceeds 20.
 pub struct RansSymbol {
     pub freq_count: u32,
     pub freq_cumulative: u32,
 }
 
 /// Builds the cumulative-frequency table over the alphabet. The frequencies
-/// must sum to exactly `2^RANS_PRECISION`.
+/// must sum to exactly `2^precision`.
 pub fn rans_symbol_table(freq_counts: &[usize], precision: usize) -> Result<Vec<RansSymbol>, Err> {
     let mut rans_syms = Vec::with_capacity(freq_counts.len());
 
     let mut freq_cumulative: usize = 0;
     for freq_count in freq_counts {
         // The casts are lossless for every table that passes the final sum
-        // check, since all partial sums are then bounded by 2^RANS_PRECISION.
+        // check, since all partial sums are then bounded by 2^precision.
         rans_syms.push(RansSymbol {
             freq_count: *freq_count as u32,
             freq_cumulative: freq_cumulative as u32,
@@ -68,25 +63,6 @@ pub fn rans_symbol_table(freq_counts: &[usize], precision: usize) -> Result<Vec<
     }
 
     Ok(rans_syms)
-}
-
-/// Builds the slot-to-symbol lookup table: entry `r` is the symbol whose
-/// cumulative range contains `r`. The input must come from
-/// [`rans_symbol_table`], so the ranges tile `0..2^RANS_PRECISION`.
-/// `T` is the entry width; the alphabet's largest index must fit in it.
-pub fn rans_slot_table<T: Copy + Default + TryFrom<usize>>(rans_symbols: &[RansSymbol]) -> Vec<T> {
-    let total = rans_symbols
-        .last()
-        .map(|s| (s.freq_cumulative + s.freq_count) as usize)
-        .unwrap_or(0);
-    let mut slot_table = vec![T::default(); total];
-    for (i, sym) in rans_symbols.iter().enumerate() {
-        let start = sym.freq_cumulative as usize;
-        let end = start + sym.freq_count as usize;
-        let entry = T::try_from(i).unwrap_or_else(|_| unreachable!());
-        slot_table[start..end].fill(entry);
-    }
-    slot_table
 }
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]

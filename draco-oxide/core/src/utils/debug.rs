@@ -30,8 +30,8 @@ macro_rules! debug_expect {
 ///
 /// A failing safety assertion indicates a bug in this library, never a runtime or
 /// input condition; it is not a hardening check. The checks run only in debug
-/// builds, and only while the (default-on) `safety_assertions` feature is enabled
-/// — i.e. `all(debug_assertions, feature = "safety_assertions")`. Release builds
+/// builds, and only while the (default-on) `safety_assertions` feature is
+/// enabled, i.e. `all(debug_assertions, feature = "safety_assertions")`. Release builds
 /// never run them, and disabling the feature (`--no-default-features`) drops them
 /// from debug builds too.
 ///

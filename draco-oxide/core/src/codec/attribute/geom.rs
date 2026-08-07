@@ -1,42 +1,5 @@
 use crate::types::{DataValue, NdVector, Vector};
 
-#[allow(unused)]
-pub fn rotation_matrix_from<Data, const N: usize>(axis: Data, angle: f64) -> [Data; 3]
-where
-    Data: Vector<N>,
-    Data::Component: DataValue,
-{
-    let cos_angle = Data::Component::from_f64(angle.cos());
-    let sin_angle = Data::Component::from_f64(angle.sin());
-    let one_minus_cos = Data::Component::one() - cos_angle;
-    let mut r1 = Data::zero();
-    let mut r2 = Data::zero();
-    let mut r3 = Data::zero();
-    unsafe {
-        *r1.get_unchecked_mut(0) =
-            cos_angle + *axis.get_unchecked(0) * *axis.get_unchecked(0) * one_minus_cos;
-        *r1.get_unchecked_mut(1) = *axis.get_unchecked(0) * *axis.get_unchecked(1) * one_minus_cos
-            - *axis.get_unchecked(2);
-        *r1.get_unchecked_mut(2) = *axis.get_unchecked(0) * *axis.get_unchecked(2) * one_minus_cos
-            + *axis.get_unchecked(1);
-
-        *r2.get_unchecked_mut(0) = *axis.get_unchecked(1) * *axis.get_unchecked(0) * one_minus_cos
-            + *axis.get_unchecked(2) * sin_angle;
-        *r2.get_unchecked_mut(1) =
-            cos_angle + *axis.get_unchecked(1) * *axis.get_unchecked(1) * one_minus_cos;
-        *r2.get_unchecked_mut(2) = *axis.get_unchecked(1) * *axis.get_unchecked(2) * one_minus_cos
-            - *axis.get_unchecked(0) * sin_angle;
-
-        *r3.get_unchecked_mut(0) = *axis.get_unchecked(2) * *axis.get_unchecked(0) * one_minus_cos
-            - *axis.get_unchecked(1) * sin_angle;
-        *r3.get_unchecked_mut(1) = *axis.get_unchecked(2) * *axis.get_unchecked(1) * one_minus_cos
-            + *axis.get_unchecked(0) * sin_angle;
-        *r3.get_unchecked_mut(2) =
-            cos_angle + *axis.get_unchecked(2) * *axis.get_unchecked(2) * one_minus_cos;
-    };
-    [r1, r2, r3]
-}
-
 use crate::types::Abs;
 /// Transforms the data to the octahedron space.
 /// Make sure that the data is three dimensional.
@@ -97,7 +60,6 @@ where
 /// Data is transformed back from the octahedron space.
 /// # Safety
 /// 'Data' must be three dimensional.
-#[allow(unused)]
 pub unsafe fn octahedral_inverse_transform<Data, const N: usize>(v: NdVector<2, f32>) -> Data
 where
     Data: Vector<N>,

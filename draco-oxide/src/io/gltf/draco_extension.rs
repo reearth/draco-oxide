@@ -3,25 +3,32 @@
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
+/// Name of the glTF Draco mesh compression extension.
 pub const EXTENSION_NAME: &str = "KHR_draco_mesh_compression";
 
+/// Mapping from glTF attribute names (e.g. "POSITION") to attribute ids in
+/// the Draco stream, as written into the extension's `attributes` object.
 #[derive(Debug, Clone, Default)]
 pub struct DracoAttributeIds {
+    /// Attribute name to Draco attribute id.
     pub ids: HashMap<String, u32>,
 }
 
 impl DracoAttributeIds {
+    /// Creates an empty mapping.
     pub fn new() -> Self {
         Self {
             ids: HashMap::new(),
         }
     }
 
+    /// Maps the glTF attribute `name` to the Draco attribute `id`.
     pub fn insert(&mut self, name: &str, id: u32) {
         self.ids.insert(name.to_string(), id);
     }
 }
 
+/// Whether the primitive carries the Draco compression extension.
 pub fn is_draco_compressed(primitive: &Value) -> bool {
     primitive
         .get("extensions")
@@ -29,10 +36,12 @@ pub fn is_draco_compressed(primitive: &Value) -> bool {
         .is_some()
 }
 
+/// Whether the primitive's mode is TRIANGLES (the glTF default).
 pub fn is_triangle_primitive(primitive: &Value) -> bool {
     primitive.get("mode").and_then(|m| m.as_u64()).unwrap_or(4) == 4
 }
 
+/// The glTF name of a primitive mode value.
 pub fn primitive_mode_name(mode: u64) -> &'static str {
     match mode {
         0 => "POINTS",
@@ -46,6 +55,9 @@ pub fn primitive_mode_name(mode: u64) -> &'static str {
     }
 }
 
+/// Adds the Draco compression extension to a primitive, pointing it at the
+/// given buffer view and attribute id mapping, and clears the buffer
+/// references of the accessors the primitive uses.
 pub fn add_draco_extension(
     json: &mut Value,
     mesh_idx: usize,
@@ -96,6 +108,8 @@ fn clear_accessor_buffer_refs(json: &mut Value, accessor_idx: usize) {
     }
 }
 
+/// Adds the Draco extension to the glTF `extensionsUsed` and
+/// `extensionsRequired` arrays if it is not already listed.
 pub fn ensure_extension_declared(json: &mut Value) {
     if json.get("extensionsUsed").is_none() {
         json["extensionsUsed"] = json!([]);
@@ -116,6 +130,7 @@ pub fn ensure_extension_declared(json: &mut Value) {
     }
 }
 
+/// Appends a buffer view to the glTF JSON and returns its index.
 pub fn add_buffer_view(
     json: &mut Value,
     buffer_idx: usize,
@@ -134,6 +149,7 @@ pub fn add_buffer_view(
     idx
 }
 
+/// Sets the byte length of the buffer at `buffer_idx`.
 pub fn update_buffer_length(json: &mut Value, buffer_idx: usize, byte_length: usize) {
     if let Some(buffer) = json
         .get_mut("buffers")
@@ -144,6 +160,7 @@ pub fn update_buffer_length(json: &mut Value, buffer_idx: usize, byte_length: us
     }
 }
 
+/// Sets or removes the URI of the buffer at `buffer_idx`.
 pub fn set_buffer_uri(json: &mut Value, buffer_idx: usize, uri: Option<&str>) {
     if let Some(buffer) = json
         .get_mut("buffers")
@@ -161,6 +178,7 @@ pub fn set_buffer_uri(json: &mut Value, buffer_idx: usize, uri: Option<&str>) {
     }
 }
 
+/// Sets the byte offset of the buffer view at `buffer_view_idx`.
 pub fn update_buffer_view_offset(json: &mut Value, buffer_view_idx: usize, new_offset: usize) {
     if let Some(bv) = json
         .get_mut("bufferViews")
@@ -269,8 +287,9 @@ pub fn remove_buffer_views(
     old_to_new
 }
 
-/// glTF componentType values
+/// glTF componentType value for unsigned 16-bit integers.
 pub const COMPONENT_TYPE_UNSIGNED_SHORT: u64 = 5123;
+/// glTF componentType value for 32-bit floats.
 pub const COMPONENT_TYPE_FLOAT: u64 = 5126;
 
 /// Update an accessor's componentType, e.g. for feature ID attributes whose

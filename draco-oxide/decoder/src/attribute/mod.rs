@@ -20,7 +20,9 @@ use draco_oxide_core::codec::attribute::prediction_scheme::mesh_normal_predictio
     accumulate_face_normal_sums, canonical_normal_to_oct, sum_to_canonical_normal,
 };
 use draco_oxide_core::codec::attribute::prediction_scheme::mesh_constrained_multi_parallelogram_prediction::MAX_PARALLELOGRAMS;
-use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
+use draco_oxide_core::codec::attribute::prediction_scheme::{
+    PredictionSchemeImpl, PredictionSchemeType, SchemeDispatch,
+};
 use draco_oxide_core::codec::attribute::sequence::{PredictionDegreeTraverser, Traverser};
 use draco_oxide_core::codec::attribute::Portable;
 use draco_oxide_core::codec::connectivity::edgebreaker::TraversalType;
@@ -66,9 +68,12 @@ struct Descriptor {
 }
 
 impl Descriptor {
-    /// Whether this attribute can be a prediction parent.
+    /// Whether this attribute can be a prediction parent. The geometric
+    /// schemes read the parent as 3D positions, so anything else disqualifies.
     fn is_prediction_parent(&self) -> bool {
-        self.att_type == AttributeType::Position && self.port_type != PORT_GENERIC
+        self.att_type == AttributeType::Position
+            && self.port_type != PORT_GENERIC
+            && self.num_components == 3
     }
 
     /// Components of the portable representation; octahedral travels as 2.
@@ -128,6 +133,7 @@ fn decode_traversed_attributes(
         for _ in 0..atts_in_decoder {
             let att_type = AttributeType::read_from(reader)?;
             let component_type = ComponentDataType::read_from(reader)?;
+            crate::check_component_type(component_type)?;
             let num_components = reader.read_u8()? as usize;
             let _normalized = reader.read_u8()?;
             let uid = leb128_read(reader)? as u32;
@@ -599,42 +605,19 @@ fn run_plain_group<'p>(ads: &'p PlainDs<'p>, ctx: GroupCtx<'p, '_>) -> Result<Gr
     }
     let recorded_seq = match replay {
         Some(seq) => {
-            decode_group(
-                ads,
-                seq.iter().copied(),
-                &mut steppers,
-                &mut fusers,
-                num_values,
-                None,
-            )?;
+            decode_group(ads, &seq, &mut steppers, &mut fusers, num_values)?;
             None
         }
-        None => match traversal {
-            TraversalType::DepthFirst => {
-                let mut record_seq = record_walk.then(|| Vec::with_capacity(num_values));
-                decode_group(
-                    ads,
-                    Traverser::new(ads, seeds.to_vec()),
-                    &mut steppers,
-                    &mut fusers,
-                    num_values,
-                    record_seq.as_mut(),
-                )?;
-                record_seq
-            }
-            TraversalType::PredictionDegree => {
-                let seq = PredictionDegreeTraverser::new(ads, seeds.to_vec()).compute_seqeunce();
-                decode_group(
-                    ads,
-                    seq.iter().copied(),
-                    &mut steppers,
-                    &mut fusers,
-                    num_values,
-                    None,
-                )?;
-                record_walk.then_some(seq)
-            }
-        },
+        None => {
+            let seq = match traversal {
+                TraversalType::DepthFirst => Traverser::new(ads, seeds.to_vec()).compute_seqeunce(),
+                TraversalType::PredictionDegree => {
+                    PredictionDegreeTraverser::new(ads, seeds.to_vec()).compute_seqeunce()
+                }
+            };
+            decode_group(ads, &seq, &mut steppers, &mut fusers, num_values)?;
+            record_walk.then_some(seq)
+        }
     };
     Ok(GroupResult {
         members: steppers.into_iter().map(AnyStepper::finish).collect(),
@@ -732,35 +715,100 @@ impl ParsedPayload<'_> {
     }
 }
 
-/// [`parse_payload`] behind the component-count dispatch.
+/// [`parse_payload`] behind the component-count dispatch. Parsing itself runs
+/// with a runtime component count; only the flat-to-vector conversion at the
+/// end instantiates per count.
 fn parse_payload_dispatched<'a>(
     reader: &mut Reader<'a>,
     num_values: usize,
     desc: &Descriptor,
 ) -> Result<ParsedPayload<'a>, Err> {
-    Ok(match desc.portable_num_components() {
-        1 => ParsedPayload::N1(parse_payload::<1>(reader, num_values, desc)?),
-        2 => ParsedPayload::N2(parse_payload::<2>(reader, num_values, desc)?),
-        3 => ParsedPayload::N3(parse_payload::<3>(reader, num_values, desc)?),
-        4 => ParsedPayload::N4(parse_payload::<4>(reader, num_values, desc)?),
-        _ => return Err(Err::MalformedAttribute("unsupported number of components")),
+    let n = desc.portable_num_components();
+    if !(1..=4).contains(&n) {
+        return Err(Err::MalformedAttribute("unsupported number of components"));
+    }
+    let raw = parse_payload(reader, num_values, n, desc)?;
+    Ok(match n {
+        1 => ParsedPayload::N1(raw.into_typed::<1>()),
+        2 => ParsedPayload::N2(raw.into_typed::<2>()),
+        3 => ParsedPayload::N3(raw.into_typed::<3>()),
+        _ => ParsedPayload::N4(raw.into_typed::<4>()),
     })
 }
 
-/// Parses one attribute's payload block off the wire.
-fn parse_payload<'a, const N: usize>(
+/// [`Parsed`] with a runtime component count; eager corrections are flat,
+/// value-major.
+struct RawParsed<'a> {
+    scheme_ty: PredictionSchemeType,
+    corrections: RawCorrections<'a>,
+    flips: Vec<bool>,
+    orientations: Vec<bool>,
+    creases: [Vec<bool>; MAX_PARALLELOGRAMS],
+    transform: InverseTransform,
+}
+
+/// [`Corrections`] with a runtime component count.
+enum RawCorrections<'a> {
+    Eager(Vec<i32>),
+    Lazy(RansSymbolDecoder<'a>),
+}
+
+impl RawCorrections<'_> {
+    /// Drains the stream into a flat vector of `num_components` values.
+    fn materialize(self, num_components: usize) -> Vec<i32> {
+        match self {
+            RawCorrections::Eager(v) => v,
+            RawCorrections::Lazy(mut d) => (0..num_components)
+                .map(|_| d.decode() as u32 as i32)
+                .collect(),
+        }
+    }
+}
+
+impl<'a> RawParsed<'a> {
+    /// Splits the flat corrections into `N`-component vectors.
+    fn into_typed<const N: usize>(self) -> Parsed<'a, N>
+    where
+        NdVector<N, i32>: Vector<N, Component = i32>,
+    {
+        let corrections = match self.corrections {
+            RawCorrections::Eager(flat) => Corrections::Eager(
+                flat.chunks_exact(N)
+                    .map(|c| {
+                        let mut v = NdVector::<N, i32>::zero();
+                        for (i, &x) in c.iter().enumerate() {
+                            *v.get_mut(i) = x;
+                        }
+                        v
+                    })
+                    .collect(),
+            ),
+            RawCorrections::Lazy(d) => Corrections::Lazy(d),
+        };
+        Parsed {
+            scheme_ty: self.scheme_ty,
+            corrections,
+            flips: self.flips,
+            orientations: self.orientations,
+            creases: self.creases,
+            transform: self.transform,
+        }
+    }
+}
+
+/// Parses one attribute's payload block off the wire. `n` is the portable
+/// component count.
+fn parse_payload<'a>(
     reader: &mut Reader<'a>,
     num_values: usize,
+    n: usize,
     desc: &Descriptor,
-) -> Result<Parsed<'a, N>, Err>
-where
-    NdVector<N, i32>: Vector<N, Component = i32> + Portable,
-{
+) -> Result<RawParsed<'a>, Err> {
     if desc.port_type == PORT_GENERIC {
-        let values = read_raw_values::<N>(reader, num_values, desc.component_type)?;
-        return Ok(Parsed {
+        let values = read_raw_values(reader, num_values, n, desc.component_type)?;
+        return Ok(RawParsed {
             scheme_ty: PredictionSchemeType::NoPrediction,
-            corrections: Corrections::Eager(values),
+            corrections: RawCorrections::Eager(values),
             flips: Vec::new(),
             orientations: Vec::new(),
             creases: Default::default(),
@@ -769,53 +817,72 @@ where
     }
 
     let scheme_ty = prediction::read_scheme_id(reader)?;
-    let transform_id = reader.read_u8()?;
+    // The reference frames PREDICTION_NONE without a transform: no transform
+    // id byte and no transform data follow, the values ride the symbol coder
+    // untransformed.
+    let transform_id = if scheme_ty == PredictionSchemeType::NoPrediction {
+        None
+    } else {
+        Some(reader.read_u8()?)
+    };
 
     let rans_flag = reader.read_u8()?;
-    let corrections: Corrections<'a, N> = if rans_flag != 0 {
-        match start_symbol_decoder(reader, num_values * N, N)? {
-            AnySymbolDecoder::Direct(decoder) => Corrections::Lazy(decoder),
-            AnySymbolDecoder::Tagged(mut decoder) => {
-                let mut out = Vec::with_capacity(num_values);
-                for _ in 0..num_values {
-                    let mut v = NdVector::<N, i32>::zero();
-                    for i in 0..N {
-                        *v.get_mut(i) = decoder.decode() as u32 as i32;
-                    }
-                    out.push(v);
-                }
-                Corrections::Eager(out)
-            }
+    let corrections: RawCorrections<'a> = if rans_flag != 0 {
+        match start_symbol_decoder(reader, num_values * n, n)? {
+            AnySymbolDecoder::Direct(decoder) => RawCorrections::Lazy(decoder),
+            AnySymbolDecoder::Tagged(mut decoder) => RawCorrections::Eager(
+                (0..num_values * n)
+                    .map(|_| decoder.decode() as u32 as i32)
+                    .collect(),
+            ),
         }
     } else {
-        let mut out = Vec::with_capacity(num_values);
-        for _ in 0..num_values {
-            out.push(NdVector::<N, i32>::read_from(reader)?);
+        let mut out = Vec::with_capacity(num_values * n);
+        for _ in 0..num_values * n {
+            out.push(i32::read_from(reader)?);
         }
-        Corrections::Eager(out)
+        RawCorrections::Eager(out)
+    };
+
+    // Without a prediction scheme the reference zigzag-converts the values;
+    // undo it here so downstream consumes plain (non-negative) values.
+    let corrections = if scheme_ty == PredictionSchemeType::NoPrediction {
+        let mut vals = corrections.materialize(num_values * n);
+        for x in &mut vals {
+            let u = *x as u32;
+            *x = if u & 1 == 0 {
+                (u >> 1) as i32
+            } else {
+                -((u >> 1) as i32) - 1
+            };
+        }
+        RawCorrections::Eager(vals)
+    } else {
+        corrections
     };
 
     let mut flips = Vec::new();
     let mut orientations = Vec::new();
     let mut creases: [Vec<bool>; MAX_PARALLELOGRAMS] = Default::default();
-    let transform = match scheme_ty {
-        PredictionSchemeType::MeshNormalPrediction => {
-            let t = InverseTransform::read_from(reader, transform_id)?;
+    let transform = match (&scheme_ty, transform_id) {
+        (PredictionSchemeType::NoPrediction, _) | (_, None) => InverseTransform::None,
+        (PredictionSchemeType::MeshNormalPrediction, Some(id)) => {
+            let t = InverseTransform::read_from(reader, id)?;
             flips = prediction::decode_flip_metadata(reader, num_values)?;
             t
         }
-        PredictionSchemeType::MeshPredictionForTextureCoordinates => {
+        (PredictionSchemeType::MeshPredictionForTextureCoordinates, Some(id)) => {
             orientations = prediction::decode_orientation_metadata(reader)?;
-            InverseTransform::read_from(reader, transform_id)?
+            InverseTransform::read_from(reader, id)?
         }
-        PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction => {
+        (PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction, Some(id)) => {
             creases = prediction::decode_crease_metadata(reader, num_values)?;
-            InverseTransform::read_from(reader, transform_id)?
+            InverseTransform::read_from(reader, id)?
         }
-        _ => InverseTransform::read_from(reader, transform_id)?,
+        (_, Some(id)) => InverseTransform::read_from(reader, id)?,
     };
 
-    Ok(Parsed {
+    Ok(RawParsed {
         scheme_ty,
         corrections,
         flips,
@@ -825,34 +892,32 @@ where
     })
 }
 
-/// Reads a generic attribute's values, widened into the portable i32.
-fn read_raw_values<const N: usize>(
+/// Reads a generic attribute's values, widened into the flat portable i32s.
+fn read_raw_values(
     reader: &mut Reader<'_>,
     num_values: usize,
+    n: usize,
     component_type: ComponentDataType,
-) -> Result<Vec<NdVector<N, i32>>, Err>
-where
-    NdVector<N, i32>: Vector<N, Component = i32>,
-{
+) -> Result<Vec<i32>, Err> {
     if component_type.size() > 4 {
         return Err(Err::Unimplemented);
     }
-    let mut out = Vec::with_capacity(num_values);
-    for _ in 0..num_values {
-        let mut v = NdVector::<N, i32>::zero();
-        for i in 0..N {
-            *v.get_mut(i) = match component_type {
-                ComponentDataType::I8 => reader.read_u8()? as i8 as i32,
-                ComponentDataType::U8 => reader.read_u8()? as i32,
-                ComponentDataType::I16 => reader.read_u16()? as i16 as i32,
-                ComponentDataType::U16 => reader.read_u16()? as i32,
-                ComponentDataType::I32 | ComponentDataType::U32 | ComponentDataType::F32 => {
-                    reader.read_u32()? as i32
-                }
-                _ => return Err(Err::MalformedAttribute("invalid component type")),
-            };
-        }
-        out.push(v);
+    // Gated types cannot reach here: descriptors declaring them were rejected
+    // at parse, so their fall-through to the error arm is dead code.
+    let mut out = Vec::with_capacity(num_values * n);
+    for _ in 0..num_values * n {
+        out.push(match component_type {
+            #[cfg(feature = "rare-component-types")]
+            ComponentDataType::I8 => reader.read_u8()? as i8 as i32,
+            ComponentDataType::U8 => reader.read_u8()? as i32,
+            #[cfg(feature = "rare-component-types")]
+            ComponentDataType::I16 => reader.read_u16()? as i16 as i32,
+            ComponentDataType::U16 => reader.read_u16()? as i32,
+            ComponentDataType::I32 | ComponentDataType::U32 | ComponentDataType::F32 => {
+                reader.read_u32()? as i32
+            }
+            _ => return Err(Err::MalformedAttribute("invalid component type")),
+        });
     }
     Ok(out)
 }
@@ -915,29 +980,72 @@ where
         })
     }
 
-    /// Decodes this attribute's value of rank `k` at the emitted corner `c`.
-    #[inline]
-    fn step(&mut self, c: CornerIdx, k: usize, point: PointIdx, record: &[VertexIdx]) {
-        // SAFETY: the walk emits at most one corner per distinct vertex, so
-        // k < num_values, the length of both the value buffer and any eager
-        // correction vector; `point` is a vertex id of the walked structure,
-        // below the map length the stepper was constructed with.
-        unsafe {
-            self.att
-                .set_point_att_val_unchecked(point, AttributeValueIdx::from(k));
-        }
-        let pred = self.predictor.predict(c, record, &self.att);
-        let mut corr = unsafe { self.corrections.next_unchecked(k) };
-        if self.zigzagged {
-            for i in 0..N {
-                *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
+    /// Decodes every value along the walk `seq`; `record[k]` is the vertex
+    /// emitted at rank `k`.
+    fn run(&mut self, seq: &[CornerIdx], record: &[VertexIdx]) {
+        let Stepper {
+            att,
+            predictor,
+            transform,
+            corrections,
+            zigzagged,
+            ..
+        } = self;
+        predictor.dispatch_mut(StepRun {
+            seq,
+            record,
+            att,
+            transform,
+            corrections,
+            zigzagged: *zigzagged,
+        });
+    }
+}
+
+/// One [`Stepper`]'s decode loop, monomorphic over the prediction scheme.
+struct StepRun<'a, 'p, const N: usize>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    seq: &'a [CornerIdx],
+    record: &'a [VertexIdx],
+    att: &'a mut Attribute,
+    transform: &'a InverseTransform,
+    corrections: &'a mut Corrections<'p, N>,
+    zigzagged: bool,
+}
+
+impl<'p, const N: usize, D: GenericAttributeDs> SchemeDispatch<'p, N, D> for StepRun<'_, 'p, N>
+where
+    NdVector<N, i32>: Vector<N, Component = i32> + Portable,
+{
+    type Out = ();
+
+    fn run<P: PredictionSchemeImpl<'p, N, D>>(self, scheme: &mut P) {
+        for (k, &c) in self.seq.iter().enumerate() {
+            let point = PointIdx::from(usize::from(self.record[k]));
+            // SAFETY: the caller checked `seq` holds exactly num_values
+            // corners, so k < num_values, the length of both the value buffer
+            // and any eager correction vector; `record[k]` is a vertex id of
+            // the walked structure, below the map length the stepper was
+            // constructed with.
+            unsafe {
+                self.att
+                    .set_point_att_val_unchecked(point, AttributeValueIdx::from(k));
             }
-        }
-        unsafe {
-            *self
-                .att
-                .unique_vals_as_slice_unchecked_mut::<NdVector<N, i32>>()
-                .get_unchecked_mut(k) = self.transform.compute_original(pred, corr);
+            let pred = scheme.predict::<false>(c, &self.record[..k], self.att);
+            let mut corr = unsafe { self.corrections.next_unchecked(k) };
+            if self.zigzagged {
+                for i in 0..N {
+                    *corr.get_mut(i) = unzigzag(*corr.get(i) as u32);
+                }
+            }
+            unsafe {
+                *self
+                    .att
+                    .unique_vals_as_slice_unchecked_mut::<NdVector<N, i32>>()
+                    .get_unchecked_mut(k) = self.transform.compute_original(pred, corr);
+            }
         }
     }
 }
@@ -951,13 +1059,12 @@ enum AnyStepper<'p, D: GenericAttributeDs> {
 }
 
 impl<'p, D: GenericAttributeDs> AnyStepper<'p, D> {
-    #[inline]
-    fn step(&mut self, c: CornerIdx, k: usize, point: PointIdx, record: &[VertexIdx]) {
+    fn run(&mut self, seq: &[CornerIdx], record: &[VertexIdx]) {
         match self {
-            AnyStepper::N1(s) => s.step(c, k, point, record),
-            AnyStepper::N2(s) => s.step(c, k, point, record),
-            AnyStepper::N3(s) => s.step(c, k, point, record),
-            AnyStepper::N4(s) => s.step(c, k, point, record),
+            AnyStepper::N1(s) => s.run(seq, record),
+            AnyStepper::N2(s) => s.run(seq, record),
+            AnyStepper::N3(s) => s.run(seq, record),
+            AnyStepper::N4(s) => s.run(seq, record),
         }
     }
 
@@ -1089,39 +1196,29 @@ impl NormalFuser {
     }
 }
 
-/// Runs one walk, stepping every member per emitted corner; entries are
-/// mapped at emit, and predictions only read already-emitted vertices.
+/// Runs the walk sequence `seq` through every member, one member at a time;
+/// predictions only read vertices of rank below the current one, so this
+/// reproduces the lockstep result.
 fn decode_group<D: GenericAttributeDs>(
     ads: &D,
-    walk: impl Iterator<Item = CornerIdx>,
+    seq: &[CornerIdx],
     steppers: &mut [AnyStepper<'_, D>],
     fusers: &mut [NormalFuser],
     num_values: usize,
-    mut record_seq: Option<&mut Vec<CornerIdx>>,
 ) -> Result<(), Err> {
-    let mut record: Vec<VertexIdx> = Vec::with_capacity(num_values);
-    let mut k = 0;
-    for c in walk {
-        if let Some(seq) = record_seq.as_mut() {
-            seq.push(c);
-        }
-        let v = ads.vertex_idx(c);
-        let point = PointIdx::from(usize::from(v));
-        for s in steppers.iter_mut() {
-            s.step(c, k, point, &record);
-        }
-        for nf in fusers.iter_mut() {
-            nf.on_emit(v, k, point);
-        }
-        record.push(v);
-        k += 1;
-    }
-    if k != num_values {
+    if seq.len() != num_values {
         return Err(Err::MalformedAttribute(
             "traversal did not reach every attribute vertex",
         ));
     }
+    let record: Vec<VertexIdx> = seq.iter().map(|&c| ads.vertex_idx(c)).collect();
+    for s in steppers.iter_mut() {
+        s.run(seq, &record);
+    }
     for nf in fusers.iter_mut() {
+        for (k, &v) in record.iter().enumerate() {
+            nf.on_emit(v, k, PointIdx::from(usize::from(v)));
+        }
         let pos = steppers[nf.parent_stepper].att();
         nf.finish_walk(ads, pos);
     }

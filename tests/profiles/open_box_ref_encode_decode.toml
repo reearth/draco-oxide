@@ -1,0 +1,25 @@
+# Reference-encoder gate: encode open_box.obj with Google Draco's reference encoder
+# at its default settings and decode the stream with draco-oxide, bounding the
+# decoded surface's drift from the source. Pins the bitstream from the decoder
+# side; the sibling ref_decodes_oxide profiles pin the encoder side.
+
+[[operations]]
+op = "DracoEncode"
+input = "open_box.obj"
+output = "ref.drc"
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "ref.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "open_box.obj"
+input2 = "decoded.obj"
+methods = [{ method = "L2Norm", max = 0.0017 }]

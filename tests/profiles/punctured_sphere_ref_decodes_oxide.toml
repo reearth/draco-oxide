@@ -1,0 +1,24 @@
+# Reference-decoder gate: encode punctured_sphere.obj with draco-oxide and decode the
+# stream with Google Draco's reference decoder, bounding the decoded surface's
+# drift from the source. Pins the bitstream from the encoder side.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "punctured_sphere.obj"
+output = "oxide.drc"
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "punctured_sphere.obj"
+input2 = "decoded.obj"
+methods = [{ method = "L2Norm", max = 0.035 }]

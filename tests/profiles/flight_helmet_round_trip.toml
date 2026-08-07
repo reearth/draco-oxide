@@ -1,0 +1,33 @@
+# Round-trips the multi-component FlightHelmet mesh (six sub-meshes flattened
+# into one OBJ, positions + normals + texcoords) through the reference decoder
+# and our decoder at parity.
+#
+# Data: Khronos glTF Sample Models; see FlightHelmet.obj for the source
+# citation.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "FlightHelmet.obj"
+output = "oxide.drc"
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "google_decoded.obj"
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "oxide.drc"
+output = "oxide_decoded.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "google_decoded.obj"
+input2 = "oxide_decoded.obj"
+methods = [{ method = "L2Norm", max = 0.00001 }]
+
+[[operations]]
+op = "Comparison"
+input1 = "FlightHelmet.obj"
+input2 = "google_decoded.obj"
+methods = [{ method = "L2Norm", max = 0.001 }]

@@ -1,11 +1,7 @@
 pub mod difference;
 pub mod oct_orthogonal;
-pub mod oct_reflection;
-pub mod orthogonal;
 pub mod wrapped_difference;
 
-#[cfg(feature = "evaluation")]
-use crate::eval;
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::types::NdVector;
 
@@ -17,8 +13,6 @@ pub enum PredictionTransform<const N: usize> {
     WrappedDifference(wrapped_difference::WrappedDifference<N>),
     NoTransform(NoPredictionTransform<N>),
     OctahedralOrthogonal(oct_orthogonal::OctahedronOrthogonalTransform<N>),
-    OctahedralReflection(oct_reflection::OctahedronReflectionTransform<N>),
-    Orthogonal(orthogonal::OrthogonalTransform<N>),
 }
 
 impl<const N: usize> PredictionTransform<N> {
@@ -34,35 +28,15 @@ impl<const N: usize> PredictionTransform<N> {
             PredictionTransformType::WrappedDifference => PredictionTransform::WrappedDifference(
                 wrapped_difference::WrappedDifference::new(cfg),
             ),
-            PredictionTransformType::OctahedralReflection => {
-                PredictionTransform::OctahedralReflection(
-                    oct_reflection::OctahedronReflectionTransform::new(cfg),
-                )
-            }
             PredictionTransformType::OctahedralOrthogonal => {
                 PredictionTransform::OctahedralOrthogonal(
                     oct_orthogonal::OctahedronOrthogonalTransform::new(cfg),
                 )
             }
-            PredictionTransformType::Orthogonal => {
-                PredictionTransform::Orthogonal(orthogonal::OrthogonalTransform::new(cfg))
+            // Config::validate rejects these before anything is constructed.
+            PredictionTransformType::OctahedralReflection | PredictionTransformType::Orthogonal => {
+                panic!("unimplemented prediction transform type");
             }
-        }
-    }
-    #[allow(unused)] // TODO: Remove this whenever possible.
-    #[inline]
-    pub(crate) fn get_type(&self) -> PredictionTransformType {
-        match self {
-            PredictionTransform::NoTransform(_) => PredictionTransformType::NoTransform,
-            PredictionTransform::Difference(_) => PredictionTransformType::Difference,
-            PredictionTransform::WrappedDifference(_) => PredictionTransformType::WrappedDifference,
-            PredictionTransform::OctahedralReflection(_) => {
-                PredictionTransformType::OctahedralReflection
-            }
-            PredictionTransform::OctahedralOrthogonal(_) => {
-                PredictionTransformType::OctahedralOrthogonal
-            }
-            PredictionTransform::Orthogonal(_) => PredictionTransformType::Orthogonal,
         }
     }
 }
@@ -90,17 +64,21 @@ pub(crate) trait PredictionTransformImpl<const N: usize> {
         NdVector<N, i32>: Vector<N, Component = i32>;
 }
 
+/// The transform applied to prediction corrections before entropy coding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PredictionTransformType {
+    /// Stores the original values without transforming them.
     NoTransform,
+    /// Stores the plain difference between the original and predicted values.
     Difference,
+    /// Stores the difference wrapped into the value range of the attribute.
     WrappedDifference,
+    /// Difference transform for octahedral-encoded normals.
     OctahedralOrthogonal,
-    #[allow(unused)]
-    // TODO: This variant is not used yet, as we only support the default configuration. Remove this when we implement the octahedral orthogonal transform.
+    /// Octahedral transform based on reflection. Not selectable through the
+    /// public config.
     OctahedralReflection,
-    #[allow(unused)]
-    // TODO: This variant is not used yet, as we only support the default configuration. Remove this when we implement the orthogonal transform.
+    /// Orthogonal-basis transform. Not selectable through the public config.
     Orthogonal,
 }
 
@@ -130,8 +108,10 @@ impl PredictionTransformType {
     }
 }
 
+/// Configuration for a prediction transform.
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
+    /// The prediction transform to apply.
     pub ty: PredictionTransformType,
     pub portabilization: super::portabilization::Config,
 }
@@ -164,15 +144,6 @@ impl<const N: usize> PredictionTransformImpl<N> for NoPredictionTransform<N> {
     where
         W: ByteWriter,
     {
-        #[cfg(feature = "evaluation")]
-        {
-            eval::array_scope_begin("transformed data", _writer);
-            for &x in self.out.iter() {
-                eval::write_arr_elem(x.into(), _writer);
-            }
-            eval::array_scope_end(_writer);
-        }
-
         self.out
     }
 }

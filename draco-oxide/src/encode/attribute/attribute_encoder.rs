@@ -1,4 +1,4 @@
-use std::{ops, vec};
+use std::vec;
 
 use crate::encode::entropy::symbol_coding::encode_vector_symbols;
 use draco_oxide_core::attribute::Attribute;
@@ -11,10 +11,6 @@ use draco_oxide_core::mesh::ds::{AttributeDS, GenericAttributeDs};
 use draco_oxide_core::types::ConfigType;
 use draco_oxide_core::types::{CornerIdx, DataValue, NdVector, PointIdx};
 use thiserror::Error;
-
-#[cfg(feature = "evaluation")]
-#[allow(unused_imports)]
-use crate::eval;
 
 #[derive(Error, Debug)]
 pub enum Err {
@@ -36,21 +32,18 @@ pub enum Err {
     // ToDo: Change 5 to the build config
     UnsupportedNumComponents(usize),
     #[error("Prediction Error: {0}")]
-    PredictionError(#[from] draco_oxide_core::codec::attribute::prediction_scheme::Err),
+    PredictionError(#[from] super::prediction_metadata::Err),
 }
 
 #[derive(Clone, Debug)]
 pub struct GroupConfig {
-    #[allow(unused)]
-    range: Vec<ops::Range<usize>>,
-
     pub prediction_scheme: prediction_scheme::Config,
     pub prediction_transform: prediction_transform::Config,
 }
 
 impl GroupConfig {
     #[allow(clippy::single_range_in_vec_init, clippy::needless_update)]
-    fn default_for(att_ty: AttributeType, component_ty: ComponentDataType, size: usize) -> Self {
+    fn default_for(att_ty: AttributeType, component_ty: ComponentDataType) -> Self {
         // Integer values ride the integer codec with wrap-transformed
         // predictions whatever the attribute type; the geometric pipelines
         // below assume float input (float quantization, octahedral normals).
@@ -62,7 +55,6 @@ impl GroupConfig {
                 _ => prediction_scheme::PredictionSchemeType::DeltaPrediction,
             };
             return Self {
-                range: vec![0..size],
                 prediction_scheme: prediction_scheme::Config { ty: prediction },
                 prediction_transform: prediction_transform::Config {
                     ty: prediction_transform::PredictionTransformType::WrappedDifference,
@@ -72,7 +64,6 @@ impl GroupConfig {
         }
         match att_ty {
             AttributeType::Position => Self {
-                range: vec![0..size],
                 prediction_scheme: prediction_scheme::Config {
                     ty: prediction_scheme::PredictionSchemeType::MeshParallelogramPrediction,
                     ..prediction_scheme::Config::default()
@@ -83,7 +74,6 @@ impl GroupConfig {
                 },
             },
             AttributeType::Normal => Self {
-                range: vec![0..size],
                 prediction_scheme: prediction_scheme::Config {
                     ty: prediction_scheme::PredictionSchemeType::MeshNormalPrediction,
                     ..prediction_scheme::Config::default()
@@ -99,7 +89,6 @@ impl GroupConfig {
             // small ratio cost on heavily distorted atlases. The geometric
             // scheme stays available as a per-attribute override.
             AttributeType::TextureCoordinate => Self {
-                range: vec![0..size],
                 prediction_scheme: prediction_scheme::Config {
                     ty: prediction_scheme::PredictionSchemeType::MeshParallelogramPrediction,
                     ..prediction_scheme::Config::default()
@@ -109,20 +98,19 @@ impl GroupConfig {
                     portabilization: portabilization::Config::default_for(att_ty, component_ty),
                 },
             },
-            // Color (e.g. glTF COLOR_0) — a generic per-vertex attribute with no
+            // Color (e.g. glTF COLOR_0), a generic per-vertex attribute with no
             // mesh-geometry predictor. The reference Draco decoder
             // (`SequentialIntegerAttributeDecoder::CreateIntPredictionScheme`)
             // builds a prediction scheme ONLY when the transform type is
-            // `PREDICTION_TRANSFORM_WRAP` (id 1); any other transform — including
+            // `PREDICTION_TRANSFORM_WRAP` (id 1); any other transform, including
             // the `Difference`/`PREDICTION_TRANSFORM_DELTA` (id 0) default the
-            // `_` catch-all selects — makes the decoder skip the prediction
+            // `_` catch-all selects, makes the decoder skip the prediction
             // revert and return the raw quantized residuals (garbage colors,
             // alpha read as delta-of-constant). Pin Color to the
             // reference-compatible delta + wrapped-difference path
             // (PREDICTION_DIFFERENCE + WRAP, also the reference encoder's
             // generic high-speed path), so draco3d reconstructs absolute colors.
             AttributeType::Color => Self {
-                range: vec![0..size],
                 prediction_scheme: prediction_scheme::Config {
                     ty: prediction_scheme::PredictionSchemeType::DeltaPrediction,
                     ..prediction_scheme::Config::default()
@@ -141,7 +129,6 @@ impl GroupConfig {
             // under the wrap transform, so the plain `Difference` default would
             // decode to raw residuals there.
             _ => Self {
-                range: vec![0..size],
                 prediction_scheme: prediction_scheme::Config {
                     ty: prediction_scheme::PredictionSchemeType::DeltaPrediction,
                     ..prediction_scheme::Config::default()
@@ -189,13 +176,9 @@ impl ConfigType for Config {
 }
 
 impl Config {
-    pub fn default_for(
-        att_ty: AttributeType,
-        component_ty: ComponentDataType,
-        size: usize,
-    ) -> Self {
+    pub fn default_for(att_ty: AttributeType, component_ty: ComponentDataType) -> Self {
         Self {
-            group_cfgs: vec![GroupConfig::default_for(att_ty, component_ty, size)],
+            group_cfgs: vec![GroupConfig::default_for(att_ty, component_ty)],
             rans_encoding: true,
             mode: EncodingMode::Full,
         }
@@ -204,12 +187,11 @@ impl Config {
     /// Zero-CPU normal encoding: keeps the normal prediction/transform metadata of
     /// the default normal path, but the encoder synthesizes an all-zero correction
     /// stream instead of reading the input normals (see [`EncodingMode::ZeroCorrection`]).
-    pub fn predicted_normals(size: usize) -> Self {
+    pub fn predicted_normals() -> Self {
         Self {
             group_cfgs: vec![GroupConfig::default_for(
                 AttributeType::Normal,
                 ComponentDataType::F32,
-                size,
             )],
             rans_encoding: true,
             mode: EncodingMode::ZeroCorrection,
@@ -317,9 +299,7 @@ where
     /// representation together with its portabilization metadata. The metadata
     /// is returned rather than written because an encoder carrying several
     /// attributes emits every payload before the first metadata block.
-    pub(super) fn encode<const WRITE_NOW: bool, const BOOST: bool>(
-        self,
-    ) -> Result<(Attribute, Vec<u8>), Err> {
+    pub(super) fn encode<const WRITE_NOW: bool>(mut self) -> Result<(Attribute, Vec<u8>), Err> {
         if matches!(
             self.ads.att_data().get_component_type(),
             ComponentDataType::I64 | ComponentDataType::U64
@@ -330,10 +310,20 @@ where
             .prediction_scheme
             .ty
             .write_to(self.writer);
-        self.cfg.group_cfgs[0]
-            .prediction_transform
-            .ty
-            .write_to(self.writer);
+        // The reference frames PREDICTION_NONE without a transform: no
+        // transform id byte and no transform data, the values ride the symbol
+        // coder untransformed.
+        if self.cfg.group_cfgs[0].prediction_scheme.ty
+            == prediction_scheme::PredictionSchemeType::NoPrediction
+        {
+            self.cfg.group_cfgs[0].prediction_transform.ty =
+                prediction_transform::PredictionTransformType::NoTransform;
+        } else {
+            self.cfg.group_cfgs[0]
+                .prediction_transform
+                .ty
+                .write_to(self.writer);
+        }
 
         if self.cfg.mode == EncodingMode::ZeroCorrection {
             return self.encode_zero_correction_normal();
@@ -341,16 +331,16 @@ where
 
         let component_type = self.ads.att_data().get_component_type();
         match component_type {
-            ComponentDataType::F32 => self.unpack_num_components::<WRITE_NOW, BOOST, f32>(),
-            ComponentDataType::F64 => self.unpack_num_components::<WRITE_NOW, BOOST, f64>(),
-            ComponentDataType::U8 => self.unpack_num_components::<WRITE_NOW, BOOST, u8>(),
-            ComponentDataType::U16 => self.unpack_num_components::<WRITE_NOW, BOOST, u16>(),
-            ComponentDataType::U32 => self.unpack_num_components::<WRITE_NOW, BOOST, u32>(),
-            ComponentDataType::U64 => self.unpack_num_components::<WRITE_NOW, BOOST, u64>(),
-            ComponentDataType::I8 => self.unpack_num_components::<WRITE_NOW, BOOST, i8>(),
-            ComponentDataType::I16 => self.unpack_num_components::<WRITE_NOW, BOOST, i16>(),
-            ComponentDataType::I32 => self.unpack_num_components::<WRITE_NOW, BOOST, i32>(),
-            ComponentDataType::I64 => self.unpack_num_components::<WRITE_NOW, BOOST, i64>(),
+            ComponentDataType::F32 => self.unpack_num_components::<WRITE_NOW, f32>(),
+            ComponentDataType::F64 => self.unpack_num_components::<WRITE_NOW, f64>(),
+            ComponentDataType::U8 => self.unpack_num_components::<WRITE_NOW, u8>(),
+            ComponentDataType::U16 => self.unpack_num_components::<WRITE_NOW, u16>(),
+            ComponentDataType::U32 => self.unpack_num_components::<WRITE_NOW, u32>(),
+            ComponentDataType::U64 => self.unpack_num_components::<WRITE_NOW, u64>(),
+            ComponentDataType::I8 => self.unpack_num_components::<WRITE_NOW, i8>(),
+            ComponentDataType::I16 => self.unpack_num_components::<WRITE_NOW, i16>(),
+            ComponentDataType::I32 => self.unpack_num_components::<WRITE_NOW, i32>(),
+            ComponentDataType::I64 => self.unpack_num_components::<WRITE_NOW, i64>(),
             ComponentDataType::Invalid => Err(Err::UnsupportedDataType),
         }
     }
@@ -400,10 +390,7 @@ where
         for byte in transform_info_buffer {
             self.writer.write_u8(byte);
         }
-        prediction_scheme::mesh_normal_prediction::encode_flip_metadata(
-            &vec![false; num_values],
-            self.writer,
-        )?;
+        super::prediction_metadata::encode_flip_metadata(&vec![false; num_values], self.writer)?;
 
         // Normals are a leaf attribute, so this returned octahedral attribute is
         // never consulted as a parent; an empty 2-component attribute suffices.
@@ -419,9 +406,7 @@ where
         ))
     }
 
-    fn unpack_num_components<const WRITE_NOW: bool, const BOOST: bool, T>(
-        self,
-    ) -> Result<(Attribute, Vec<u8>), Err>
+    fn unpack_num_components<const WRITE_NOW: bool, T>(self) -> Result<(Attribute, Vec<u8>), Err>
     where
         T: DataValue + Copy,
         NdVector<1, T>: Vector<1>,
@@ -432,15 +417,15 @@ where
         let num_components = self.ads.att_data().get_num_components();
         match num_components {
             0 => unreachable!("Vector of dimension 0 is not allowed"),
-            1 => self.encode_typed::<WRITE_NOW, BOOST, 1, _>(),
-            2 => self.encode_typed::<WRITE_NOW, BOOST, 2, _>(),
-            3 => self.encode_typed::<WRITE_NOW, BOOST, 3, _>(),
-            4 => self.encode_typed::<WRITE_NOW, BOOST, 4, _>(),
+            1 => self.encode_typed::<WRITE_NOW, 1, _>(),
+            2 => self.encode_typed::<WRITE_NOW, 2, _>(),
+            3 => self.encode_typed::<WRITE_NOW, 3, _>(),
+            4 => self.encode_typed::<WRITE_NOW, 4, _>(),
             _ => Err(Err::UnsupportedNumComponents(num_components)),
         }
     }
 
-    fn encode_typed<const WRITE_NOW: bool, const BOOST: bool, const N: usize, T>(
+    fn encode_typed<const WRITE_NOW: bool, const N: usize, T>(
         self,
     ) -> Result<(Attribute, Vec<u8>), Err>
     where
@@ -449,22 +434,7 @@ where
         NdVector<N, i32>: Vector<N, Component = i32>,
         NdVector<N, f32>: Vector<N, Component = f32> + Portable,
     {
-        if !BOOST {
-            self.encode_impl::<WRITE_NOW, NdVector<N, T>, N>()
-        } else {
-            unimplemented!("BOOST is not implemented yet");
-            // let corner_table = match self.conn_out {
-            //     ConnectivityEncoderOutput::Edgebreaker(edgebreaker_out) => {
-            //         edgebreaker_out.corner_table.attribute_corner_table(self.att.get_id().as_usize())
-            //     },
-            //     ConnectivityEncoderOutput::Sequential(_) => {
-            //         unimplemented!("Sequential connectivity encoding is not implemented yet");
-            //     },
-            // };
-            // let mut gm: GroupManager<'encoder, NdVector<N, T>,_> = GroupManager::compose_groups(&self.parents, &corner_table, cfg);
-            // gm.split_unpredicted_values();
-            // gm.compress::<WRITE_NOW,_>(&self.att, self.writer)?;
-        }
+        self.encode_impl::<WRITE_NOW, NdVector<N, T>, N>()
     }
 
     fn encode_impl<const WRITE_NOW: bool, Data, const N: usize>(
@@ -525,45 +495,16 @@ where
         // Transform the predicted values
         let mut transform = PredictionTransform::new(self.cfg.group_cfgs[0].prediction_transform);
 
-        // Predict and transform the values
+        // Predict and transform the values.
         match self.sequencing {
             Sequencing::Traversal => {
-                let ads = &self.ads;
-                let mut sequence_record = Vec::new();
-                let mut step = |c: CornerIdx| {
-                    let val = prediction_scheme.predict(c, &sequence_record, &port_att);
-                    let v = ads.vertex_idx(c);
-                    sequence_record.push(v);
-                    let p = ads.global_ds().point_idx(c);
-                    transform.map_with_tentative_metadata(port_att.get(p), val);
-                };
-                match sequence {
-                    SequenceSource::Shared(s) => s.iter().copied().for_each(step),
-                    // Recording materializes the sequence regardless, and the
-                    // walk runs measurably faster unfused, so fill first and
-                    // replay.
-                    SequenceSource::Record(buf) => {
-                        *buf = Traverser::new(ads, self.corners_of_edgebreaker.to_vec())
-                            .compute_seqeunce();
-                        buf.iter().copied().for_each(step);
-                    }
-                    // The walk and the prediction loop thrash each other's
-                    // cache when interleaved per corner, so the lazy walk fills
-                    // a bounded chunk that is then replayed in batch.
-                    SequenceSource::Own => {
-                        let chunk_len = 1024.min(ads.vertex_index_bound());
-                        let mut walker = Traverser::new(ads, self.corners_of_edgebreaker.to_vec());
-                        let mut chunk = Vec::with_capacity(chunk_len);
-                        loop {
-                            chunk.clear();
-                            chunk.extend(walker.by_ref().take(chunk_len));
-                            if chunk.is_empty() {
-                                break;
-                            }
-                            chunk.iter().copied().for_each(&mut step);
-                        }
-                    }
-                }
+                prediction_scheme.dispatch_mut(TraversalRun {
+                    ads: &self.ads,
+                    port_att: &port_att,
+                    transform: &mut transform,
+                    sequence,
+                    corners_of_edgebreaker: self.corners_of_edgebreaker,
+                });
             }
             // A linear sequence carries no connectivity, so the only prediction
             // available is the preceding value, taken as zero at the first
@@ -580,7 +521,23 @@ where
 
         // Write the output
         let mut transform_info_buffer = Vec::new();
-        let output = transform.squeeze(&mut transform_info_buffer);
+        let mut output = transform.squeeze(&mut transform_info_buffer);
+
+        // Without a prediction scheme nothing guarantees positive values, so
+        // the reference codec zigzag-converts them; NoPrediction must match
+        // (every other configured transform emits positive corrections).
+        if prediction_scheme.get_type() == prediction_scheme::PredictionSchemeType::NoPrediction {
+            for v in &mut output {
+                for i in 0..N {
+                    let x = *v.get(i);
+                    *v.get_mut(i) = if x >= 0 {
+                        x << 1
+                    } else {
+                        ((-(x + 1)) << 1) | 1
+                    };
+                }
+            }
+        }
 
         self.writer.write_u8(self.cfg.rans_encoding as u8);
         if self.cfg.rans_encoding {
@@ -601,13 +558,13 @@ where
             for byte in transform_info_buffer {
                 self.writer.write_u8(byte);
             }
-            prediction_scheme.encode_prediction_metadtata(self.writer)?;
+            prediction_scheme.encode_prediction_metadata(self.writer)?;
         } else if matches!(
             prediction_scheme.get_type(),
             prediction_scheme::PredictionSchemeType::MeshPredictionForTextureCoordinates
                 | prediction_scheme::PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction
         ) {
-            prediction_scheme.encode_prediction_metadtata(self.writer)?;
+            prediction_scheme.encode_prediction_metadata(self.writer)?;
             for byte in transform_info_buffer {
                 self.writer.write_u8(byte);
             }
@@ -615,7 +572,7 @@ where
             // otherwise, the prediction scheme does not have metadata
             assert!({
                 let mut buffer = Vec::new();
-                prediction_scheme.encode_prediction_metadtata(&mut buffer)?;
+                prediction_scheme.encode_prediction_metadata(&mut buffer)?;
                 buffer.is_empty()
             });
             for byte in transform_info_buffer {
@@ -627,467 +584,75 @@ where
     }
 }
 
+/// The traversal-sequenced predict-and-transform loop, monomorphic over the
+/// prediction scheme.
+struct TraversalRun<'a, 's, 'ds, const N: usize> {
+    ads: &'a AttributeDS<'ds>,
+    port_att: &'a Attribute,
+    transform: &'a mut PredictionTransform<N>,
+    sequence: SequenceSource<'s>,
+    corners_of_edgebreaker: &'a [CornerIdx],
+}
+
+impl<'parents, 'a, 's, 'ds, const N: usize>
+    prediction_scheme::SchemeDispatch<'parents, N, AttributeDS<'ds>>
+    for TraversalRun<'a, 's, 'ds, N>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    type Out = ();
+
+    fn run<P: prediction_scheme::PredictionSchemeImpl<'parents, N, AttributeDS<'ds>>>(
+        self,
+        scheme: &mut P,
+    ) {
+        let TraversalRun {
+            ads,
+            port_att,
+            transform,
+            sequence,
+            corners_of_edgebreaker,
+        } = self;
+        let mut sequence_record = Vec::new();
+        let mut step = |c: CornerIdx| {
+            let val = scheme.predict::<true>(c, &sequence_record, port_att);
+            let v = ads.vertex_idx(c);
+            sequence_record.push(v);
+            let p = ads.global_ds().point_idx(c);
+            transform.map_with_tentative_metadata(port_att.get(p), val);
+        };
+        match sequence {
+            SequenceSource::Shared(s) => s.iter().copied().for_each(step),
+            // Recording materializes the sequence regardless, and the
+            // walk runs measurably faster unfused, so fill first and
+            // replay.
+            SequenceSource::Record(buf) => {
+                *buf = Traverser::new(ads, corners_of_edgebreaker.to_vec()).compute_seqeunce();
+                buf.iter().copied().for_each(step);
+            }
+            // The walk and the prediction loop thrash each other's
+            // cache when interleaved per corner, so the lazy walk fills
+            // a bounded chunk that is then replayed in batch.
+            SequenceSource::Own => {
+                let chunk_len = 1024.min(ads.vertex_index_bound());
+                let mut walker = Traverser::new(ads, corners_of_edgebreaker.to_vec());
+                let mut chunk = Vec::with_capacity(chunk_len);
+                loop {
+                    chunk.clear();
+                    chunk.extend(walker.by_ref().take(chunk_len));
+                    if chunk.is_empty() {
+                        break;
+                    }
+                    chunk.iter().copied().for_each(&mut step);
+                }
+            }
+        }
+    }
+}
+
+use super::prediction_metadata::PredictionEncoder;
 use super::prediction_transform::{self, PredictionTransform};
 use crate::encode::attribute::portabilization;
 use crate::encode::attribute::prediction_transform::PredictionTransformImpl;
 use draco_oxide_core::codec::attribute::prediction_scheme;
 use draco_oxide_core::types::Vector;
-
-// struct Group<'encoder, C, const N: usize>
-// {
-// 	/// Prediction
-// 	prediction: PredictionScheme<'encoder, C, N>,
-//     transform: PredictionTransform<N>,
-// }
-
-// impl<'encoder, C, const N: usize> Group<'encoder, C, N>
-//     where
-//         C: GenericCornerTable,
-//         NdVector<N, i32>: Vector<N, Component = i32>,
-// {
-
-//     fn from<'parents>(parents: &'encoder[&'parents Attribute], corner_table: &'parents C, cfg: GroupConfig) -> Self
-//         where 'parents: 'encoder
-//     {
-
-//         let prediction_scheme = prediction_scheme::PredictionScheme::new(cfg.prediction_scheme.ty, parents, corner_table);
-
-//         let prediction_transform = PredictionTransform::new(cfg.prediction_transform);
-
-//         Self {
-//             prediction: prediction_scheme,
-//             transform: prediction_transform
-//         }
-//     }
-
-//     fn split_unpredicted_values(&mut self, values_indices: &mut Vec<std::ops::Range<usize>>) -> Vec<std::ops::Range<usize>> {
-//         let impossible_to_predict = self.prediction
-//             .get_values_impossible_to_predict(values_indices);
-//         impossible_to_predict
-//     }
-
-//     // fn predict_and_transform(&mut self, ranges: &Vec<ops::Range<usize>>, attribute: &Attribute) {
-//     //     for i in ranges.iter().cloned().flatten() {
-//     //         let prediction = self.prediction.predict(
-//     //             unsafe { &attribute.as_slice_unchecked()[0..i] }
-//     //         );
-//     //         self.transform.map_with_tentative_metadata(
-//     //             attribute.get::<Data>(i),
-//     //             prediction
-//     //         );
-//     //     }
-//     // }
-
-//     fn squeeze_transformed_data<W>(&mut self, writer: &mut W)
-//         where W: ByteWriter
-//     {
-//         self.transform.squeeze(writer)
-//     }
-
-//     fn take_output<W>(self, writer: &mut W) -> Vec<u64>
-//         where W: ByteWriter
-//     {
-//         self.transform.out(writer)
-//     }
-// }
-
-// struct GroupManager<'encoder, Data, C, const N: usize>
-//     where
-//         Data: Vector<N> + Portable,
-//         Data::Component: DataValue,
-// {
-// 	partition: Vec<Vec<ops::Range<usize>>>,
-// 	groups: Vec<Group<'encoder, Data, C, N>>,
-//     corner_table: &'encoder C,
-// }
-
-// impl <'parents, 'encoder, Data, C, const N: usize> GroupManager<'encoder, Data, C, N>
-//     where
-//         'parents: 'encoder,
-//         Data: Vector<N> + Portable,
-//         Data::Component: DataValue,
-//         C: GenericCornerTable,
-// {
-//     fn compose_groups(parents: &'encoder [&'parents Attribute], corner_table: &'parents C, cfg: Config) -> Self {
-//         let mut groups = Vec::new();
-//         for cfg in cfg.group_cfgs.clone() {
-//             groups.push( Group::from(parents, corner_table, cfg));
-//         }
-//         Self {
-//             partition: cfg.group_cfgs.iter().map(|cfg| {
-//                 cfg.range.clone()
-//             }).collect(),
-//             groups,
-//             corner_table,
-//         }
-//     }
-
-//     fn split_unpredicted_values(&mut self) {
-//         let mut set_of_value_impossible_to_predict = Vec::new();
-//         for (group, indices) in &mut self.groups.iter_mut().zip(self.partition.iter_mut()) {
-//             let values = group.split_unpredicted_values(indices);
-//             set_of_value_impossible_to_predict.push(values);
-//         }
-//         let unpredicted_values = splice_disjoint_indices(set_of_value_impossible_to_predict);
-
-//         let cfg = prediction_transform::Config{
-//             ty: prediction_transform::PredictionTransformType::NoTransform,
-//             portabilization: portabilization::Config{
-//                 type_: portabilization::PortabilizationType::ToBits,
-//                 ..portabilization::Config::default()
-//             },
-//             ..prediction_transform::Config::default()
-//         };
-//         let group = Group {
-//             prediction: PredictionScheme::new(prediction_scheme::PredictionSchemeType::NoPrediction, &[], self.corner_table),
-//             transform: PredictionTransform::new(cfg),
-//         };
-//         self.partition.push(unpredicted_values);
-//         self.groups.push(group);
-//     }
-
-//     #[allow(dead_code)]
-//     fn partition_iter(&self) -> impl Iterator<Item = (ops::Range<usize>, &Group<'encoder, Data, C, N>)> {
-//         PartitionGroupIter::new(&self.groups, &self.partition)
-//     }
-
-//     #[allow(dead_code)]
-//     fn partition_iter_mut(&mut self) -> impl Iterator<Item = (ops::Range<usize>, &mut Group<'encoder, Data, C, N>)> {
-//         PartitionGroupIterMut::new(&mut self.groups, &self.partition)
-//     }
-
-//     fn partition_group_idx_iter<'a>(&'a self) -> PartitionGroupIdxIter<'a> {
-//         PartitionGroupIdxIter::new(&self.partition)
-//     }
-
-//     fn compress<const WRITE_NOW: bool, W>(&mut self, attribute: &Attribute, writer: &mut W) -> Result<(), Err>
-//         where W: ByteWriter
-//     {
-//         debug_write!("Start of Attribute Metadata", writer);
-//         // write id
-//         let id = attribute.get_id().as_usize();
-//         if id >= 1 << 16 {
-//             return Err(Err::InvalidAttributeId(id));
-//         } else {
-//             writer.write_u16(id as u16);
-//         };
-
-//         // write att type
-//         let att_type = attribute.get_attribute_type().get_id() as u64;
-//         writer.write_u8(att_type as u8);
-//         #[cfg(feature = "evaluation")]
-//         eval::write_json_pair(
-//             "attribute type",
-//             serde_json::to_value(attribute.get_attribute_type()).unwrap(),
-//             writer
-//         );
-
-//         // write the attribbute length
-//         let length = attribute.len() as u64;
-//         writer.write_u64(length);
-//         // for evaluation, write the data size in bytes
-//         #[cfg(feature = "evaluation")]
-//         eval::write_json_pair(
-//             "data size in bytes",
-//             // data size in bytes
-//             serde_json::to_value(length * std::mem::size_of::<Data>() as u64).unwrap(),
-//             writer
-//         );
-
-//         // write component type
-//         let component_type = attribute.get_component_type().get_id() as u8;
-//         writer.write_u8(component_type);
-//         #[cfg(feature = "evaluation")]
-//         eval::write_json_pair(
-//             "component type",
-//             serde_json::to_value(attribute.get_component_type()).unwrap(),
-//             writer
-//         );
-
-//         // write number of components
-//         let num_components = attribute.get_num_components();
-//         if num_components >= 1 << 8 {
-//             return Err(Err::UnsupportedNumComponents(num_components as usize));
-//         }
-//         writer.write_u8(num_components as u8);
-//         #[cfg(feature = "evaluation")]
-//         eval::write_json_pair(
-//             "number of components",
-//             serde_json::to_value(num_components).unwrap(),
-//             writer
-//         );
-
-//         // write parents
-//         let num_parents = attribute.get_parents().len();
-//         if num_parents >= 1 << 8 {
-//             return Err(Err::TooManyParents(num_parents as usize));
-//         }
-//         writer.write_u8(num_parents as u8);
-//         #[cfg(feature = "evaluation")]
-//         eval::write_json_pair(
-//             "number of parents",
-//             serde_json::to_value(num_parents).unwrap(),
-//             writer
-//         );
-
-//         for parent in attribute.get_parents() {
-//             let parent_id = parent.as_usize();
-//             if parent_id >= 1 << 16 {
-//                 return Err(Err::InvalidAttributeId(parent_id));
-//             } else {
-//                 writer.write_u16(parent_id as u16);
-//             }
-//         }
-//         #[cfg(feature = "evaluation")]
-//         {
-//             let parents = attribute.get_parents();
-//             eval::write_json_pair(
-//                 "parents",
-//                 serde_json::to_value(parents).unwrap(),
-//                 writer
-//             );
-//         }
-
-//         debug_write!("End of Attribute Metadata", writer);
-
-//         // Prediction
-//         for (_ranges, _group) in self.partition.iter().zip(self.groups.iter_mut()) {
-//             // group.predict_and_transform(ranges, attribute);
-//         }
-
-//         debug_write!("Start of Transform Metadata", writer);
-//         // write number of groups
-//         let num_groups = self.groups.len();
-//         if num_groups >= 1 << 8 {
-//             return Err(Err::TooManyEncodingGroups(num_groups));
-//         }
-//         writer.write_u8(num_groups as u8);
-//         // Squeeze the transformed data and write it
-//         let mut transform_outputs = Vec::new();
-//         transform_outputs.reserve(self.groups.len());
-
-//         #[cfg(feature = "evaluation")]
-//         eval::array_scope_begin("groups", writer);
-
-//         for (mut group, _ranges) in std::mem::take(&mut self.groups).into_iter().zip(self.partition.iter()) {
-//             #[cfg(feature = "evaluation")]
-//             {
-//                 eval::scope_begin("group", writer);
-//                 eval::write_json_pair("prediction", group.prediction.get_type().to_string().into(), writer);
-//                 eval::write_json_pair("indices", format!("{:?}", _ranges).into(), writer);
-//             }
-
-//             // write prediction id
-//             let prediction_id = group.prediction.get_type().get_id();
-//             if prediction_id >= 1 << 4 {
-//                 return Err(Err::InvalidPredictionSchemeId(prediction_id as usize));
-//             }
-//             writer.write_u8(prediction_id);
-
-//             debug_write!("Start of Prediction Transform Metadata", writer);
-//             // write transform id
-//             let transform_id = group.transform.get_type().get_id();
-//             if transform_id >= 1 << 4 {
-//                 return Err(Err::InvalidPredictionSchemeId(transform_id as usize));
-//             }
-//             writer.write_u8(transform_id);
-
-//             #[cfg(feature = "evaluation")]
-//             eval::scope_begin("transform", writer);
-//             group.squeeze_transformed_data(writer);
-//             #[cfg(feature = "evaluation")]
-//             eval::scope_end(writer);
-
-//             #[cfg(feature = "evaluation")]
-//             eval::scope_begin("portabilization", writer);
-//             transform_outputs.push(group.take_output(writer).into_iter());
-//             #[cfg(feature = "evaluation")]
-//             eval::scope_end(writer);
-
-//             #[cfg(feature = "evaluation")]
-//             eval::scope_end(writer);
-
-//             debug_write!("End of Prediction Transform Metadata", writer);
-//         }
-
-//         #[cfg(feature = "evaluation")]
-//         eval::array_scope_end(writer);
-
-//         debug_write!("End of Transform Metadata", writer);
-
-//         for (range, gp_idx) in self.partition_group_idx_iter() {
-//             debug_write!("Start of a Range", writer);
-//             writer.write_u8(gp_idx as u8);
-//             let range_size = range.end - range.start;
-//             // ToDo: Reduce the size by realizing the fact that range size is always less than the attrubute size.
-//             writer.write_u64(range_size as u64);
-//             for _ in range {
-//                 transform_outputs[gp_idx].next().unwrap();
-//             }
-//         }
-//         Ok(())
-//     }
-// }
-
-// struct PartitionGroupIdxIter<'groups> {
-//     curr_pos: usize,
-//     ranges: &'groups Vec<Vec<ops::Range<usize>>>,
-//     is_done: bool,
-// }
-
-// impl<'groups> PartitionGroupIdxIter<'groups> {
-//     fn new(ranges: &'groups Vec<Vec<ops::Range<usize>>>) -> Self {
-//         Self {
-//             curr_pos: 0,
-//             ranges,
-//             is_done: false,
-//         }
-//     }
-// }
-
-// impl<'groups> Iterator for PartitionGroupIdxIter<'groups> {
-//     type Item = (ops::Range<usize>, usize);
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if self.is_done {
-//             return None;
-//         }
-
-//         let mut out = None;
-//         for (gp_idx, ranges) in self.ranges.iter().enumerate() {
-//             if let Some(range) = ranges.iter().find(|r| r.start == self.curr_pos) {
-//                 out = Some(
-//                     (gp_idx, range.clone())
-//                 );
-//             }
-//         }
-
-//         match out {
-//             Some((gp_idx, range)) => {
-//                 self.curr_pos = range.end;
-//                 Some((range, gp_idx))
-//             },
-//             None => {
-//                 self.is_done = true;
-//                 None
-//             }
-//         }
-//     }
-// }
-
-// struct PartitionGroupIter<'encoder, 'groups, Data, C, const N: usize>
-//     where Data: Vector<N> + Portable
-// {
-//     curr_pos: usize,
-//     groups: &'groups [Group<'encoder, Data, C, N>],
-//     ranges: &'groups Vec<Vec<ops::Range<usize>>>,
-//     is_done: bool,
-// }
-
-// impl<'encoder, 'groups, Data, C, const N: usize> PartitionGroupIter<'encoder, 'groups, Data, C, N>
-//     where
-//         Data: Vector<N> + Portable,
-//         C: GenericCornerTable,
-//         'encoder: 'groups,
-// {
-//     fn new(groups: &'groups [Group<'encoder, Data, C, N>], ranges: &'groups Vec<Vec<ops::Range<usize>>>) -> Self {
-//         Self {
-//             curr_pos: 0,
-//             groups,
-//             ranges,
-//             is_done: false,
-//         }
-//     }
-// }
-
-// impl<'encoder, 'groups, Data, C, const N: usize> Iterator for PartitionGroupIter<'encoder, 'groups, Data, C, N>
-//     where Data: Vector<N> + Portable,
-// {
-//     type Item = (ops::Range<usize>, &'groups Group<'encoder, Data, C, N>);
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if self.is_done {
-//             return None;
-//         }
-
-//         let mut out = None;
-//         for (gp_idx, ranges) in self.ranges.iter().enumerate() {
-//             if let Some(range) = ranges.iter().find(|r| r.start == self.curr_pos) {
-//                 out = Some(
-//                     (gp_idx, range.clone())
-//                 );
-//             }
-//         }
-
-//         match out {
-//             Some((gp_idx, range)) => {
-//                 self.curr_pos = range.end;
-//                 Some((range, &self.groups[gp_idx]))
-//             },
-//             None => {
-//                 self.is_done = true;
-//                 None
-//             }
-//         }
-//     }
-// }
-
-// struct PartitionGroupIterMut<'encoder, 'groups, Data, C, const N: usize>
-//     where Data: Vector<N> + Portable
-// {
-//     curr_pos: usize,
-//     groups: &'groups mut [Group<'encoder, Data, C, N>],
-//     ranges: &'groups Vec<Vec<ops::Range<usize>>>,
-//     is_done: bool,
-// }
-
-// impl<'encoder, 'groups, Data, C, const N: usize> PartitionGroupIterMut<'encoder, 'groups, Data, C, N>
-//     where
-//         Data: Vector<N> + Portable,
-//         'encoder: 'groups,
-// {
-//     fn new(groups: &'groups mut [Group<'encoder, Data, C, N>], ranges: &'groups Vec<Vec<ops::Range<usize>>>) -> Self {
-//         Self {
-//             curr_pos: 0,
-//             groups,
-//             ranges,
-//             is_done: false,
-//         }
-//     }
-// }
-
-// impl<'encoder, 'groups, Data, C, const N: usize> Iterator for PartitionGroupIterMut<'encoder, 'groups, Data, C, N>
-//     where
-//         Data: Vector<N> + Portable,
-//         'encoder: 'groups,
-// {
-//     type Item = (ops::Range<usize>, &'groups mut Group<'encoder, Data, C, N>);
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if self.is_done {
-//             return None;
-//         }
-
-//         let mut out = None;
-//         for (gp_idx, ranges) in self.ranges.iter().enumerate() {
-//             if let Some(range) = ranges.iter().find(|r| r.start == self.curr_pos) {
-//                 out = Some(
-//                     (gp_idx, range.clone())
-//                 );
-//             }
-//         }
-
-//         match out {
-//             Some((gp_idx, range)) => {
-//                 self.curr_pos = range.end;
-//                 let group = &mut self.groups[gp_idx] as *mut Group<'encoder, Data, C, N>;
-//                 // SAFETY: We ensure that the mutable reference is not used elsewhere.
-//                 Some((range, unsafe { &mut *group }))
-//             },
-//             None => {
-//                 self.is_done = true;
-//                 None
-//             }
-//         }
-//     }
-// }

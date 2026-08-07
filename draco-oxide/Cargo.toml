@@ -32,9 +32,9 @@ draco-oxide-core = { workspace = true, features = ["test-util"] }
 [features]
 default = ["decoder", "safety_assertions"]
 # Re-exports the decoder crate as `draco_oxide::decode`. Disable with
-# `--no-default-features` for an encoder-only build.
-decoder = ["dep:draco-oxide-decoder"]
-evaluation = []
+# `--no-default-features` for an encoder-only build. This crate encodes point
+# clouds, so it also turns on the decoder's point-cloud tier.
+decoder = ["dep:draco-oxide-decoder", "draco-oxide-decoder?/point-cloud"]
 # Forwards into core so debug output is enabled across every crate, not just here.
 debug_format = ["draco-oxide-core/debug_format", "draco-oxide-decoder?/debug_format"]
 # Gates the safety-assertion checks. On by default and combined with

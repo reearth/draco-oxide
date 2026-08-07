@@ -20,6 +20,8 @@ crate-type = ["cdylib"]
 draco-oxide-decoder = { path = "../draco-oxide/decoder", default-features = false }
 
 [features]
-default = ["dequantize"]
+default = ["dequantize", "rare-component-types"]
 # Mirrors the decoder's tiers so each probe build measures exactly one tier.
 dequantize = ["draco-oxide-decoder/dequantize"]
+point-cloud = ["draco-oxide-decoder/point-cloud"]
+rare-component-types = ["draco-oxide-decoder/rare-component-types"]

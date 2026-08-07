@@ -5,16 +5,22 @@ use draco_nd_vector::impl_ndvector_ops;
 use core::fmt;
 use std::{cmp, mem, ops};
 
+/// Typed index into an attribute's unique values.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AttributeValueIdx(u32);
+/// Typed index into the corners of a mesh; corner `3 * f + i` is slot `i` of face `f`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CornerIdx(u32);
+/// Typed index into the edges of a mesh.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EdgeIdx(u32);
+/// Typed index into the faces of a mesh.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FaceIdx(u32);
+/// Typed index into the points of a mesh, the space attribute values are attached to.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PointIdx(u32);
+/// Typed index into the topological vertices of a connectivity structure.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VertexIdx(u32);
 
@@ -240,6 +246,7 @@ idx_impl! {
 }
 
 impl CornerIdx {
+    /// The previous corner within the same face, in cyclic order.
     pub fn previous(self) -> CornerIdx {
         let corner = self.0;
         let out = if corner % 3 == 0 {
@@ -250,6 +257,7 @@ impl CornerIdx {
         CornerIdx(out)
     }
 
+    /// The next corner within the same face, in cyclic order.
     pub fn next(self) -> CornerIdx {
         let corner = self.0;
         let out = if corner % 3 == 2 {
@@ -260,6 +268,7 @@ impl CornerIdx {
         CornerIdx(out)
     }
 
+    /// The face this corner belongs to.
     pub fn face_idx(self) -> FaceIdx {
         FaceIdx(self.0 / 3)
     }
@@ -289,7 +298,9 @@ impl CornerIdx {
     }
 }
 
+/// A floating-point component type (`f32` or `f64`).
 pub trait Float: DataValue + ops::Div<Output = Self> + ops::Neg<Output = Self> {
+    /// The square root of the value.
     fn sqrt(self) -> Self;
 }
 
@@ -305,44 +316,15 @@ impl Float for f64 {
     }
 }
 
+/// A configuration type with a default value.
 pub trait ConfigType {
+    /// The default configuration.
     fn default() -> Self;
 }
 
-pub trait ToUsize {
-    #[allow(unused)]
-    fn to_usize(self) -> usize;
-}
-
-macro_rules! impl_to_usize_float {
-    ($($t:ty),*) => {
-        $(
-            impl ToUsize for $t {
-                fn to_usize(self)-> usize {
-                    self.to_bits() as usize
-                }
-            }
-        )*
-    };
-}
-
-impl_to_usize_float!(f32, f64);
-
-macro_rules! impl_to_usize_float {
-    ($($t:ty),*) => {
-        $(
-            impl ToUsize for $t {
-                fn to_usize(self)-> usize {
-                    self as usize
-                }
-            }
-        )*
-    };
-}
-
-impl_to_usize_float!(u8, u16, u32, u64, i8, i16, i32, i64);
-
+/// Absolute value; the identity for unsigned types.
 pub trait Abs {
+    /// The absolute value.
     fn abs(self) -> Self;
 }
 macro_rules! impl_abs {
@@ -369,35 +351,9 @@ macro_rules! impl_abs {
 impl_abs!(negatable: f32, f64, i8, i16, i32, i64);
 impl_abs!(non_negatable: u8, u16, u32, u64);
 
-pub trait Acos {
-    #[allow(unused)]
-    fn acos(self) -> Self;
-}
-
-macro_rules! impl_acos {
-    (float: $($t:ty),*) => {
-        $(
-            impl Acos for $t {
-                fn acos(self) -> Self {
-                    self.acos()
-                }
-            }
-        )*
-    };
-    (non_float: $($t:ty),*) => {
-        $(
-            impl Acos for $t {
-                fn acos(self) -> Self {
-                    panic!("Acos is not defined for non-float types")
-                }
-            }
-        )*
-    };
-}
-impl_acos!(float: f32, f64);
-impl_acos!(non_float: u8, u16, u32, u64, i8, i16, i32, i64);
-
+/// A type with a maximum representable value.
 pub trait Max {
+    /// The maximum representable value.
     const MAX_VALUE: Self;
 }
 
@@ -600,6 +556,7 @@ pub struct NdVector<const N: usize, T> {
 }
 
 impl<const N: usize, T: Float> NdVector<N, T> {
+    /// The vector scaled to unit Euclidean norm.
     pub fn normalize(self) -> Self {
         let mut out = self;
         let norm_inverse = T::one() / self.norm();
@@ -611,6 +568,7 @@ impl<const N: usize, T: Float> NdVector<N, T> {
         out
     }
 
+    /// The Euclidean norm of the vector.
     pub fn norm(self) -> T {
         let mut norm = T::zero();
         for i in 0..N {
@@ -652,6 +610,8 @@ use std::ops::Index;
 use std::ops::IndexMut;
 impl_ndvector_ops!();
 
+/// An `N`-component vector over a [`DataValue`] component type, with
+/// element access and arithmetic.
 pub trait Vector<const N: usize>:
     Clone
     + Copy
@@ -683,22 +643,33 @@ pub trait Vector<const N: usize>:
     unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut Self::Component;
 }
 
+/// Dot product of two vectors.
 pub trait Dot {
+    /// The scalar type of the product.
     type Product;
+    /// The dot product of `self` and `other`.
     fn dot(self, other: Self) -> Self::Product;
 }
 
+/// Cross product; defined for three-dimensional vectors only.
 pub trait Cross {
+    /// The cross product of `self` and `other`.
     fn cross(self, other: Self) -> Self;
 }
 
+/// Element-wise multiplication of two vectors.
 pub trait ElementWiseMul<Rhs = Self> {
+    /// The resulting vector type.
     type Output;
+    /// The element-wise product of `self` and `other`.
     fn elem_mul(self, other: Rhs) -> Self::Output;
 }
 
+/// Element-wise division of two vectors.
 pub trait ElementWiseDiv<Rhs = Self> {
+    /// The resulting vector type.
     type Output;
+    /// The element-wise quotient of `self` and `other`.
     fn elem_div(self, other: Rhs) -> Self::Output;
 }
 

@@ -1,5 +1,6 @@
 use std::{cmp, fmt};
 
+use crate::encode::entropy::rans::{self, RabsCoder};
 use crate::encode::entropy::symbol_coding::encode_symbols;
 use draco_oxide_core::attribute::AttributeType;
 use draco_oxide_core::bit_coder::{BitWriter, ByteWriter};
@@ -7,7 +8,6 @@ use draco_oxide_core::buffer::LsbFirst;
 use draco_oxide_core::codec::connectivity::edgebreaker::symbol_encoder::{
     CrLight, Symbol, SymbolEncoder,
 };
-use draco_oxide_core::codec::entropy::rans::{self, RabsCoder};
 use draco_oxide_core::debug_write;
 use draco_oxide_core::mesh::ds::CornerTable;
 use draco_oxide_core::mesh::ds::GenericCornerTable;
@@ -25,9 +25,6 @@ use draco_oxide_core::utils::bit_coder::leb128_write;
 use std::vec;
 
 use crate::encode::connectivity::ConnectivityEncoder;
-
-#[cfg(feature = "evaluation")]
-use crate::eval;
 
 pub(crate) struct Edgebreaker<'ads, 'faces, T>
 where
@@ -81,17 +78,19 @@ where
     config: Config,
 }
 
+/// Configuration for edgebreaker connectivity encoding. Exported as
+/// `EdgebreakerConfig`.
 #[derive(Clone, fmt::Debug, cmp::PartialEq)]
 pub struct Config {
+    /// The edgebreaker variant used to traverse the mesh and code the
+    /// topology symbols.
     pub traversal: EdgebreakerKind,
-    pub use_single_connectivity: bool,
 }
 
 impl ConfigType for Config {
     fn default() -> Self {
         Self {
             traversal: EdgebreakerKind::Valence,
-            use_single_connectivity: false,
         }
     }
 }
@@ -353,19 +352,6 @@ where
     where
         W: ByteWriter,
     {
-        #[cfg(feature = "evaluation")]
-        {
-            let mut string = String::new();
-            for split in self.topology_splits.iter() {
-                string.push_str(&format!(
-                    "{}:{}({:?}) ",
-                    split.merging_symbol_idx,
-                    split.split_symbol_idx,
-                    split.merging_edge_orientation
-                ));
-            }
-            eval::write_json_pair("topology_splits", serde_json::Value::from(string), writer);
-        }
         let mut last_idx = 0;
         // write the number of topology splits.
         leb128_write(self.topology_splits.len() as u64, writer);
@@ -957,441 +943,3 @@ impl Traversal for ValenceTraversal {
         Ok(())
     }
 }
-
-// // #[cfg(not(feature = "evaluation"))]
-// #[cfg(test)]
-// mod tests {
-//     use std::vec;
-
-//     use draco_oxide_core::attribute::AttributeId;
-//     use draco_oxide_core::types::Vector;
-//     use draco_oxide_core::types::NdVector;
-//     use crate::debug_expect;
-//     use crate::prelude::{BitReader, ByteReader};
-//     use draco_oxide_core::codec::connectivity::eq;
-//     use draco_oxide_core::utils::bit_coder::leb128_read;
-
-//     use super::*;
-
-//     // #[test]
-//     #[allow(unused)]
-//     fn test_decompose_into_manifolds_simple() {
-//         let mut faces = vec![
-//             [0, 1, 6], // 0
-//             [1, 6, 7], // 1
-//             [2, 3, 6], // 2
-//             [3, 6, 7], // 3
-//             [4, 5, 6], // 4
-//             [5, 6, 7], // 5
-//         ];
-//         let mut edgebreaker = Edgebreaker::new(Config::default());
-
-//         let points = vec![NdVector::<3,f32>::zero(); 8];
-//         let mut point_att = Attribute::from(
-//             AttributeId::new(0),
-//             points,
-//             AttributeType::Position,
-//             Vec::new()
-//         );
-
-//         assert!(edgebreaker.init(&mut [&mut point_att], &mut faces).is_ok());
-
-//         let coboundary_map = edgebreaker.coboundary_map_one;
-
-//         let idx_of = |edge: &[usize; 2]| edgebreaker.edges.binary_search(edge).unwrap();
-//         assert_eq!(coboundary_map[idx_of(&[0,1])], vec![0]);
-//         assert_eq!(coboundary_map[idx_of(&[0,6])], vec![0]);
-//         assert_eq!(coboundary_map[idx_of(&[1,6])], vec![0, 1]);
-//         assert_eq!(coboundary_map[idx_of(&[1,7])], vec![1]);
-//         assert_eq!(coboundary_map[idx_of(&[6,7])], vec![1,3,5]);
-//         assert_eq!(coboundary_map[idx_of(&[2,3])], vec![2]);
-//         assert_eq!(coboundary_map[idx_of(&[2,6])], vec![2]);
-//         assert_eq!(coboundary_map[idx_of(&[3,6])], vec![2,3]);
-//         assert_eq!(coboundary_map[idx_of(&[3,7])], vec![3]);
-//         assert_eq!(coboundary_map[idx_of(&[4,5])], vec![4]);
-//         assert_eq!(coboundary_map[idx_of(&[4,6])], vec![4]);
-//         assert_eq!(coboundary_map[idx_of(&[5,6])], vec![4,5]);
-//         assert_eq!(coboundary_map[idx_of(&[5,7])], vec![5]);
-
-//     }
-
-//     // #[test]
-//     #[allow(unused)]
-//     fn test_compute_edges() {
-//         let faces = vec![
-//             [0, 1, 6], // 0
-//             [1, 6, 7], // 1
-//             [2, 3, 6], // 2
-//             [3, 6, 7], // 3
-//             [4, 5, 6], // 4
-//             [5, 6, 7], // 5
-//         ];
-//         let mut edgebreaker = Edgebreaker::new(Config::default());
-//         edgebreaker.lies_on_boundary_or_cutting_path = vec![false; 8];
-
-//         edgebreaker.compute_edges(&faces);
-
-//         assert_eq!( edgebreaker.edges,
-//             vec![
-//                 [0, 1],
-//                 [0, 6],
-//                 [1, 6],
-//                 [1, 7],
-//                 [2, 3],
-//                 [2, 6],
-//                 [3, 6],
-//                 [3, 7],
-//                 [4, 5],
-//                 [4, 6],
-//                 [5, 6],
-//                 [5, 7],
-//                 [6, 7],
-//             ]
-//         );
-
-//         assert_eq!( edgebreaker.coboundary_map_one,
-//             vec![
-//                 vec![0],
-//                 vec![0],
-//                 vec![0,1],
-//                 vec![1],
-//                 vec![2],
-//                 vec![2],
-//                 vec![2,3],
-//                 vec![3],
-//                 vec![4],
-//                 vec![4],
-//                 vec![4,5],
-//                 vec![5],
-//                 vec![1,3,5],
-//             ]
-//         )
-//     }
-
-//     #[test]
-//     fn test_check_orientability() {
-//         // test1: orientable mesh
-//         let faces = vec![
-//             [0,1,4],
-//             [0,3,4],
-//             [1,2,5],
-//             [1,4,5],
-//             [2,5,6],
-//             [3,4,7],
-//             [3,7,10],
-//             [4,5,7],
-//             [5,6,8],
-//             [5,7,8],
-//             [7,8,9],
-//             [7,9,10],
-//             [8,9,11],
-//             [9,10,11]
-//         ];
-//         let mut edgebreaker = Edgebreaker::new(Config::default());
-//         edgebreaker.lies_on_boundary_or_cutting_path = vec![false; 12];
-//         edgebreaker.face_orientation = vec!(false; faces.len());
-//         edgebreaker.visited_faces = vec!(false; faces.len());
-//         edgebreaker.compute_edges(&faces);
-//         assert!(edgebreaker.check_orientability(&faces).is_ok());
-//         assert_eq!(edgebreaker.face_orientation, vec![true, false, true, false, false, true, true, true, true, false, true, true, false, false]);
-
-//         // test 2: non-orientable mesh
-//         let faces = vec![
-//             [0, 1, 3],
-//             [0, 1, 4],
-//             [0, 2, 3],
-//             [0, 4, 5],
-//             [2, 3, 5],
-//             [2, 4, 5],
-//         ];
-//         let mut edgebreaker = Edgebreaker::new(Config::default());
-//         edgebreaker.lies_on_boundary_or_cutting_path = vec![false; 6];
-
-//         edgebreaker.face_orientation = vec!(false; faces.len());
-//         edgebreaker.visited_faces = vec!(false; faces.len());
-//         edgebreaker.compute_edges(&faces);
-//         assert!(edgebreaker.check_orientability(&faces).is_err());
-
-//         let faces = [
-//             [9,12,13], [8,9,13], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
-//             [8,13,14], [7,8,14], [1,7,8], [0,1,7], [0,1,2], [0,2,3], [2,3,13], [3,13,14],
-//             [7,14,15], [6,7,15], [0,6,7], [0,5,6], [0,3,5], [3,4,5], [3,4,14], [4,14,15],
-//             [6,12,15], [6,9,12], [5,6,9], [5,9,10], [4,5,10], [4,10,11], [4,11,15], [11,12,15]
-//         ];
-//         let orientation = vec![
-//             false, false, true, true, true, false, true, true,
-//             false, false, true, false, true, true, false, true,
-//             false, false, true, true, true, true, false, true,
-//             true, true, false, false, false, false, false, false
-//         ];
-//         // sort faces while taping orientation
-//         let (faces, orientation) = {
-//             let mut zipped = faces.iter().zip(orientation.iter()).collect::<Vec<_>>();
-//             zipped.sort_by_key(|f| f.0);
-//             let faces = zipped.iter().map(|&(&f, _)| f).collect::<Vec<_>>();
-//             let orientation = zipped.iter().map(|&(_, &o)| o).collect::<Vec<_>>();
-//             (faces, orientation)
-//         };
-//         let mut edgebreaker = Edgebreaker::new(Config::default());
-//         edgebreaker.lies_on_boundary_or_cutting_path = vec![false; 12];
-//         edgebreaker.face_orientation = vec!(false; faces.len());
-//         edgebreaker.visited_faces = vec!(false; faces.len());
-//         edgebreaker.compute_edges(&faces);
-//         assert!(edgebreaker.check_orientability(&faces).is_ok());
-//         assert_eq!(edgebreaker.face_orientation, orientation,
-//             "orientation is wrong at: {:?}",
-//             edgebreaker.face_orientation.iter()
-//                 .zip(orientation.iter())
-//                 .enumerate()
-//                 .filter(|(_, (a,b))| a!=b)
-//                 .map(|(i,_)| faces[i])
-//                 .collect::<Vec<_>>()
-//         );
-//     }
-
-//     use Symbol::*;
-//     fn read_symbols<R>(reader: &mut R, size: usize) -> Vec<Symbol>
-//         where R: ByteReader
-//     {
-//         let mut out = Vec::new();
-//         let mut reader = BitReader::spown_from(reader).unwrap();
-//         for _ in 0..size {
-//             out.push(
-//                 CrLight::decode_symbol(&mut reader)
-//             );
-//         }
-//         out
-//     }
-
-//     fn read_topology_splits<R: ByteReader>(reader: &mut R) -> Vec<TopologySplit> {
-//         let mut topology_splits = Vec::new();
-//         let num_topology_splits = leb128_read(reader).unwrap() as u32;
-//         let mut last_idx = 0;
-//         for _ in 0..num_topology_splits {
-//             let source_symbol_idx = leb128_read(reader).unwrap() as usize + last_idx;
-//             let split_symbol_idx = source_symbol_idx - leb128_read(reader).unwrap() as usize;
-//             let topology_split = TopologySplit {
-//                 source_symbol_idx,
-//                 split_symbol_idx,
-//                 source_edge_orientation: Orientation::Right, // this value is temporary
-//             };
-//             topology_splits.push(topology_split);
-//             last_idx = source_symbol_idx;
-//         }
-
-//         let mut reader: BitReader<_> = BitReader::spown_from(reader).unwrap();
-//         for split_mut in topology_splits.iter_mut() {
-//             // update the orientation of the topology split.
-//             split_mut.source_edge_orientation = match reader.read_bits(1).unwrap() {
-//                 0 => Orientation::Left,
-//                 1 => Orientation::Right,
-//                 _ => unreachable!(),
-//             };
-//         }
-
-//         topology_splits
-//     }
-
-//     fn manual_test<const TEST_ORIENTABILITY: bool>(
-//         mut original_faces: Vec<[VertexIdx; 3]>,
-//         points: Vec<NdVector<3,f32>>,
-//         expected_symbols: Vec<Symbol>,
-//         expected_topology_splits: Vec<TopologySplit>,
-//         expected_faces: Option<Vec<[VertexIdx; 3]>>
-//     ) {
-//         // positions do not matter
-//         let mut point_att = Attribute::from(
-//             AttributeId::new(0),
-//             points,
-//             AttributeType::Position,
-//             Vec::new()
-//         );
-
-//         let mut buff_writer = Vec::new();
-//         Edgebreaker::new(Config::default()).encode_connectivity(&mut original_faces, &mut [&mut point_att], &mut buff_writer).unwrap();
-
-//         let mut reader = buff_writer.into_iter();
-
-//         assert_eq!(reader.read_u8().unwrap(), 0);
-//         assert_eq!(reader.read_u64().unwrap(), original_faces.len() as u64);
-//         assert_eq!(expected_topology_splits, read_topology_splits(&mut reader));
-//         debug_expect!("Start of Symbols", reader);
-//         assert_eq!(expected_symbols, read_symbols(&mut reader, original_faces.len()));
-
-//         if !TEST_ORIENTABILITY {
-//             original_faces.iter_mut().for_each(|f| f.sort());
-//         }
-//         if let Some(expected_faces) = expected_faces  {
-//             assert_eq!(original_faces, expected_faces);
-//         }
-//     }
-
-//     #[test]
-//     fn edgebreaker_disc() {
-//         let faces = vec![
-//             [0,1,4],
-//             [0,3,4],
-//             [1,2,5],
-//             [1,4,5],
-//             [2,5,6],
-//             [3,4,7],
-//             [3,7,10],
-//             [4,5,7],
-//             [5,6,8],
-//             [5,7,8],
-//             [7,8,9],
-//             [7,9,10],
-//             [8,9,11],
-//             [9,10,11]
-//         ];
-//         // positions do not matter
-//         let points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
-
-//         let expected_symbols = vec![E,E,S,R,L,R,R,C,C,R,R,R,C,C];
-
-//         let expected_faces = vec![
-//             [0,1,2],
-//             [1,3,4],
-//             [0,3,1],
-//             [0,5,3],
-//             [0,6,5],
-//             [5,6,7],
-//             [6,8,7],
-//             [0,8,6],
-//             [0,2,8],
-//             [2,9,8],
-//             [2,10,9],
-//             [2,11,10],
-//             [1,11,2],
-//             [1,4,11] // orientation base
-//         ];
-
-//         manual_test::<true>(faces, points, expected_symbols, Vec::new(), Some(expected_faces));
-//     }
-
-//     #[test]
-//     fn edgebreaker_split() {
-//         let faces = vec![
-//             [0,1,2],
-//             [0,2,4],
-//             [0,4,5],
-//             [2,3,4]
-//         ];
-//         // positions do not matter
-//         let points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
-
-//         let expected_symbols = vec![E,E,S,R];
-
-//         let expected_faces = vec![
-//             [0,2,1],
-//             [1,4,3],
-//             [0,1,3],
-//             [0,3,5] // orientation base
-//         ];
-
-//         manual_test::<true>(faces, points, expected_symbols, Vec::new(), Some(expected_faces));
-//     }
-
-//     #[test]
-//     fn edgebreaker_triangle() {
-//         let faces = vec![
-//             [0,1,3],
-//             [1,2,3],
-//             [2,3,4],
-//             [3,4,5]
-//         ];
-
-//         let points = vec![NdVector::<3,f32>::zero(); faces.iter().flatten().max().unwrap()+1];
-//         let expected_symbols = vec![E,R,R,L];
-//         let expected_faces = vec![
-//             [0,2,1],
-//             [0,1,3],
-//             [0,3,4],
-//             [0,4,5] // base
-//         ];
-//         manual_test::<true>(faces, points, expected_symbols, Vec::new(), Some(expected_faces));
-//     }
-
-//     #[test]
-//     fn edgebreaker_begin_from_center() {
-//         // mesh forming a square whose initial edge is not on the boundary.
-//         let mut original_faces = vec![
-//             [9,23,24], [8,9,23], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
-//             [8,22,23], [7,8,22], [1,7,8], [0,1,7], [0,1,2], [0,2,3], [2,3,13], [3,13,14],
-//             [7,21,22], [6,7,21], [0,6,7], [0,5,6], [0,3,5], [3,4,5], [3,4,14], [4,14,15],
-//             [6,20,21], [6,19,20], [5,6,19], [5,18,19], [4,5,18], [4,17,18], [4,15,17], [15,16,17]
-//         ];
-//         original_faces.sort();
-//         // positions do not matter
-//         let points = vec![NdVector::<3,f32>::zero(); original_faces.iter().flatten().max().unwrap()+1];
-
-//         let expected_symbols = vec![E, E, E, S, R, L, R, L, R, R, L, R, S, R, E, S, R, C, R, E, L, S, R, C, C, C, R, C, C, L, S /* hole */, C];
-//         let expected_topology_splits = vec![
-//             TopologySplit {
-//                 source_symbol_idx: 16,
-//                 split_symbol_idx: 16,
-//                 source_edge_orientation: Orientation::Left,
-//             },
-//         ];
-//         manual_test::<false>(original_faces, points, expected_symbols, expected_topology_splits, None);
-//     }
-
-//     #[test]
-//     fn edgebreaker_handle() {
-//         // create torus in order to test the handle symbol.
-//         let mut original_faces = vec![
-//             [9,12,13], [8,9,13], [8,9,10], [1,8,10], [1,10,11], [1,2,11], [2,11,12], [2,12,13],
-//             [8,13,14], [7,8,14], [1,7,8], [0,1,7], [0,1,2], [0,2,3], [2,3,13], [3,13,14],
-//             [7,14,15], [6,7,15], [0,6,7], [0,5,6], [0,3,5], [3,4,5], [3,4,14], [4,14,15],
-//             [6,12,15], [6,9,12], [5,6,9], [5,9,10], [4,5,10], [4,10,11], [4,11,15], [11,12,15]
-//         ];
-//         original_faces.sort();
-//         // positions do not matter
-//         let points = vec![NdVector::<3,f32>::zero(); original_faces.iter().flatten().max().unwrap()+1];
-
-//         let expected_symbols = vec![E, E, S, R, E, E, S, L, R, S, R, C, S /* handle */, R, C, S /* handle */, R, C, C, R, C, C, R, C, C, C, R, C, C, C, C, C];
-//         let expected_topology_splits = vec![
-//             TopologySplit {
-//                 source_symbol_idx: 31,
-//                 split_symbol_idx: 17,
-//                 source_edge_orientation: Orientation::Left,
-//             },
-//             TopologySplit {
-//                 source_symbol_idx: 28,
-//                 split_symbol_idx: 20,
-//                 source_edge_orientation: Orientation::Right,
-//             }
-//         ];
-
-//         manual_test::<false>(original_faces, points, expected_symbols, expected_topology_splits, None);
-//     }
-
-//     // #[test]
-//     #[allow(unused)] // uncomment the test to run it. it is commented out as it takes a long time to run.
-//     fn connectivity_check_after_vertex_permutation() {
-//         let (bunny,_) = tobj::load_obj(
-//             format!("../tests/data/punctured_sphere.obj"),
-//             &tobj::GPU_LOAD_OPTIONS
-//         ).unwrap();
-//         let bunny = &bunny[0];
-//         let mesh = &bunny.mesh;
-
-//         let faces_original = mesh.indices.chunks(3)
-//             .map(|x| [x[0] as usize, x[1] as usize, x[2] as usize])
-//             .collect::<Vec<_>>();
-
-//         let mut faces = faces_original.clone();
-
-//         let points = mesh.positions.chunks(3)
-//             .map(|x| NdVector::<3,f32>::from([x[0], x[1], x[2]]))
-//             .collect::<Vec<_>>();
-
-//         let mut point_att = Attribute::from(AttributeId::new(0), points, AttributeType::Position, Vec::new());
-//         let mut edgebreaker = Edgebreaker::new(Config::default());
-//         assert!(edgebreaker.init(&mut [&mut point_att], &mut faces).is_ok());
-//         let mut writer = Vec::new();
-//         assert!(edgebreaker.encode_connectivity(&mut faces, &mut [&mut point_att], &mut writer).is_ok());
-
-//         assert!(eq::weak_eq_by_laplacian(&faces, &faces_original).unwrap());
-//     }
-// }

@@ -1,6 +1,6 @@
 use draco_oxide::core::types::ConfigType;
 use draco_oxide::{
-    encode::{self, encode},
+    encode::{self, encode_mesh},
     io::obj::load_obj,
 };
 use std::io::Write;
@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut buffer = Vec::new();
 
     // Encode the mesh into the buffer.
-    encode(mesh, &mut buffer, encode::Config::default()).unwrap();
+    encode_mesh(mesh, &mut buffer, encode::Config::default()).unwrap();
 
     let mut file = std::fs::File::create("output.drc").unwrap();
     file.write_all(&buffer)?;

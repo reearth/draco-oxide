@@ -5,28 +5,32 @@ pub(crate) mod ds;
 pub(crate) mod entropy;
 pub(crate) mod header;
 pub(crate) mod metadata;
+/// Point-cloud encoding: the kd-tree method and its configuration.
+pub mod point_cloud;
 
 use draco_oxide_core::bit_coder::ByteWriter;
 use draco_oxide_core::debug_write;
 use draco_oxide_core::mesh::Mesh;
+use draco_oxide_core::point_cloud::PointCloud;
 use draco_oxide_core::types::ConfigType;
 use thiserror::Error;
 
-#[cfg(feature = "evaluation")]
-use crate::eval;
-
-pub trait EncoderConfig {
-    type Encoder;
-    fn get_encoder(&self) -> Self::Encoder;
-}
-
+/// Per-attribute encoding configuration and its option types.
 pub use attribute::{AttributeConfig, NormalEncoding, Quantization};
+/// Configuration for edgebreaker connectivity encoding.
 pub use connectivity::edgebreaker::Config as EdgebreakerConfig;
+/// Configuration for sequential connectivity encoding.
 pub use connectivity::sequential::Config as SequentialConfig;
+/// Selection of the connectivity encoding method and its configuration.
 pub use connectivity::Config as ConnectivityConfig;
+/// Configuration for point-cloud encoding.
+pub use point_cloud::Config as PointCloudConfig;
 
 use config_spec::ConfigSpec;
 
+/// The encoder configuration: connectivity method, per-attribute encoding
+/// options, geometry type, and metadata toggle. Built with the `with_*`
+/// builder methods, or deserialized from TOML.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(from = "ConfigSpec")]
 pub struct Config {
@@ -69,7 +73,7 @@ impl Config {
     }
 
     /// Overrides the per-type encoding for `ty` (prediction scheme, transform,
-    /// quantization, and — for normals — the normal encoding mode). Absent knobs
+    /// quantization, and the normal encoding mode for normals). Absent knobs
     /// fall back to the built-in default for that attribute type.
     pub fn with_attribute(
         mut self,
@@ -123,7 +127,7 @@ impl Config {
     /// combinations that would produce an undecodable or nonsensical stream (a
     /// texture predictor on a normal attribute, a coordinate max-error on an
     /// octahedral normal, an unimplemented traversal, out-of-range bits, …).
-    /// Called automatically at the top of [`encode`].
+    /// Called automatically by every encode entry point.
     pub fn validate(&self) -> Result<(), ConfigError> {
         use draco_oxide_core::attribute::AttributeType;
         use draco_oxide_core::codec::attribute::prediction_scheme::PredictionSchemeType;
@@ -148,9 +152,9 @@ impl Config {
                         scheme,
                         PredictionSchemeType::DeltaPrediction | PredictionSchemeType::NoPrediction
                     ) {
-                        return Err(ConfigError::MeshPredictionUnderSequential(
-                            scheme.to_string(),
-                        ));
+                        return Err(ConfigError::MeshPredictionUnderSequential(format!(
+                            "{scheme:?}"
+                        )));
                     }
                 }
                 if over.normal_encoding == Some(NormalEncoding::PredictedOnly) {
@@ -171,7 +175,7 @@ impl Config {
                 if !allowed_schemes(ty).iter().any(|s| s == scheme) {
                     return Err(ConfigError::PredictionSchemeForType {
                         ty,
-                        scheme: scheme.to_string(),
+                        scheme: format!("{scheme:?}"),
                     });
                 }
             }
@@ -182,6 +186,13 @@ impl Config {
                         ty,
                         transform: format!("{transform:?}"),
                     });
+                }
+                // The wire frames NoPrediction without any transform, so a
+                // transform override cannot be honored alongside it.
+                if over.prediction == Some(PredictionSchemeType::NoPrediction)
+                    && transform != attribute::PredictionTransformType::NoTransform
+                {
+                    return Err(ConfigError::TransformWithNoPrediction);
                 }
             }
 
@@ -212,7 +223,6 @@ fn allowed_schemes(
     match ty {
         Position => vec![
             S::MeshParallelogramPrediction,
-            S::MeshMultiParallelogramPrediction,
             S::MeshConstrainedMultiParallelogramPrediction,
             S::DeltaPrediction,
             S::NoPrediction,
@@ -222,7 +232,6 @@ fn allowed_schemes(
             S::MeshParallelogramPrediction,
             S::MeshConstrainedMultiParallelogramPrediction,
             S::MeshPredictionForTextureCoordinates,
-            S::DerivativePrediction,
             S::DeltaPrediction,
             S::NoPrediction,
         ],
@@ -244,8 +253,8 @@ fn allowed_transforms(
     use attribute::PredictionTransformType as T;
     use draco_oxide_core::attribute::AttributeType::*;
     match ty {
-        // Normals ride the octahedral transforms.
-        Normal => vec![T::OctahedralOrthogonal, T::OctahedralReflection],
+        // Normals ride the octahedral transform.
+        Normal => vec![T::OctahedralOrthogonal],
         _ => vec![T::Difference, T::WrappedDifference, T::NoTransform],
     }
 }
@@ -254,76 +263,134 @@ fn allowed_transforms(
 #[remain::sorted]
 #[derive(Error, Debug)]
 pub enum ConfigError {
+    /// A mesh-based prediction scheme was requested under sequential
+    /// connectivity encoding, which carries no connectivity to predict from.
     #[error("prediction scheme {0} needs mesh connectivity, which sequential encoding omits")]
     MeshPredictionUnderSequential(String),
+    /// A quantization mode other than an explicit bit count was set on a
+    /// normal attribute.
     #[error("normals accept only an explicit bit count (octahedral error is angular)")]
     NonBitsQuantizationForNormal,
+    /// A normal encoding mode was set on an attribute that is not a normal.
     #[error("normal encoding was set on a non-normal attribute ({0:?})")]
     NormalEncodingOnNonNormal(draco_oxide_core::attribute::AttributeType),
+    /// Geometry-predicted normals were requested under sequential connectivity
+    /// encoding, which carries no connectivity to predict from.
     #[error("geometry-predicted normals need mesh connectivity, which sequential encoding omits")]
     PredictedNormalsUnderSequential,
+    /// Prediction-degree traversal was requested under sequential connectivity
+    /// encoding, which carries no connectivity to traverse.
     #[error(
         "prediction-degree traversal needs mesh connectivity, which sequential encoding omits"
     )]
     PredictionDegreeUnderSequential,
+    /// The requested prediction scheme is not valid for the attribute type.
     #[error("prediction scheme {scheme} is not valid for attribute type {ty:?}")]
     PredictionSchemeForType {
         ty: draco_oxide_core::attribute::AttributeType,
         scheme: String,
     },
+    /// The requested quantization bit count is outside the supported range.
     #[error("quantization bits {0} out of range (must be 1..=30)")]
     QuantizationBitsOutOfRange(u8),
+    /// The requested prediction transform is not valid for the attribute type.
     #[error("prediction transform {transform} is not valid for attribute type {ty:?}")]
     TransformForType {
         ty: draco_oxide_core::attribute::AttributeType,
         transform: String,
     },
+    /// A prediction transform other than NoTransform was combined with
+    /// NoPrediction, which carries no transform on the wire.
+    #[error("NoPrediction carries no transform on the wire; only NoTransform can accompany it")]
+    TransformWithNoPrediction,
+    /// The selected edgebreaker traversal is not implemented.
     #[error("the selected edgebreaker traversal is not implemented")]
     UnsupportedTraversal,
 }
 
+/// Errors returned by the encode entry points.
 #[remain::sorted]
 #[derive(Error, Debug)]
 pub enum Err {
+    /// Attribute encoding failed.
     #[error("Attribute encoding error: {0}")]
     AttributeError(#[from] attribute::Err),
+    /// The configuration failed validation.
     #[error("Invalid encoder configuration: {0}")]
     ConfigError(#[from] ConfigError),
+    /// Connectivity encoding failed.
     #[error("Connectivity encoding error: {0}")]
     ConnectivityError(#[from] connectivity::Err),
+    /// Header encoding failed.
     #[error("Header encoding error: {0}")]
     HeaderError(#[from] header::Err),
+    /// Metadata encoding failed.
     #[error("Metadata encoding error: {0}")]
     MetadataError(#[from] metadata::Err),
+    /// Point-cloud encoding failed.
+    #[error("Point cloud encoding error: {0}")]
+    PointCloudError(#[from] point_cloud::Err),
+    /// The input mesh has no faces. Encode it with
+    /// [`Encoder::encode_point_cloud`] instead.
+    #[error("the mesh has no faces; encode it as a point cloud instead")]
+    PointCloudInput,
 }
 
-/// The mesh encoder. It carries no state yet; reusable per-run resources
-/// (scratch buffers, tables) will live here so consecutive encodes on one
-/// instance can share them.
+/// The mesh encoder. A single instance is meant to be reused across encodes
+/// so it can share resources between runs.
 #[derive(Default)]
 pub struct Encoder {}
 
 impl Encoder {
+    /// Creates a new encoder.
     pub fn new() -> Self {
         Self {}
     }
 
     /// Encodes the input mesh into a provided byte stream using the provided configuration.
-    pub fn encode<W>(&mut self, mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err>
+    pub fn encode_mesh<W>(&mut self, mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err>
     where
         W: ByteWriter,
     {
         encode_impl(mesh, writer, cfg)
     }
+
+    /// Encodes the input point cloud into a provided byte stream using the
+    /// provided configuration.
+    pub fn encode_point_cloud<W>(
+        &mut self,
+        pc: PointCloud,
+        writer: &mut W,
+        cfg: PointCloudConfig,
+    ) -> Result<(), Err>
+    where
+        W: ByteWriter,
+    {
+        point_cloud::encode_impl(pc, writer, cfg)?;
+        Ok(())
+    }
 }
 
 /// Encodes the input mesh into a provided byte stream using the provided
 /// configuration, with a freshly constructed [`Encoder`].
-pub fn encode<W>(mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err>
+pub fn encode_mesh<W>(mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err>
 where
     W: ByteWriter,
 {
-    Encoder::new().encode(mesh, writer, cfg)
+    Encoder::new().encode_mesh(mesh, writer, cfg)
+}
+
+/// Encodes the input point cloud into a provided byte stream using the provided
+/// configuration, with a freshly constructed [`Encoder`].
+pub fn encode_point_cloud<W>(
+    pc: PointCloud,
+    writer: &mut W,
+    cfg: PointCloudConfig,
+) -> Result<(), Err>
+where
+    W: ByteWriter,
+{
+    Encoder::new().encode_point_cloud(pc, writer, cfg)
 }
 
 fn encode_impl<W>(mesh: Mesh, writer: &mut W, cfg: Config) -> Result<(), Err>
@@ -333,8 +400,11 @@ where
     // Reject inconsistent configs before writing anything.
     cfg.validate()?;
 
-    #[cfg(feature = "evaluation")]
-    eval::scope_begin("compression info", writer);
+    // A faceless input has no connectivity to encode; it belongs on the
+    // point-cloud entry point.
+    if mesh.faces.is_empty() {
+        return Err(Err::PointCloudInput);
+    }
 
     // Encode header
     header::encode_header(writer, &cfg)?;
@@ -343,11 +413,7 @@ where
 
     // Encode metadata
     if cfg.metadata {
-        #[cfg(feature = "evaluation")]
-        eval::scope_begin("metadata", writer);
         metadata::encode_metadata(&mesh, writer)?;
-        #[cfg(feature = "evaluation")]
-        eval::scope_end(writer);
     }
 
     debug_write!("Metadata done, now starting connectivity.", writer);
@@ -380,8 +446,6 @@ where
 
     debug_write!("All done", writer);
 
-    #[cfg(feature = "evaluation")]
-    eval::scope_end(writer);
     Ok(())
 }
 
@@ -395,6 +459,25 @@ mod config_tests {
     #[test]
     fn default_config_is_valid() {
         assert!(<Config as ConfigType>::default().validate().is_ok());
+    }
+
+    #[test]
+    fn faceless_mesh_is_rejected_as_point_cloud() {
+        use draco_oxide_core::attribute::{Attribute, AttributeDomain, AttributeType};
+        use draco_oxide_core::types::NdVector;
+        let mut mesh = Mesh::new();
+        mesh.attributes = vec![Attribute::new::<NdVector<3, f32>, 3>(
+            vec![[0.0, 0.0, 0.0].into(), [1.0, 0.0, 0.0].into()],
+            AttributeType::Position,
+            AttributeDomain::Position,
+            Vec::new(),
+        )];
+        let mut out = Vec::new();
+        assert!(matches!(
+            encode_mesh(mesh, &mut out, <Config as ConfigType>::default()),
+            Err(Err::PointCloudInput)
+        ));
+        assert!(out.is_empty(), "nothing must be written before the check");
     }
 
     #[test]
@@ -475,7 +558,6 @@ mod config_tests {
     fn predictive_edgebreaker_is_rejected() {
         let cfg = Config::default().with_edgebreaker(EdgebreakerConfig {
             traversal: EdgebreakerKind::Predictive,
-            use_single_connectivity: false,
         });
         assert!(matches!(
             cfg.validate(),

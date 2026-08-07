@@ -20,7 +20,13 @@ fn canonical_face(f: &[PointIdx; 3]) -> [PointIdx; 3] {
     }
 }
 
+/// Builds a [`Mesh`] from raw attribute vectors and connectivity.
+///
+/// Attributes are added with [`Self::add_attribute`], connectivity with
+/// [`Self::set_connectivity_attribute`], and [`Self::build`] validates the
+/// inputs and produces the mesh.
 pub struct MeshBuilder {
+    /// The attributes added so far.
     pub attributes: Vec<Attribute>,
     faces: Vec<[usize; 3]>,
     current_id: usize,
@@ -33,6 +39,7 @@ impl Default for MeshBuilder {
 }
 
 impl MeshBuilder {
+    /// Creates an empty builder.
     pub fn new() -> Self {
         Self {
             attributes: Vec::new(),
@@ -41,6 +48,8 @@ impl MeshBuilder {
         }
     }
 
+    /// Adds an attribute from a vector of values and returns the id assigned
+    /// to it. `parents` lists the ids of attributes this attribute depends on.
     pub fn add_attribute<Data, const N: usize>(
         &mut self,
         data: Vec<Data>,
@@ -58,6 +67,8 @@ impl MeshBuilder {
         unique_id
     }
 
+    /// Adds an attribute with no values, with the given type, domain, and
+    /// component layout, and returns the id assigned to it.
     pub fn add_empty_attribute(
         &mut self,
         att_type: AttributeType,
@@ -72,10 +83,14 @@ impl MeshBuilder {
         unique_id
     }
 
+    /// Sets the connectivity: the faces as point-index triples.
     pub fn set_connectivity_attribute(&mut self, data: Vec<[usize; 3]>) {
         self.faces = data;
     }
 
+    /// Builds the mesh. Validates attribute dependencies, deduplicates
+    /// vertices by position, removes degenerate and duplicate faces, and drops
+    /// unreferenced vertices.
     pub fn build(self) -> Result<Mesh, Err> {
         self.dependency_check()?;
 
@@ -352,21 +367,27 @@ impl MeshBuilder {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct VertexHash(u64);
 
+/// Errors produced by [`MeshBuilder::build`].
 #[remain::sorted]
 #[derive(Error, Debug, Clone)]
 pub enum Err {
+    /// An attribute's length does not match its parent attribute's length.
     #[error("The attribute {0} has {1} values, but the parent attribute {2} has a size of {3}.")]
     AttributeSizeError(usize, usize, usize, usize),
 
+    /// Vertex deduplication failed.
     #[error("Failed to deduplicate vertices: {0}")]
     DeduplicationError(String),
 
+    /// Two attributes were added with the same id.
     #[error("Duplicate attribute ID: {0:?}")]
     DuplicateAttributeId(AttributeId),
 
+    /// An attribute lacks a parent of a type it requires.
     #[error("One of the attributes does not meet the minimum dependency; {:?} must depend on {:?}.", .0, .1)]
     MinimumDependencyError(AttributeType, AttributeType),
 
+    /// The faces index past the end of the position attribute.
     #[error("The connectivity attribute and the position attribute are not compatible; the connectivity attribute has a maximum index of {0} and the position attribute has a length of {1}.")]
     PositionAndConnectivityNotCompatible(usize, usize),
 }

@@ -1,7 +1,7 @@
+use crate::encode::entropy::rans;
+use crate::encode::entropy::rans::RansSymbolEncoder;
 use draco_oxide_core::bit_coder::BitWriter;
 use draco_oxide_core::bit_coder::ByteWriter;
-use draco_oxide_core::codec::entropy::rans;
-use draco_oxide_core::codec::entropy::rans::RansSymbolEncoder;
 use draco_oxide_core::codec::entropy::SymbolEncodingMethod;
 use draco_oxide_core::types::{NdVector, Vector};
 

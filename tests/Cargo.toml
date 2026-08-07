@@ -19,11 +19,5 @@ image = "0.25"
 image-compare = "0.5"
 
 [dev-dependencies]
-# Used by tests/eval/mod.rs (behind the `evaluation` feature) to serialize
-# EvalWriter output.
+# glTF JSON assembly/inspection in tests/gltf_attributes.rs.
 serde_json = "1.0"
-
-[features]
-# Forwarded so `cargo test -p tests --features evaluation` enables draco-oxide's
-# evaluation APIs used by tests/eval/mod.rs.
-evaluation = ["draco-oxide/evaluation"]

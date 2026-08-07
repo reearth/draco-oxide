@@ -1,0 +1,53 @@
+# Verifies the remaining selectable position prediction schemes end-to-end:
+# an explicit NoPrediction (raw quantized values) and DeltaPrediction (previous
+# value in traversal order). Each stream must be decodable by the reference
+# decoder with the geometry bounded by the quantization error.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "sphere.obj"
+output = "nopred.drc"
+[operations.cfg.attributes.Position]
+prediction = "NoPrediction"
+quantization = { bits = 14 }
+
+[[operations]]
+op = "DracoDecode"
+input = "nopred.drc"
+output = "nopred_decoded.obj"
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "nopred.drc"
+output = "nopred_oxide.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "sphere.obj"
+input2 = "nopred_decoded.obj"
+methods = [{ method = "L2Norm", max = 0.001 }]
+
+[[operations]]
+op = "Comparison"
+input1 = "nopred_decoded.obj"
+input2 = "nopred_oxide.obj"
+methods = [{ method = "L2Norm", max = 0.00001 }]
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "sphere.obj"
+output = "delta.drc"
+[operations.cfg.attributes.Position]
+prediction = "DeltaPrediction"
+quantization = { bits = 14 }
+
+[[operations]]
+op = "DracoDecode"
+input = "delta.drc"
+output = "delta_decoded.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "sphere.obj"
+input2 = "delta_decoded.obj"
+methods = [{ method = "L2Norm", max = 0.001 }]

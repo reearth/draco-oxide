@@ -7,14 +7,17 @@ pub struct BufferBuilder {
 }
 
 impl BufferBuilder {
+    /// Creates an empty buffer builder.
     pub fn new() -> Self {
         Self { data: Vec::new() }
     }
 
+    /// The current buffer length in bytes, including padding.
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
+    /// Whether the buffer is empty.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -31,6 +34,7 @@ impl BufferBuilder {
         (offset, length)
     }
 
+    /// Consumes the builder and returns the assembled buffer bytes.
     pub fn finish(self) -> Vec<u8> {
         self.data
     }

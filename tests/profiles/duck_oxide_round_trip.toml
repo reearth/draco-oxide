@@ -1,0 +1,24 @@
+# Own-decoder round trip: encode Duck.obj with draco-oxide and decode it with
+# draco-oxide, bounding the decoded surface's drift from the source. Runs
+# without the Google Draco binaries, so this coverage never skips.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "Duck.obj"
+output = "oxide.drc"
+
+[[operations]]
+op = "DracoOxideDecode"
+input = "oxide.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "Duck.obj"
+input2 = "decoded.obj"
+methods = [{ method = "L2Norm", max = 0.025 }]

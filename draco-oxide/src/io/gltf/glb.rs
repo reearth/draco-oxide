@@ -12,18 +12,25 @@ const GLB_VERSION: u32 = 2;
 const CHUNK_TYPE_JSON: &[u8; 4] = b"JSON";
 const CHUNK_TYPE_BIN: &[u8; 4] = b"BIN\0";
 
+/// Errors from GLB parsing and writing.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The file does not start with the GLB magic bytes.
     #[error("Invalid GLB magic bytes")]
     InvalidMagic,
+    /// The GLB container version is not supported.
     #[error("Unsupported GLB version: {0}")]
     UnsupportedVersion(u32),
+    /// The data is shorter than the length its header declares.
     #[error("GLB file too short: expected at least {expected} bytes, got {actual}")]
     FileTooShort { expected: usize, actual: usize },
+    /// A chunk has an unrecognized type identifier.
     #[error("Invalid chunk type at offset {offset}")]
     InvalidChunkType { offset: usize },
+    /// The file contains no JSON chunk.
     #[error("Missing JSON chunk")]
     MissingJsonChunk,
+    /// Writing to the output failed.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -37,7 +44,7 @@ pub struct GlbData {
     pub buffer: Vec<u8>,
 }
 
-/// Parse a GLB file from bytes.
+/// Parses GLB bytes into their JSON and binary buffer chunks.
 pub fn parse_glb(data: &[u8]) -> Result<GlbData, Error> {
     if data.len() < 20 {
         return Err(Error::FileTooShort {
@@ -104,7 +111,9 @@ pub fn parse_glb(data: &[u8]) -> Result<GlbData, Error> {
     })
 }
 
-/// Write GLB format to a writer.
+/// Writes a GLB container with the given JSON chunk and optional binary
+/// buffer chunk (omitted when `buffer` is empty), padding both to 4-byte
+/// alignment.
 pub fn write_glb<W: Write>(writer: &mut W, json: &[u8], buffer: &[u8]) -> Result<(), Error> {
     let json_padded_len = (json.len() + 3) & !3;
     let buffer_padded_len = if buffer.is_empty() {

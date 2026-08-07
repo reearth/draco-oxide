@@ -18,7 +18,11 @@ pub struct MeshNormalPrediction<'parents, const N: usize, D: GenericAttributeDs>
     /// Zero until [`MeshNormalPrediction::set_octahedral_center`], which every
     /// construction must call before predicting.
     center: i32,
+    /// One sign-flip bit per predicted value, in traversal order. Grown by
+    /// `predict::<true>`; installed before decoding and read by
+    /// `predict::<false>` through `flip_cursor`.
     flips: Vec<bool>,
+    flip_cursor: usize,
 }
 
 /// Accumulates each face's cross-product normal into per-vertex sums.
@@ -78,8 +82,7 @@ pub fn sum_to_canonical_normal(mut sum: NdVector<3, i64>, center: i32) -> NdVect
     out
 }
 
-/// Projects a canonicalized prediction onto the octahedral square, widened to
-/// `N` components; only the first two are meaningful.
+/// Projects a canonicalized prediction onto the octahedral square.
 #[inline]
 pub fn canonical_normal_to_oct<const N: usize>(
     vec: NdVector<3, i32>,
@@ -88,6 +91,8 @@ pub fn canonical_normal_to_oct<const N: usize>(
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
+    // Folds at monomorphization; other component counts carry no body.
+    assert!(N == 2, "the octahedral square is 2D");
     let st = integer_vector_to_oct(vec, center);
     let mut out = NdVector::<N, i32>::zero();
     *out.get_mut(0) = *st.get(0);
@@ -122,6 +127,18 @@ where
     pub fn project(&self, vec: NdVector<3, i32>) -> NdVector<N, i32> {
         canonical_normal_to_oct(vec, self.center)
     }
+
+    /// The sign-flip bits recorded while encoding.
+    pub fn flips(&self) -> &[bool] {
+        &self.flips
+    }
+
+    /// Installs the flip bits decoded from the stream, to be consumed by
+    /// `predict::<false>` in traversal order.
+    pub fn set_flips(&mut self, flips: Vec<bool>) {
+        self.flips = flips;
+        self.flip_cursor = 0;
+    }
 }
 
 impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'parents, N, D>
@@ -129,10 +146,6 @@ impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'pare
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
-    const ID: u32 = 2;
-
-    type AdditionalDataForMetadata = ();
-
     fn new(parents: &[&'parents Attribute], ads: &'parents D) -> Self {
         assert!(parents.len() == 1, "MeshNormalPrediction requires exactly one parent attribute for position. but it has {} parents.", parents.len());
         assert!(
@@ -147,76 +160,59 @@ where
             predicted: Vec::new(),
             center: 0,
             flips: Vec::new(),
+            flip_cursor: 0,
         }
     }
 
-    fn get_values_impossible_to_predict(
-        &mut self,
-        _seq: &mut Vec<std::ops::Range<usize>>,
-    ) -> Vec<std::ops::Range<usize>> {
-        unimplemented!();
-    }
-
-    fn predict(
+    #[inline]
+    fn predict<const ENCODING: bool>(
         &mut self,
         c: CornerIdx,
         _vertices_up_till_now: &[VertexIdx],
         attribute: &Attribute,
     ) -> NdVector<N, i32> {
+        // Folds at monomorphization; other component counts carry no body.
+        assert!(
+            N == 2,
+            "normal prediction is only for 2D octahedral vectors"
+        );
         let v = self.ads.vertex_idx(c);
         let pred_3d = self.predicted[usize::from(v)];
 
-        // The closer direction wins, measured the way the correction is: the
-        // octahedral square wraps, so distances are taken modulo its edge.
-        let pos = self.project(pred_3d);
-        let neg = self.project(pred_3d * -1);
+        if ENCODING {
+            // The closer direction wins, measured the way the correction is: the
+            // octahedral square wraps, so distances are taken modulo its edge.
+            let pos = self.project(pred_3d);
+            let neg = self.project(pred_3d * -1);
 
-        let actual_val = attribute.get::<NdVector<N, i32>, N>(self.ads.point_idx(c));
-        let cost = |cand: NdVector<N, i32>| -> i32 {
-            let max_quantized = 2 * self.center + 1;
-            (0..2)
-                .map(|i| {
-                    let d = *actual_val.get(i) - *cand.get(i);
-                    let d = if d > self.center {
-                        d - max_quantized
-                    } else if d < -self.center {
-                        d + max_quantized
-                    } else {
-                        d
-                    };
-                    d.abs()
-                })
-                .sum()
-        };
-        if cost(pos) > cost(neg) {
-            self.flips.push(true);
-            neg
+            let actual_val = attribute.get::<NdVector<N, i32>, N>(self.ads.point_idx(c));
+            let cost = |cand: NdVector<N, i32>| -> i32 {
+                let max_quantized = 2 * self.center + 1;
+                (0..2)
+                    .map(|i| {
+                        let d = *actual_val.get(i) - *cand.get(i);
+                        let d = if d > self.center {
+                            d - max_quantized
+                        } else if d < -self.center {
+                            d + max_quantized
+                        } else {
+                            d
+                        };
+                        d.abs()
+                    })
+                    .sum()
+            };
+            if cost(pos) > cost(neg) {
+                self.flips.push(true);
+                neg
+            } else {
+                self.flips.push(false);
+                pos
+            }
         } else {
-            self.flips.push(false);
-            pos
+            let flip = self.flips.get(self.flip_cursor).copied().unwrap_or(false);
+            self.flip_cursor += 1;
+            self.project(if flip { pred_3d * -1 } else { pred_3d })
         }
     }
-
-    fn encode_prediction_metadtata<W>(&self, writer: &mut W) -> Result<(), super::Err>
-    where
-        W: crate::bit_coder::ByteWriter,
-    {
-        encode_flip_metadata(&self.flips, writer)
-    }
-}
-
-/// Encodes the per-value sign-flip bits of mesh-normal prediction into `writer`,
-/// using the exact rABS layout the decoder expects: a `zero_prob` byte, then the
-/// leb128 length of the coded buffer, then the buffer itself.
-///
-/// This is factored out of [`MeshNormalPrediction::encode_prediction_metadtata`]
-/// so the zero-CPU "trust prediction" encode path can emit neutral (all-false)
-/// flips for `count` values without constructing the predictor at all — an
-/// all-false slice is a valid input and reproduces the byte layout of a run in
-/// which every predicted normal was kept as-is.
-pub fn encode_flip_metadata<W>(flips: &[bool], writer: &mut W) -> Result<(), super::Err>
-where
-    W: crate::bit_coder::ByteWriter,
-{
-    super::encode_rabs_bit_stream(flips, writer)
 }

@@ -1,9 +1,5 @@
 //! Metadata parsing. The section is fully parsed so the reader stays in sync
-//! with the stream, and the parsed contents are dropped.
-//!
-//! TODO: materialize the parsed metadata (per-attribute blocks keyed by
-//! unique id, name/value entries, nested sub-metadata) and surface it on the
-//! decoded mesh instead of dropping it.
+//! with the stream; the parsed values are not materialized and are dropped.
 
 use crate::Err;
 use draco_oxide_core::bit_coder::Reader;

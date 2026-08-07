@@ -194,7 +194,7 @@ fn transcode_and_decode_payload(input: &[u8], label: &str) -> (Value, draco_oxid
         );
     }
 
-    let mesh = draco_oxide::decode::decode(drc).expect("draco payload decodes");
+    let mesh = draco_oxide::decode::decode_mesh(drc).expect("draco payload decodes");
     (json, mesh)
 }
 

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use draco_oxide::core::types::ConfigType;
-use draco_oxide::encode::{self, encode, NormalEncoding};
+use draco_oxide::encode::{self, encode_mesh, NormalEncoding};
 use draco_oxide::io::obj::load_obj;
 
 /// Test meshes from `tests/data/` that carry per-corner normals.
@@ -42,7 +42,7 @@ fn find_draco_decoder() -> Option<PathBuf> {
 fn encode_predicted_only(name: &str) -> Vec<u8> {
     let mesh = load_obj(format!("data/{name}.obj")).expect("load_obj");
     let mut buf = Vec::new();
-    encode(
+    encode_mesh(
         mesh,
         &mut buf,
         encode::Config::default().with_normals(NormalEncoding::PredictedOnly),
@@ -54,7 +54,7 @@ fn encode_predicted_only(name: &str) -> Vec<u8> {
 fn encode_default(name: &str) -> Vec<u8> {
     let mesh = load_obj(format!("data/{name}.obj")).expect("load_obj");
     let mut buf = Vec::new();
-    encode(mesh, &mut buf, encode::Config::default()).expect("encode (default)");
+    encode_mesh(mesh, &mut buf, encode::Config::default()).expect("encode (default)");
     buf
 }
 

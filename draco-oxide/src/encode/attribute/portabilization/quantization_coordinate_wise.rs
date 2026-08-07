@@ -28,20 +28,25 @@ where
     where
         W: ByteWriter,
     {
+        // Seed min/max from the first value: seeding from zero would clamp the
+        // range to the coordinate magnitude on data lying entirely on one side
+        // of an axis (e.g. geographic coordinates), collapsing the resolution.
+        let vals = att.unique_vals_as_slice::<Data>();
         let mut min_values = NdVector::<N, f32>::zero();
-        for val in att.unique_vals_as_slice::<Data>() {
+        let mut max_values = NdVector::<N, f32>::zero();
+        if let Some(first) = vals.first() {
+            for i in 0..N {
+                let component = first.get(i).to_f64() as f32;
+                *min_values.get_mut(i) = component;
+                *max_values.get_mut(i) = component;
+            }
+        }
+        for val in vals {
             for i in 0..N {
                 let component = val.get(i).to_f64() as f32;
                 if component < *min_values.get(i) {
                     *min_values.get_mut(i) = component;
                 }
-            }
-        }
-
-        let mut max_values = NdVector::<N, f32>::zero();
-        for val in att.unique_vals_as_slice::<Data>() {
-            for i in 0..N {
-                let component = val.get(i).to_f64() as f32;
                 if component > *max_values.get(i) {
                     *max_values.get_mut(i) = component;
                 }

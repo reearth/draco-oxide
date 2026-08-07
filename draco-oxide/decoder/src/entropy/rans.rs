@@ -9,7 +9,7 @@
 use crate::reader::RevReader;
 use crate::Err;
 use draco_oxide_core::bit_coder::Reader;
-use draco_oxide_core::codec::entropy::{rans_slot_table, rans_symbol_table, RansSymbol};
+use draco_oxide_core::codec::entropy::{rans_symbol_table, RansSymbol};
 use draco_oxide_core::utils::bit_coder::leb128_read;
 
 /// Reads the final rANS/rabs state from the tail of the reversed buffer. The most
@@ -38,8 +38,27 @@ fn read_state_init(rev: &mut RevReader<'_>, l_base: usize) -> Result<usize, Err>
     Ok(state + l_base)
 }
 
+/// Builds the slot-to-symbol lookup table: entry `r` is the symbol whose
+/// cumulative range contains `r`. The input must come from
+/// [`rans_symbol_table`], so the ranges tile `0..2^precision`.
+/// `T` is the entry width; the alphabet's largest index must fit in it.
+fn rans_slot_table<T: Copy + Default + TryFrom<usize>>(rans_symbols: &[RansSymbol]) -> Vec<T> {
+    let total = rans_symbols
+        .last()
+        .map(|s| (s.freq_cumulative + s.freq_count) as usize)
+        .unwrap_or(0);
+    let mut slot_table = vec![T::default(); total];
+    for (i, sym) in rans_symbols.iter().enumerate() {
+        let start = sym.freq_cumulative as usize;
+        let end = start + sym.freq_count as usize;
+        let entry = T::try_from(i).unwrap_or_else(|_| unreachable!());
+        slot_table[start..end].fill(entry);
+    }
+    slot_table
+}
+
 /// Slot-to-symbol lookup strategy. The table entry width follows the alphabet
-/// size so the `2^RANS_PRECISION`-entry table stays as small as possible; the
+/// size so the `2^precision`-entry table stays as small as possible; the
 /// table is walked at a random slot per symbol, so its cache footprint is paid
 /// on every decode.
 enum SlotTable {
@@ -237,32 +256,17 @@ impl<'a> RansSymbolDecoder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use draco_oxide_core::codec::entropy::rans::{RabsCoder, RansCoder, RansSymbolEncoder};
-
-    /// Histogram of `symbols` over the alphabet `0..=max`.
-    fn histogram(symbols: &[usize]) -> Vec<usize> {
-        let max = *symbols.iter().max().unwrap();
-        let mut freq = vec![0usize; max + 1];
-        for &s in symbols {
-            freq[s] += 1;
-        }
-        freq
-    }
 
     #[test]
     fn rans_decoder_matches_rans_coder() {
-        // A distribution that already sums to 2^12, so `RansCoder` and
-        // `rans_symbol_table` see identical frequencies. Both lookup
-        // strategies must decode identically.
+        // `symbols` coded at precision 12 against `freq`, which already sums to
+        // 2^12 so the encoder's normalization is a no-op and `rans_symbol_table`
+        // sees the same frequencies. Both lookup strategies and both refill
+        // modes must decode it identically.
         let freq = vec![1000usize, 2000, 1096];
         assert_eq!(freq.iter().sum::<usize>(), 1 << 12);
         let symbols = vec![0usize, 1, 1, 2, 0, 1, 2, 2, 1, 0, 2, 1, 0, 0, 1];
-
-        let mut enc = RansCoder::new(freq.clone(), None, 12).unwrap();
-        for &s in symbols.iter().rev() {
-            enc.write(s).unwrap();
-        }
-        let buffer = enc.flush().unwrap();
+        let buffer = [200u8, 58, 180, 36, 66];
 
         for use_lut in [true, false] {
             for refill_branchless in [true, false] {
@@ -278,94 +282,15 @@ mod tests {
     }
 
     #[test]
-    fn rans_symbol_decoder_round_trip() {
-        let symbols = vec![0usize, 1, 2, 1, 0, 3, 3, 2, 1, 0, 0, 1, 2, 3, 0, 3, 3, 1];
-        let mut buf: Vec<u8> = Vec::new();
-        let mut enc = RansSymbolEncoder::new(&mut buf, histogram(&symbols), None, 12).unwrap();
-        for &s in symbols.iter().rev() {
-            enc.write(s).unwrap();
-        }
-        enc.flush().unwrap();
-
-        let mut reader = Reader::new(&buf);
-        let mut dec = RansSymbolDecoder::new(&mut reader, symbols.len(), 12).unwrap();
-        let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
-        assert_eq!(decoded, symbols);
-    }
-
-    #[test]
-    fn rans_symbol_decoder_handles_zero_runs() {
-        // A sparse alphabet exercises the zero-run flag in the frequency table.
-        let symbols = vec![0usize, 9, 9, 0, 0, 9, 3, 3, 9, 0, 9, 9, 0, 3, 9];
-        let mut buf: Vec<u8> = Vec::new();
-        let mut enc = RansSymbolEncoder::new(&mut buf, histogram(&symbols), None, 12).unwrap();
-        for &s in symbols.iter().rev() {
-            enc.write(s).unwrap();
-        }
-        enc.flush().unwrap();
-
-        let mut reader = Reader::new(&buf);
-        let mut dec = RansSymbolDecoder::new(&mut reader, symbols.len(), 12).unwrap();
-        let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
-        assert_eq!(decoded, symbols);
-    }
-
-    #[test]
-    fn rans_symbol_decoder_high_precision_large_alphabet() {
-        // A large alphabet forces multi-byte frequency-table entries (precision 20)
-        // and drives the rANS state through the wider u22/u30 tag layouts.
-        let mut symbols = Vec::new();
-        let mut x = 7usize;
-        for _ in 0..4000 {
-            x = (x * 1103515245 + 12345) % 6000;
-            symbols.push(x);
-        }
-        let mut buf: Vec<u8> = Vec::new();
-        let mut enc = RansSymbolEncoder::new(&mut buf, histogram(&symbols), None, 20).unwrap();
-        for &s in symbols.iter().rev() {
-            enc.write(s).unwrap();
-        }
-        enc.flush().unwrap();
-
-        let mut reader = Reader::new(&buf);
-        let mut dec = RansSymbolDecoder::new(&mut reader, symbols.len(), 20).unwrap();
-        let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
-        assert_eq!(decoded, symbols);
-    }
-
-    #[test]
-    fn rans_symbol_decoder_single_symbol_alphabet() {
-        // Every value identical: one symbol takes the whole probability mass.
-        let symbols = vec![0usize; 20];
-        let mut buf: Vec<u8> = Vec::new();
-        let mut enc = RansSymbolEncoder::new(&mut buf, histogram(&symbols), None, 12).unwrap();
-        for &s in symbols.iter().rev() {
-            enc.write(s).unwrap();
-        }
-        enc.flush().unwrap();
-
-        let mut reader = Reader::new(&buf);
-        let mut dec = RansSymbolDecoder::new(&mut reader, symbols.len(), 12).unwrap();
-        let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
-        assert_eq!(decoded, symbols);
-    }
-
-    #[test]
     fn rabs_decoder_round_trip() {
+        // `bits` coded by the encoder's `RabsCoder` at the zero-probability its
+        // bit balance yields.
         let bits = vec![
             true, false, true, true, false, false, false, true, false, true, true, true, false,
             true, false, false, true, true,
         ];
-        // Mirror the encoder's zero-probability estimate.
-        let freq_count_0 = bits.iter().filter(|b| !**b).count();
-        let zero_prob =
-            (((freq_count_0 as f32 / bits.len() as f32) * 256.0 + 0.5) as u16).clamp(1, 255) as u8;
-
-        let mut enc: RabsCoder = RabsCoder::new(zero_prob as usize, None);
-        for &b in bits.iter().rev() {
-            enc.write(u8::from(b)).unwrap();
-        }
-        let buffer = enc.flush().unwrap();
+        let zero_prob = 114u8;
+        let buffer = [42u8, 138, 100, 103];
 
         let rev = RevReader::new(&buffer);
         let mut dec = RabsDecoder::new(rev, zero_prob).unwrap();

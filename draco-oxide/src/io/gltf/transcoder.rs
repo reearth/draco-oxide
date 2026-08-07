@@ -20,22 +20,31 @@ use super::geometry_extractor::{
 };
 use super::glb;
 
+/// Errors from glTF transcoding.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Parsing the GLB container failed.
     #[error("GLB parse error: {0}")]
     GlbParse(#[from] glb::Error),
+    /// Parsing the glTF JSON failed.
     #[error("JSON parse error: {0}")]
     JsonParse(#[from] serde_json::Error),
+    /// Reading geometry from the glTF accessors failed.
     #[error("Geometry extraction error: {0}")]
     GeometryExtraction(#[from] geometry_extractor::Error),
+    /// Building the internal mesh from the extracted geometry failed.
     #[error("Mesh build error: {0}")]
     MeshBuild(#[from] draco_oxide_core::mesh::builder::Err),
+    /// Draco encoding of the geometry failed.
     #[error("Draco encode error: {0}")]
     DracoEncode(#[from] crate::encode::Err),
+    /// Reading or writing a file failed.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// The input uses a glTF feature the transcoder does not support.
     #[error("Unsupported: {0}")]
     Unsupported(String),
+    /// The input is not valid glTF/GLB.
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 }
@@ -492,7 +501,7 @@ impl GltfTranscoder {
 
         // Compress
         let mut compressed = Vec::new();
-        crate::encode::encode(mesh, &mut compressed, self.config.draco.clone())
+        crate::encode::encode_mesh(mesh, &mut compressed, self.config.draco.clone())
             .map_err(|e| SkipReason::Error(Error::DracoEncode(e)))?;
 
         // Append to buffer

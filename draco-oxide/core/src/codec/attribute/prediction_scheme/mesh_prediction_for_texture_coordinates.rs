@@ -1,13 +1,10 @@
 use super::PredictionSchemeImpl;
 use crate::attribute::Attribute;
-use crate::bit_coder::ByteWriter;
-use crate::codec::entropy::rans::RabsCoder;
 use crate::mesh::ds::GenericAttributeDs;
 use crate::safety_assert_eq;
 use crate::types::NdVector;
 use crate::types::{AttributeValueIdx, CornerIdx, PointIdx, VertexIdx};
 use crate::types::{Dot, Vector};
-use crate::utils::bit_coder::leb128_write;
 
 /// Either the two orientation candidates or a directly determined value
 /// (degenerate and fallback cases, which consume no orientation bit).
@@ -38,7 +35,10 @@ where
 pub struct MeshPredictionForTextureCoordinates<'parents, const N: usize, D: GenericAttributeDs> {
     ads: &'parents D,
     pos_att: &'parents Attribute,
-    orientation: Vec<bool>, // Stores orientation for encoder
+    /// One orientation bit per oriented prediction. `predict::<true>` appends in
+    /// traversal order; `predict::<false>` pops from the back, since the encoder
+    /// writes the stream reversed.
+    orientation: Vec<bool>,
     visited: Vec<bool>,
     synced: usize,
 }
@@ -236,31 +236,15 @@ where
         ))
     }
 
-    /// Decoder-side prediction: the orientation comes from `orientations`,
-    /// popped from the back.
-    #[inline]
-    pub fn predict_given_orientation(
-        &mut self,
-        i: CornerIdx,
-        vertices_up_till_now: &[VertexIdx],
-        attribute: &Attribute,
-        orientations: &mut Vec<bool>,
-    ) -> NdVector<N, i32> {
-        self.sync_visited(vertices_up_till_now);
-        match self.compute_prediction(i, vertices_up_till_now, attribute) {
-            TexCoordsPrediction::Single(p) => p,
-            TexCoordsPrediction::Oriented(p0, p1) => {
-                let chosen = if orientations.pop().unwrap_or(true) {
-                    p0
-                } else {
-                    p1
-                };
-                let mut out = NdVector::<N, i32>::zero();
-                *out.get_mut(0) = *chosen.get(0) as i32;
-                *out.get_mut(1) = *chosen.get(1) as i32;
-                out
-            }
-        }
+    /// The orientation bits recorded while encoding.
+    pub fn orientation(&self) -> &[bool] {
+        &self.orientation
+    }
+
+    /// Installs the orientation bits decoded from the stream, which
+    /// `predict::<false>` consumes from the back.
+    pub fn set_orientation(&mut self, orientation: Vec<bool>) {
+        self.orientation = orientation;
     }
 }
 
@@ -269,10 +253,6 @@ impl<'parents, const N: usize, D: GenericAttributeDs> PredictionSchemeImpl<'pare
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
 {
-    const ID: u32 = 2;
-
-    type AdditionalDataForMetadata = ();
-
     fn new(parents: &[&'parents Attribute], ads: &'parents D) -> Self {
         Self {
             ads,
@@ -283,23 +263,33 @@ where
         }
     }
 
-    fn get_values_impossible_to_predict(
-        &mut self,
-        _seq: &mut Vec<std::ops::Range<usize>>,
-    ) -> Vec<std::ops::Range<usize>> {
-        unimplemented!();
-    }
-
-    fn predict(
+    #[inline]
+    fn predict<const ENCODING: bool>(
         &mut self,
         i: CornerIdx,
         vertices_up_till_now: &[VertexIdx],
         attribute: &Attribute,
     ) -> NdVector<N, i32> {
+        // Folds at monomorphization; other component counts carry no body.
+        assert!(
+            N == 2,
+            "texture coordinate prediction is only for 2D vectors"
+        );
         self.sync_visited(vertices_up_till_now);
         match self.compute_prediction(i, vertices_up_till_now, attribute) {
             TexCoordsPrediction::Single(p) => p,
             TexCoordsPrediction::Oriented(predicted_uv_0, predicted_uv_1) => {
+                if !ENCODING {
+                    let chosen = if self.orientation.pop().unwrap_or(true) {
+                        predicted_uv_0
+                    } else {
+                        predicted_uv_1
+                    };
+                    let mut out = NdVector::<N, i32>::zero();
+                    *out.get_mut(0) = *chosen.get(0) as i32;
+                    *out.get_mut(1) = *chosen.get(1) as i32;
+                    return out;
+                }
                 let curr_pt = self.ads.point_idx(i);
                 let curr_uv: NdVector<N, i32> = read_point(
                     attribute.point_map_as_slice(),
@@ -324,56 +314,5 @@ where
                 out
             }
         }
-    }
-
-    fn encode_prediction_metadtata<W>(&self, writer: &mut W) -> Result<(), super::Err>
-    where
-        W: ByteWriter,
-    {
-        let freq_count_0 = {
-            let mut last = true;
-            let mut compare = |o| {
-                if o == last {
-                    true
-                } else {
-                    last = o;
-                    false
-                }
-            };
-            self.orientation
-                .iter()
-                .map(|&o| compare(o))
-                .filter(|&o| !o)
-                .count()
-        };
-        let orientation_len_float = self.orientation.len() as f32 + 0.001;
-        let zero_prob = (((freq_count_0 as f32 / orientation_len_float) * 256.0 + 0.5) as u16)
-            .clamp(1, 255) as u8;
-        let mut rabs_coder: RabsCoder = RabsCoder::new(zero_prob as usize, None);
-        writer.write_u32(self.orientation.len() as u32);
-        writer.write_u8(zero_prob);
-        let mut last_orientation = true;
-        let out = self
-            .orientation
-            .iter()
-            .rev()
-            .map(|&o| {
-                if o == last_orientation {
-                    1
-                } else {
-                    last_orientation = o;
-                    0
-                }
-            })
-            .collect::<Vec<_>>();
-        for bit in out.into_iter().rev() {
-            rabs_coder.write(bit)?;
-        }
-        let buffer = rabs_coder.flush()?;
-        leb128_write(buffer.len() as u64, writer);
-        for byte in buffer {
-            writer.write_u8(byte);
-        }
-        Ok(())
     }
 }

@@ -10,15 +10,15 @@ use draco_oxide_core::bit_coder::Reader;
 use draco_oxide_core::codec::attribute::prediction_scheme::{
     delta_prediction::DeltaPrediction,
     mesh_constrained_multi_parallelogram_prediction::{
-        DecodedCreases, MeshConstrainedMultiParallelogramPrediction, MAX_PARALLELOGRAMS,
+        Creases, MeshConstrainedMultiParallelogramPrediction, MAX_PARALLELOGRAMS,
     },
     mesh_normal_prediction::MeshNormalPrediction,
     mesh_parallelogram_prediction::MeshParallelogramPrediction,
     mesh_prediction_for_texture_coordinates::MeshPredictionForTextureCoordinates,
-    PredictionSchemeImpl, PredictionSchemeType,
+    NoPrediction, PredictionSchemeImpl, PredictionSchemeType, SchemeDispatch,
 };
 use draco_oxide_core::mesh::ds::GenericAttributeDs;
-use draco_oxide_core::types::{CornerIdx, NdVector, Vector, VertexIdx};
+use draco_oxide_core::types::{NdVector, Vector};
 use draco_oxide_core::utils::bit_coder::leb128_read;
 
 /// Parses the prediction scheme id byte (the ids of
@@ -101,9 +101,58 @@ pub(crate) fn decode_crease_metadata(
     Ok(out)
 }
 
-/// The decode-side predictor: wraps the core prediction schemes, feeding the
-/// decoded flip/orientation metadata where the encoder consulted the actual
-/// values.
+/// A prediction scheme that replays metadata the encoder recorded.
+///
+/// The wire read itself stays a free function above: payload parsing runs
+/// before any attribute data structure is chosen, so the `D`-generic scheme
+/// type does not exist yet at the point the bytes must be consumed. This trait
+/// covers the second half, handing the decoded metadata to the scheme so
+/// `predict::<false>` can consume it.
+pub(crate) trait PredictionDecoder {
+    /// The metadata this scheme reads before predicting.
+    type Metadata;
+
+    /// Installs decoded metadata into the scheme.
+    fn install_prediction_metadata(&mut self, metadata: Self::Metadata);
+}
+
+impl<const N: usize, D: GenericAttributeDs> PredictionDecoder for MeshNormalPrediction<'_, N, D>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    type Metadata = Vec<bool>;
+
+    fn install_prediction_metadata(&mut self, flips: Vec<bool>) {
+        self.set_flips(flips);
+    }
+}
+
+impl<const N: usize, D: GenericAttributeDs> PredictionDecoder
+    for MeshPredictionForTextureCoordinates<'_, N, D>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    type Metadata = Vec<bool>;
+
+    fn install_prediction_metadata(&mut self, orientations: Vec<bool>) {
+        self.set_orientation(orientations);
+    }
+}
+
+impl<const N: usize, D: GenericAttributeDs> PredictionDecoder
+    for MeshConstrainedMultiParallelogramPrediction<'_, N, D>
+where
+    NdVector<N, i32>: Vector<N, Component = i32>,
+{
+    type Metadata = [Vec<bool>; MAX_PARALLELOGRAMS];
+
+    fn install_prediction_metadata(&mut self, creases: Self::Metadata) {
+        self.set_creases(Creases::new(creases));
+    }
+}
+
+/// The decode-side predictor: wraps the core prediction schemes, which carry
+/// their own decoded metadata.
 pub(crate) enum Predictor<'p, const N: usize, D: GenericAttributeDs>
 where
     NdVector<N, i32>: Vector<N, Component = i32>,
@@ -111,19 +160,9 @@ where
     NoPrediction,
     Delta(DeltaPrediction<'p, N, D>),
     Parallelogram(MeshParallelogramPrediction<'p, N, D>),
-    ConstrainedMultiParallelogram {
-        scheme: Box<MeshConstrainedMultiParallelogramPrediction<'p, N, D>>,
-        creases: DecodedCreases,
-    },
-    TexCoords {
-        scheme: MeshPredictionForTextureCoordinates<'p, N, D>,
-        orientations: Vec<bool>,
-    },
-    Normal {
-        scheme: MeshNormalPrediction<'p, N, D>,
-        flips: Vec<bool>,
-        next: usize,
-    },
+    ConstrainedMultiParallelogram(Box<MeshConstrainedMultiParallelogramPrediction<'p, N, D>>),
+    TexCoords(MeshPredictionForTextureCoordinates<'p, N, D>),
+    Normal(MeshNormalPrediction<'p, N, D>),
 }
 
 impl<'p, const N: usize, D: GenericAttributeDs> Predictor<'p, N, D>
@@ -151,18 +190,28 @@ where
                 Predictor::Parallelogram(MeshParallelogramPrediction::new(parents, ads))
             }
             PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction => {
-                Predictor::ConstrainedMultiParallelogram {
-                    scheme: Box::new(MeshConstrainedMultiParallelogramPrediction::new(
-                        parents, ads,
-                    )),
-                    creases: DecodedCreases::new(creases),
-                }
+                let mut scheme = Box::new(MeshConstrainedMultiParallelogramPrediction::new(
+                    parents, ads,
+                ));
+                scheme.install_prediction_metadata(creases);
+                Predictor::ConstrainedMultiParallelogram(scheme)
             }
-            PredictionSchemeType::MeshPredictionForTextureCoordinates => Predictor::TexCoords {
-                scheme: MeshPredictionForTextureCoordinates::new(parents, ads),
-                orientations,
-            },
+            PredictionSchemeType::MeshPredictionForTextureCoordinates => {
+                if N != 2 {
+                    return Err(Err::MalformedAttribute(
+                        "texture coordinate prediction requires a 2-component attribute",
+                    ));
+                }
+                let mut scheme = MeshPredictionForTextureCoordinates::new(parents, ads);
+                scheme.install_prediction_metadata(orientations);
+                Predictor::TexCoords(scheme)
+            }
             PredictionSchemeType::MeshNormalPrediction => {
+                if N != 2 {
+                    return Err(Err::MalformedAttribute(
+                        "normal prediction requires a 2-component octahedral attribute",
+                    ));
+                }
                 if oct_center <= 0 {
                     return Err(Err::MalformedAttribute(
                         "normal prediction needs an octahedral prediction transform",
@@ -170,11 +219,8 @@ where
                 }
                 let mut scheme = MeshNormalPrediction::new(parents, ads);
                 scheme.set_octahedral_center(oct_center);
-                Predictor::Normal {
-                    scheme,
-                    flips,
-                    next: 0,
-                }
+                scheme.install_prediction_metadata(flips);
+                Predictor::Normal(scheme)
             }
             // No encoder-side implementation emits these yet.
             PredictionSchemeType::MeshMultiParallelogramPrediction
@@ -185,38 +231,19 @@ where
         })
     }
 
-    /// Predicts the value at corner `c` from the already decoded data.
-    #[inline]
-    pub(crate) fn predict(
-        &mut self,
-        c: CornerIdx,
-        vertices_up_till_now: &[VertexIdx],
-        attribute: &Attribute,
-    ) -> NdVector<N, i32> {
+    /// Runs `dispatch` against the concrete scheme. The variant match happens
+    /// here, once, so the dispatched computation's predict loop is monomorphic.
+    pub(crate) fn dispatch_mut<V>(&mut self, dispatch: V) -> V::Out
+    where
+        V: SchemeDispatch<'p, N, D>,
+    {
         match self {
-            Predictor::NoPrediction => NdVector::zero(),
-            Predictor::Delta(scheme) => scheme.predict(c, vertices_up_till_now, attribute),
-            Predictor::Parallelogram(scheme) => scheme.predict(c, vertices_up_till_now, attribute),
-            Predictor::ConstrainedMultiParallelogram { scheme, creases } => {
-                scheme.predict_given_creases(c, vertices_up_till_now, attribute, creases)
-            }
-            Predictor::TexCoords {
-                scheme,
-                orientations,
-            } => scheme.predict_given_orientation(c, vertices_up_till_now, attribute, orientations),
-            Predictor::Normal {
-                scheme,
-                flips,
-                next,
-            } => {
-                let mut pred = scheme.predicted_value(c);
-                let flip = flips.get(*next).copied().unwrap_or(false);
-                *next += 1;
-                if flip {
-                    pred *= -1;
-                }
-                scheme.project(pred)
-            }
+            Predictor::NoPrediction => dispatch.run(&mut NoPrediction::new()),
+            Predictor::Delta(scheme) => dispatch.run(scheme),
+            Predictor::Parallelogram(scheme) => dispatch.run(scheme),
+            Predictor::ConstrainedMultiParallelogram(scheme) => dispatch.run(scheme.as_mut()),
+            Predictor::TexCoords(scheme) => dispatch.run(scheme),
+            Predictor::Normal(scheme) => dispatch.run(scheme),
         }
     }
 }

@@ -4,9 +4,6 @@ use draco_oxide_core::types::NdVector;
 use draco_oxide_core::types::Vector;
 use draco_oxide_core::utils::to_positive_i32_vec;
 
-#[cfg(feature = "evaluation")]
-use crate::eval;
-
 pub struct Difference<const N: usize> {
     out: Vec<NdVector<N, i32>>,
 }
@@ -32,15 +29,6 @@ impl<const N: usize> PredictionTransformImpl<N> for Difference<N> {
     where
         W: ByteWriter,
     {
-        #[cfg(feature = "evaluation")]
-        {
-            eval::write_json_pair("transform  type", "Difference".into(), _writer);
-            eval::array_scope_begin("transformed data", _writer);
-            for &x in self.out.iter() {
-                eval::write_arr_elem(x.into(), _writer);
-            }
-            eval::array_scope_end(_writer);
-        }
         self.out
     }
 }

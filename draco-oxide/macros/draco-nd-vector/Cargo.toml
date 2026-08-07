@@ -1,9 +1,10 @@
 [package]
 name = "draco-nd-vector"
-version = "0.0.0"
-edition = "2024"
-description = "Contains macros that writes low dimensional vectors implementation."
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition = "2021"
+description = "Proc macros generating the low-dimensional vector implementations used by draco-oxide-core."
+license.workspace = true
+repository.workspace = true
 
 [lib]
 proc-macro = true

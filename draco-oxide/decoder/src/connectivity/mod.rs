@@ -12,7 +12,9 @@ use std::collections::HashMap;
 
 /// The decoded connectivity.
 pub enum Connectivity {
+    /// Connectivity decoded from an edgebreaker-encoded stream.
     Edgebreaker(EdgebreakerConnectivity),
+    /// Connectivity decoded from a sequentially encoded stream.
     Sequential(SequentialConnectivity),
 }
 
@@ -28,20 +30,29 @@ impl Connectivity {
 
 /// Face indices over a flat point space.
 pub struct SequentialConnectivity {
+    /// The faces as point-index triples.
     pub faces: Vec<[PointIdx; 3]>,
+    /// The number of points the faces index into.
     pub num_points: usize,
 }
 
 /// The decoded position connectivity plus what the attribute stages need.
 pub struct EdgebreakerConnectivity {
+    /// The opposite-corner table over the reconstructed faces.
     pub corner_table: CornerTable,
+    /// The position vertex of each corner, indexed by corner.
     pub corner_to_vertex: Vec<VertexIdx>,
     /// Left-most corner per vertex; boundary-left-most for hole vertices.
     pub vertex_corners: Vec<CornerIdx>,
+    /// The number of position vertices.
     pub num_vertices: usize,
+    /// The number of faces.
     pub num_faces: usize,
+    /// The number of attribute connectivity streams (attribute corner tables).
     pub num_attribute_data: usize,
+    /// Per vertex, whether the vertex lies on a boundary hole.
     pub is_vert_hole: Vec<bool>,
+    /// The initial corner of each edgebreaker traversal component.
     pub init_corners: Vec<CornerIdx>,
     /// Packed seams, one byte per corner: bit `i` set when the edge opposite
     /// the corner is a seam of stream `i`.

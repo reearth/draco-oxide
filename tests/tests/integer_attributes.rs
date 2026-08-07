@@ -12,7 +12,7 @@ use std::process::Command;
 use draco_oxide::core::attribute::{AttributeDomain, AttributeType, ComponentDataType};
 use draco_oxide::core::mesh::builder::MeshBuilder;
 use draco_oxide::core::types::{ConfigType, NdVector, Vector};
-use draco_oxide::encode::{self, encode};
+use draco_oxide::encode::{self, encode_mesh};
 
 /// Locate Google Draco's `draco_decoder`, or `None` if it isn't available.
 fn find_draco_decoder() -> Option<PathBuf> {
@@ -80,7 +80,8 @@ fn integer_attributes_round_trip() {
     let mesh = builder.build().expect("mesh builds");
 
     let mut buf = Vec::new();
-    encode(mesh, &mut buf, <encode::Config as ConfigType>::default()).expect("encode succeeds");
+    encode_mesh(mesh, &mut buf, <encode::Config as ConfigType>::default())
+        .expect("encode succeeds");
 
     // The reference decoder accepts the stream.
     if let Some(decoder) = find_draco_decoder() {
@@ -106,7 +107,7 @@ fn integer_attributes_round_trip() {
     }
 
     // Oxide's own decoder reproduces the values in their declared types.
-    let decoded = draco_oxide::decode::decode(&buf).expect("oxide decodes its own stream");
+    let decoded = draco_oxide::decode::decode_mesh(&buf).expect("oxide decodes its own stream");
     let mut seen_colors = false;
     let mut seen_ids = false;
     let mut seen_offsets = false;
@@ -165,7 +166,7 @@ fn integer_attributes_encode_under_sequential_connectivity() {
     let cfg = <encode::Config as ConfigType>::default()
         .with_sequential(<encode::SequentialConfig as ConfigType>::default());
     let mut buf = Vec::new();
-    encode(mesh, &mut buf, cfg).expect("sequential encode succeeds");
+    encode_mesh(mesh, &mut buf, cfg).expect("sequential encode succeeds");
 
     if let Some(decoder) = find_draco_decoder() {
         let out_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("outputs/integer_attributes");
@@ -202,7 +203,8 @@ fn float_custom_attributes_are_quantized_not_truncated() {
     let mesh = builder.build().expect("mesh builds");
 
     let mut buf = Vec::new();
-    encode(mesh, &mut buf, <encode::Config as ConfigType>::default()).expect("encode succeeds");
+    encode_mesh(mesh, &mut buf, <encode::Config as ConfigType>::default())
+        .expect("encode succeeds");
 
     if let Some(decoder) = find_draco_decoder() {
         let out_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("outputs/integer_attributes");
@@ -223,7 +225,7 @@ fn float_custom_attributes_are_quantized_not_truncated() {
         );
     }
 
-    let decoded = draco_oxide::decode::decode(&buf).expect("oxide decodes its own stream");
+    let decoded = draco_oxide::decode::decode_mesh(&buf).expect("oxide decodes its own stream");
     let mut checked = false;
     for att in decoded.get_attributes() {
         if att.get_attribute_type() == AttributeType::Custom && att.get_num_components() == 1 {
@@ -254,7 +256,7 @@ fn sixty_four_bit_integers_are_rejected_cleanly() {
     let mesh = builder.build().expect("mesh builds");
 
     let mut buf = Vec::new();
-    let result = encode(mesh, &mut buf, <encode::Config as ConfigType>::default());
+    let result = encode_mesh(mesh, &mut buf, <encode::Config as ConfigType>::default());
     assert!(
         result.is_err(),
         "64-bit integers must be rejected, not truncated"

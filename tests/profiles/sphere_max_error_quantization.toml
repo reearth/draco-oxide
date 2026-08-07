@@ -1,0 +1,41 @@
+# Verifies the error-driven quantization modes end-to-end: positions quantized
+# by a maximum tolerated error against the observed range (`max_error`), then
+# against a caller-supplied domain span (`max_error` + `range`, the Bounded
+# mode). Each stream must decode in the reference decoder with the geometry
+# within the requested error bound (L2 allows sqrt(3) x the per-axis bound).
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "sphere.obj"
+output = "observed.drc"
+[operations.cfg.attributes.Position]
+quantization = { max_error = 0.001 }
+
+[[operations]]
+op = "DracoDecode"
+input = "observed.drc"
+output = "observed_decoded.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "sphere.obj"
+input2 = "observed_decoded.obj"
+methods = [{ method = "L2Norm", max = 0.002 }]
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "sphere.obj"
+output = "bounded.drc"
+[operations.cfg.attributes.Position]
+quantization = { max_error = 0.001, range = 4.0 }
+
+[[operations]]
+op = "DracoDecode"
+input = "bounded.drc"
+output = "bounded_decoded.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "sphere.obj"
+input2 = "bounded_decoded.obj"
+methods = [{ method = "L2Norm", max = 0.002 }]

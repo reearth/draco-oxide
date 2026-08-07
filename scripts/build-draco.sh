@@ -5,7 +5,8 @@
 #
 # Idempotent (no-op if the decoder exists; set FORCE=1 to rebuild), so it's cheap
 # to call on every CI run paired with a cache on third_party/draco. Override the
-# pinned version with DRACO_TAG=<tag>; draco-oxide emits bitstream 2.2, which 1.5.x decodes.
+# pinned version with DRACO_TAG=<tag>; draco-oxide emits bitstream 2.2 for meshes
+# and 2.3 for point clouds, both of which 1.5.x decodes.
 
 set -euo pipefail
 

@@ -72,6 +72,7 @@ fn read_descriptors(reader: &mut Reader<'_>) -> Result<Vec<Descriptor>, Err> {
     for _ in 0..num_atts {
         let att_type = AttributeType::read_from(reader)?;
         let component_type = ComponentDataType::read_from(reader)?;
+        crate::check_component_type(component_type)?;
         let num_components = reader.read_u8()? as usize;
         let _normalized = reader.read_u8()?;
         let uid = leb128_read(reader)? as u32;

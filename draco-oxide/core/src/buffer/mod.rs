@@ -1,7 +1,5 @@
 use crate::safety_assert;
 pub mod attribute;
-// pub mod reader;
-// pub mod writer;
 
 use std::{alloc, fmt, ptr};
 
@@ -22,71 +20,6 @@ impl OrderConfig for LsbFirst {
     const IS_MSB_FIRST: bool = false;
 }
 
-pub struct Buffer<Order: OrderConfig = MsbFirst> {
-    data: RawBuffer,
-
-    /// length of the buffer, i.e. the number of bits stored in the buffer.
-    /// The minimum number of bytes allocated for the buffer is 'len' / 8 + 1.
-    len: usize,
-
-    _phantom: std::marker::PhantomData<Order>,
-}
-
-impl<Order: OrderConfig> Default for Buffer<Order> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[allow(dead_code)]
-impl<Order: OrderConfig> Buffer<Order> {
-    /// constructs an empty buffer
-    pub fn new() -> Self {
-        Self {
-            data: RawBuffer::new(),
-            len: 0,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-
-    /// A constructor that allocates the specified size (in bits) beforehand.
-    pub fn with_len(len: usize) -> Self {
-        let cap = (len + 7) >> 3;
-        let data = RawBuffer::with_capacity(cap);
-        Self {
-            data,
-            len,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-
-    /// returns the number of bits stored in the buffer.
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    /// returns true if the buffer stores no bits.
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// returns the data as a slice of u8.
-    pub fn as_slice(&self) -> &[u8] {
-        // Safety: The buffer is guaranteed to be initialized with this size.
-        unsafe { std::slice::from_raw_parts(self.data.as_ptr(), (self.len + 7) >> 3) }
-    }
-}
-
-impl fmt::Debug for Buffer<MsbFirst> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for n in 0..(self.len + 7) >> 3 {
-            write!(f, "{:02x} ", unsafe { *self.data.as_ptr().add(n) })?;
-        }
-        write!(f, "len: {}", self.len)?;
-        Ok(())
-    }
-}
-
 struct RawBuffer {
     data: ptr::NonNull<u8>,
 
@@ -96,13 +29,6 @@ struct RawBuffer {
 }
 
 impl RawBuffer {
-    fn new() -> Self {
-        Self {
-            data: ptr::NonNull::dangling(),
-            cap: 0,
-        }
-    }
-
     /// constructs a new buffer with the given capacity.
     /// 'cap' must be given in bytes.
     fn with_capacity(cap: usize) -> Self {

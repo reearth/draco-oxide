@@ -1,0 +1,24 @@
+# Reference-decoder gate: encode torus.obj with draco-oxide and decode the
+# stream with Google Draco's reference decoder, bounding the decoded surface's
+# drift from the source. Pins the bitstream from the encoder side.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "torus.obj"
+output = "oxide.drc"
+
+[[operations]]
+op = "DracoDecode"
+input = "oxide.drc"
+output = "decoded.obj"
+
+[[operations]]
+op = "Validation"
+input = "decoded.obj"
+fmt = "Obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "torus.obj"
+input2 = "decoded.obj"
+methods = [{ method = "L2Norm", max = 0.077 }]

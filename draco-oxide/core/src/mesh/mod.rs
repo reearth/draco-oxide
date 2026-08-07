@@ -11,10 +11,11 @@ use crate::utils::geom::point_to_face_distance_3d;
 /// and a list of attributes ([Attribute]) that can be associated with the mesh.
 #[derive(Clone, Debug)]
 pub struct Mesh {
+    /// The faces as point-index triples.
     pub faces: Vec<[PointIdx; 3]>,
+    /// The attributes attached to the mesh.
     pub attributes: Vec<Attribute>,
 
-    // varible for glTF transcoder support
     name: String,
 }
 
@@ -25,18 +26,26 @@ impl Default for Mesh {
 }
 
 impl Mesh {
+    /// Returns the attributes of the mesh.
     pub fn get_attributes(&self) -> &[Attribute] {
         &self.attributes
     }
 
+    /// Returns the faces of the mesh as point-index triples.
     pub fn get_faces(&self) -> &[[PointIdx; 3]] {
         &self.faces
     }
 
+    /// Returns the attributes of the mesh mutably.
     pub fn get_attributes_mut(&mut self) -> &mut [Attribute] {
         &mut self.attributes
     }
 
+    /// Returns mutable references to the attributes at the given indices.
+    ///
+    /// The indices must be pairwise distinct; duplicate indices would produce
+    /// two mutable references to the same attribute. Panics if any index is
+    /// out of bounds.
     pub fn get_attributes_mut_by_indices<'a>(
         &'a mut self,
         indices: &[usize],
@@ -46,20 +55,25 @@ impl Mesh {
             .map(|i| &mut self.attributes[*i] as *mut Attribute)
             .collect::<Vec<_>>();
 
+        // Safety: the indices are pairwise distinct per the documented
+        // contract, so the resulting mutable references do not alias.
         unsafe {
             let out = out.to_vec();
             std::mem::transmute::<Vec<*mut Attribute>, Vec<&mut Attribute>>(out)
         }
     }
 
+    /// Returns the name of the mesh, or an empty string if unset.
     pub fn get_name(&self) -> &str {
         &self.name
     }
 
+    /// Sets the name of the mesh.
     pub fn set_name(&mut self, name: &str) {
         self.name = name.to_owned();
     }
 
+    /// Creates an empty mesh with no faces and no attributes.
     pub fn new() -> Self {
         Self {
             faces: Vec::new(),
@@ -69,6 +83,10 @@ impl Mesh {
         }
     }
 
+    /// Computes a symmetric point-to-surface L2 distance between the position
+    /// attributes of `self` and `other`, normalized by the total number of
+    /// points. Panics if a position attribute does not have three float
+    /// components.
     pub fn diff_l2_norm(&self, other: &Self) -> f64 {
         let pos_att_iter = self
             .attributes

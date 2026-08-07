@@ -5,9 +5,6 @@ use draco_oxide_core::types::NdVector;
 use draco_oxide_core::types::Vector;
 use draco_oxide_core::utils::to_positive_i32_vec;
 
-#[cfg(feature = "evaluation")]
-use crate::eval;
-
 pub struct WrappedDifference<const N: usize> {
     _cfg: super::Config,
     preds: Vec<NdVector<N, i32>>,
@@ -54,15 +51,6 @@ where
     where
         W: ByteWriter,
     {
-        #[cfg(feature = "evaluation")]
-        {
-            eval::write_json_pair("transform type", "WrappedDifference".into(), writer);
-            eval::array_scope_begin("prediction data", writer);
-            for &x in self.preds.iter() {
-                eval::write_arr_elem(x.into(), writer);
-            }
-            eval::array_scope_end(writer);
-        }
         let diff = self.max - self.min;
         let max_diff = 1 + diff;
         let mut max_corr = max_diff / 2;

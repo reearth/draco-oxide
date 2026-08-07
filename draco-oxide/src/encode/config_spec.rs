@@ -61,7 +61,6 @@ impl From<ConfigSpec> for Config {
         cfg = match spec.connectivity {
             ConnectivityName::Edgebreaker => cfg.with_edgebreaker(EdgebreakerConfig {
                 traversal: spec.edgebreaker.traversal.into(),
-                use_single_connectivity: spec.edgebreaker.use_single_connectivity,
             }),
             ConnectivityName::Sequential => cfg.with_sequential(SequentialConfig {
                 encoder_method: spec.sequential.indices.into(),
@@ -87,7 +86,6 @@ enum ConnectivityName {
 #[serde(default, deny_unknown_fields)]
 struct EdgebreakerSpec {
     traversal: TraversalName,
-    use_single_connectivity: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -184,9 +182,7 @@ impl From<AttributeConfigSpec> for AttributeConfig {
 #[derive(Debug, Clone, Copy, Deserialize)]
 enum SchemeName {
     DeltaPrediction,
-    DerivativePrediction,
     MeshConstrainedMultiParallelogramPrediction,
-    MeshMultiParallelogramPrediction,
     MeshParallelogramPrediction,
     MeshNormalPrediction,
     MeshPredictionForTextureCoordinates,
@@ -197,12 +193,8 @@ impl From<SchemeName> for PredictionSchemeType {
     fn from(s: SchemeName) -> Self {
         match s {
             SchemeName::DeltaPrediction => PredictionSchemeType::DeltaPrediction,
-            SchemeName::DerivativePrediction => PredictionSchemeType::DerivativePrediction,
             SchemeName::MeshConstrainedMultiParallelogramPrediction => {
                 PredictionSchemeType::MeshConstrainedMultiParallelogramPrediction
-            }
-            SchemeName::MeshMultiParallelogramPrediction => {
-                PredictionSchemeType::MeshMultiParallelogramPrediction
             }
             SchemeName::MeshParallelogramPrediction => {
                 PredictionSchemeType::MeshParallelogramPrediction
@@ -239,8 +231,6 @@ enum TransformName {
     Difference,
     WrappedDifference,
     OctahedralOrthogonal,
-    OctahedralReflection,
-    Orthogonal,
 }
 
 impl From<TransformName> for PredictionTransformType {
@@ -250,28 +240,29 @@ impl From<TransformName> for PredictionTransformType {
             TransformName::Difference => PredictionTransformType::Difference,
             TransformName::WrappedDifference => PredictionTransformType::WrappedDifference,
             TransformName::OctahedralOrthogonal => PredictionTransformType::OctahedralOrthogonal,
-            TransformName::OctahedralReflection => PredictionTransformType::OctahedralReflection,
-            TransformName::Orthogonal => PredictionTransformType::Orthogonal,
         }
     }
 }
 
-/// TOML form of [`Quantization`]: `{ bits = N }` or `{ max_error = E }`. `bits`
-/// takes precedence if both are present; an empty table falls back to the
-/// attribute's default resolution.
+/// TOML form of [`Quantization`]: `{ bits = N }`, `{ max_error = E }` (against
+/// the observed value range), or `{ max_error = E, range = R }` (against a
+/// caller-supplied domain span). `bits` takes precedence if several are
+/// present; an empty table falls back to the attribute's default resolution.
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct QuantizationSpec {
     bits: Option<u8>,
     max_error: Option<f32>,
+    range: Option<f32>,
 }
 
 impl From<QuantizationSpec> for Quantization {
     fn from(q: QuantizationSpec) -> Self {
-        match (q.bits, q.max_error) {
-            (Some(bits), _) => Quantization::Bits(bits),
-            (None, Some(max_error)) => Quantization::MaxError(max_error),
-            (None, None) => Quantization::default(),
+        match (q.bits, q.max_error, q.range) {
+            (Some(bits), _, _) => Quantization::Bits(bits),
+            (None, Some(max_error), Some(range)) => Quantization::Bounded { range, max_error },
+            (None, Some(max_error), None) => Quantization::MaxError(max_error),
+            (None, None, _) => Quantization::default(),
         }
     }
 }

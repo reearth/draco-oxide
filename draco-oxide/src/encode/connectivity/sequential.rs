@@ -116,6 +116,8 @@ impl ConnectivityEncoder for Sequential {
     }
 }
 
+/// Configuration for sequential connectivity encoding. Exported as
+/// `SequentialConfig`.
 #[derive(Clone, Debug)]
 pub struct Config {
     /// How face indices are stored: verbatim, or entropy-coded as deltas.
@@ -130,11 +132,14 @@ impl ConfigType for Config {
     }
 }
 
+/// Errors from sequential connectivity encoding.
 #[remain::sorted]
 #[derive(thiserror::Error, Debug)]
 pub enum Err {
+    /// The shared sequential connectivity codec reported an error.
     #[error("Invalid vertex count")]
     SharedError(draco_oxide_core::codec::connectivity::sequential::Err),
+    /// Entropy coding of the face indices failed.
     #[error("Entropy Symbol Encoding Error: {0}")]
     SymbolEncodingError(crate::encode::entropy::symbol_coding::Err),
 }

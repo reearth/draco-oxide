@@ -1,0 +1,15 @@
+# Byte-stability gate: locks the default-config encoded stream for bunny.obj
+# byte-for-byte. The encoder's output is consumed by Google's Draco decoder in
+# the field, so any change here is a bitstream change and must be intentional;
+# rebaseline with DUMP_ENCODE_FINGERPRINTS=1 after verifying interop.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "bunny.obj"
+output = "oxide.drc"
+
+[[operations]]
+op = "Fingerprint"
+input = "oxide.drc"
+len = 71149
+fnv1a = "0x37c5ff12bbeefefa"

@@ -153,7 +153,7 @@ fn convert_obj_to_drc(cli: &Cli) -> Result<()> {
 
     // Encode the mesh to a buffer
     let mut buffer = Vec::new();
-    draco_oxide::encode::encode(mesh, &mut buffer, config)
+    draco_oxide::encode::encode_mesh(mesh, &mut buffer, config)
         .map_err(|e| anyhow::anyhow!("Failed to encode mesh: {:?}", e))?;
 
     // Write to output file

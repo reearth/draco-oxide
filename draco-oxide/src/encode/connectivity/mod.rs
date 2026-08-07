@@ -10,10 +10,9 @@ use draco_oxide_core::codec::connectivity::edgebreaker::EdgebreakerKind;
 use draco_oxide_core::mesh::ds::AttributeDS;
 use draco_oxide_core::types::{ConfigType, CornerIdx};
 
-#[cfg(feature = "evaluation")]
-use crate::eval;
-
-/// entry point for encoding connectivity.
+/// Entry point for encoding connectivity. Encodes the mesh connectivity with
+/// the method selected in the configuration and returns the corner order of
+/// the edgebreaker traversal (empty for sequential encoding).
 pub fn encode_connectivity<'faces, W>(
     adss: &mut [AttributeDS<'faces>],
     writer: &mut W,
@@ -22,16 +21,11 @@ pub fn encode_connectivity<'faces, W>(
 where
     W: ByteWriter,
 {
-    #[cfg(feature = "evaluation")]
-    eval::scope_begin("connectivity info", writer);
-
-    let result = encode_connectivity_datatype_unpacked(adss, writer, cfg.connectivity.clone());
-
-    #[cfg(feature = "evaluation")]
-    eval::scope_end(writer);
-    result
+    encode_connectivity_datatype_unpacked(adss, writer, cfg.connectivity.clone())
 }
 
+/// Dispatches connectivity encoding to the edgebreaker or sequential encoder
+/// according to the given connectivity configuration.
 pub fn encode_connectivity_datatype_unpacked<'faces, W>(
     adss: &mut [AttributeDS<'faces>],
     writer: &mut W,
@@ -42,9 +36,6 @@ where
 {
     let corners_of_edgebreaker = match cfg {
         Config::Edgebreaker(cfg) => {
-            #[cfg(feature = "evaluation")]
-            eval::scope_begin("edgebreaker", writer);
-
             let result = match cfg.traversal {
                 EdgebreakerKind::Standard => {
                     let encoder =
@@ -60,15 +51,9 @@ where
                 }
             };
 
-            #[cfg(feature = "evaluation")]
-            eval::scope_end(writer);
-
             result
         }
         Config::Sequential(cfg) => {
-            #[cfg(feature = "evaluation")]
-            eval::scope_begin("sequential", writer);
-
             // Sequential attributes are stored per point, so the point space is
             // what the face indices address and what sizes them.
             let num_points = adss[0].global_ds().num_points();
@@ -90,6 +75,9 @@ where
     Ok(corners_of_edgebreaker)
 }
 
+/// Interface implemented by the connectivity encoders. Consumes the encoder,
+/// writes the encoded connectivity to the writer, and returns the corner
+/// order of the traversal.
 pub trait ConnectivityEncoder {
     type Err;
     type Config;
@@ -98,23 +86,33 @@ pub trait ConnectivityEncoder {
         W: ByteWriter;
 }
 
+/// Errors from connectivity encoding.
 #[remain::sorted]
 #[derive(thiserror::Error, Debug)]
 pub enum Err {
+    /// Edgebreaker encoding failed.
     #[error("Edgebreaker encoding error: {0}")]
     EdgebreakerError(#[from] edgebreaker::Err),
+    /// The position attribute has an unsupported component type.
     #[error("Position attribute must be of type f32 or f64")]
     PositionAttributeTypeError,
+    /// Sequential encoding failed.
     #[error("Sequential encoding error: {0}")]
     SequentialError(#[from] sequential::Err),
+    /// The mesh has more connectivity attributes than the encoder supports.
     #[error("Too many connectivity attributes")]
     TooManyConnectivityAttributes,
 }
 
+/// Selection of the connectivity encoding method, carrying the configuration
+/// of the selected method. Exported as `ConnectivityConfig`.
 #[remain::sorted]
 #[derive(Clone, Debug)]
 pub enum Config {
+    /// Edgebreaker connectivity encoding.
     Edgebreaker(edgebreaker::Config),
+    /// Sequential connectivity encoding, which stores face indices directly
+    /// without compressing the connectivity.
     Sequential(sequential::Config),
 }
 

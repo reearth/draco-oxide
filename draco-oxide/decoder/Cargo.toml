@@ -1,6 +1,6 @@
 [package]
 name = "draco-oxide-decoder"
-description = "Decoder for draco-oxide (work in progress): decompresses draco-encoded geometry into the draco-oxide-core mesh model."
+description = "Decoder for draco-oxide: decompresses draco-encoded triangular meshes into the draco-oxide-core mesh model."
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,7 +15,18 @@ thiserror = "2.0.12"
 remain = "0.2.15"
 
 [features]
-default = ["dequantize", "safety_assertions"]
+default = ["dequantize", "safety_assertions", "rare-component-types"]
+# Decoding of attributes declared with the rarely used component types i8,
+# i16, and i32 (u8, u16, u32, and f32 are always supported; 64-bit types are
+# always rejected as unimplemented). On by default; a build without it rejects
+# streams declaring these types and drops their narrowing instantiations from
+# the module.
+rare-component-types = []
+# Decoding of point-cloud streams (kd-tree method) via `decode_point_cloud()`
+# and the `Geometry::PointCloud` variant. Off by default: it costs about 23 KB
+# of linked WASM, which a mesh-only viewer should not pay. The `draco-oxide`
+# crate turns it on.
+point-cloud = []
 # Phase-3 reconstruction: dequantize integer attributes to their original format
 # and octahedral values to unit normals, exposing the full `decode()` entry point.
 # Disable with `--no-default-features` for the portable/GPU tier, where only

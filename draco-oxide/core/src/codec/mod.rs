@@ -5,26 +5,15 @@ pub mod attribute;
 pub mod entropy;
 
 pub mod header {
-    use crate::bit_coder::{ByteWriter, Reader, ReaderErr};
+    use crate::bit_coder::ByteWriter;
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub enum EncoderMethod {
         Edgebreaker,
-        #[allow(unused)]
         Sequential,
     }
 
     impl EncoderMethod {
-        #[inline]
-        #[allow(unused)]
-        pub fn read_from(reader: &mut Reader<'_>) -> Result<Self, ReaderErr> {
-            match reader.read_u8()? {
-                0 => Ok(EncoderMethod::Sequential),
-                1 => Ok(EncoderMethod::Edgebreaker),
-                _ => panic!("Unknown encoder method ID"),
-            }
-        }
-
         #[inline]
         pub fn write_to<W>(self, writer: &mut W)
         where

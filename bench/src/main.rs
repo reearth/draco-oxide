@@ -20,7 +20,7 @@ use draco_oxide::core::attribute::AttributeType;
 use draco_oxide::core::mesh::Mesh;
 use draco_oxide::core::types::ConfigType;
 use draco_oxide::decode::Decoder;
-use draco_oxide::encode::{encode, Config, Encoder};
+use draco_oxide::encode::{encode_mesh, Config, Encoder};
 use draco_oxide::io::obj::load_obj;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -175,7 +175,7 @@ fn mem_child(codec: &str, input: &Path) {
         "oxide" => {
             let bytes = std::fs::read(input).expect("read drc");
             Box::new(move || {
-                let decoded = Decoder::new().decode(&bytes).expect("oxide decode");
+                let decoded = Decoder::new().decode_mesh(&bytes).expect("oxide decode");
                 std::hint::black_box(&decoded);
             })
         }
@@ -184,7 +184,7 @@ fn mem_child(codec: &str, input: &Path) {
             Box::new(move || {
                 let mut out = Vec::new();
                 Encoder::new()
-                    .encode(mesh, &mut out, Config::default())
+                    .encode_mesh(mesh, &mut out, Config::default())
                     .expect("oxide encode");
                 std::hint::black_box(&out);
             })
@@ -258,8 +258,11 @@ fn run(include_local: bool) {
     // regression fixtures (pathological_*, tiny synthetic shapes) or meshes
     // Draco cannot encode for a fair comparison (mobius, non-orientable).
     let included = [
+        "Corset",
+        "bldg_chiyoda_lod2",
         "DragonAttenuation",
         "Duck",
+        "FlightHelmet",
         "bldg_894e93d9",
         "bunny",
         "cube_quads",
@@ -313,14 +316,16 @@ fn run(include_local: bool) {
         let raw_bytes = raw_geometry_bytes(&mesh);
         let attrs = attr_summary(&mesh);
 
-        let oxide = bench_oxide(&mesh, obj);
-        let draco = match bench_draco(obj) {
+        // The reference encoder runs first: its stream is what BOTH decoders
+        // are measured on, so the decode comparison is over identical input.
+        let (draco, reference_drc) = match bench_draco(obj) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("  skipping {name}: libdraco failed ({e})");
                 continue;
             }
         };
+        let oxide = bench_oxide(&mesh, obj, &reference_drc);
 
         results.push(MeshBench {
             name,
@@ -398,9 +403,9 @@ fn time_median_ms<F: FnMut()>(mut f: F) -> f64 {
     samples[samples.len() / 2]
 }
 
-fn bench_oxide(mesh: &Mesh, obj: &Path) -> CodecResult {
+fn bench_oxide(mesh: &Mesh, obj: &Path, reference_drc: &[u8]) -> CodecResult {
     let mut buffer = Vec::new();
-    encode(mesh.clone(), &mut buffer, Config::default()).expect("draco-oxide encode");
+    encode_mesh(mesh.clone(), &mut buffer, Config::default()).expect("draco-oxide encode");
     let compressed_bytes = buffer.len();
 
     // The mesh clone inside the timed closure is a plain buffer copy, negligible
@@ -412,12 +417,17 @@ fn bench_oxide(mesh: &Mesh, obj: &Path) -> CodecResult {
     let encode_ms = time_median_ms(|| {
         let mut out = Vec::with_capacity(compressed_bytes);
         Encoder::new()
-            .encode(mesh.clone(), &mut out, Config::default())
+            .encode_mesh(mesh.clone(), &mut out, Config::default())
             .expect("draco-oxide encode");
     });
 
+    // Decode measurements consume the reference-encoded stream, the same
+    // input the Draco side decodes, so the decoders are compared on equal
+    // terms rather than each on its own encoder's output.
     let decode_ms = time_median_ms(|| {
-        Decoder::new().decode(&buffer).expect("draco-oxide decode");
+        Decoder::new()
+            .decode_mesh(reference_drc)
+            .expect("draco-oxide decode");
     });
 
     // The input clone happens before the window opens, so the stats are memory
@@ -429,13 +439,15 @@ fn bench_oxide(mesh: &Mesh, obj: &Path) -> CodecResult {
     alloc_track::start_window();
     let mut encoded = Vec::new();
     Encoder::new()
-        .encode(mesh_for_heap, &mut encoded, Config::default())
+        .encode_mesh(mesh_for_heap, &mut encoded, Config::default())
         .expect("draco-oxide encode");
     let encode_heap = alloc_track::end_window();
     drop(encoded);
 
     alloc_track::start_window();
-    let decoded = Decoder::new().decode(&buffer).expect("draco-oxide decode");
+    let decoded = Decoder::new()
+        .decode_mesh(reference_drc)
+        .expect("draco-oxide decode");
     let decode_heap = alloc_track::end_window();
     drop(decoded);
 
@@ -446,15 +458,16 @@ fn bench_oxide(mesh: &Mesh, obj: &Path) -> CodecResult {
         encode_heap: Some(encode_heap),
         encode_peak_rss: mem_child_rss("oxide-enc", obj),
         decode_heap: Some(decode_heap),
-        decode_peak_rss: peak_rss_via_child("oxide", &buffer),
+        decode_peak_rss: peak_rss_via_child("oxide", reference_drc),
     }
 }
 
 /// Benchmarks Google Draco through the libdraco shim, with the same timing
 /// harness as draco-oxide. Draco parses the OBJ itself, so each codec encodes
-/// its own natural in-memory form of the same file.
+/// its own natural in-memory form of the same file. Returns the reference
+/// stream alongside the measurements; both decoders are measured on it.
 #[cfg(have_libdraco)]
-fn bench_draco(obj: &Path) -> Result<CodecResult, String> {
+fn bench_draco(obj: &Path) -> Result<(CodecResult, Vec<u8>), String> {
     let mesh = draco_ffi::load_obj(obj).ok_or("obj load failed")?;
     let encoded = draco_ffi::encode(&mesh).ok_or("encode failed")?;
     let compressed_bytes = encoded.len();
@@ -466,7 +479,7 @@ fn bench_draco(obj: &Path) -> Result<CodecResult, String> {
         assert!(draco_ffi::decode(&encoded), "draco decode failed");
     });
 
-    Ok(CodecResult {
+    let result = CodecResult {
         encode_ms,
         decode_ms,
         compressed_bytes,
@@ -474,7 +487,8 @@ fn bench_draco(obj: &Path) -> Result<CodecResult, String> {
         encode_peak_rss: mem_child_rss("draco-enc", obj),
         decode_heap: None,
         decode_peak_rss: peak_rss_via_child("draco", &encoded),
-    })
+    };
+    Ok((result, encoded))
 }
 
 const OXIDE_COLOR: &str = "#58a6ff";

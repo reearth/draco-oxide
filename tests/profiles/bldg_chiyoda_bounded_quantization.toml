@@ -1,0 +1,25 @@
+# Bounded quantization on city-scale data: the position resolution is derived
+# from a caller-supplied domain span and a maximum tolerated error, the mode a
+# tiling pipeline uses so resolution stays uniform across tiles instead of
+# depending on each tile's own extent. The stream must decode in the reference
+# decoder with the geometry intact.
+#
+# Data: PLATEAU Chiyoda-ku; see bldg_chiyoda_lod2.obj for the source citation.
+
+[[operations]]
+op = "DracoOxideEncode"
+input = "bldg_chiyoda_lod2.obj"
+output = "bounded.drc"
+[operations.cfg.attributes.Position]
+quantization = { max_error = 0.05, range = 2000.0 }
+
+[[operations]]
+op = "DracoDecode"
+input = "bounded.drc"
+output = "bounded_decoded.obj"
+
+[[operations]]
+op = "Comparison"
+input1 = "bldg_chiyoda_lod2.obj"
+input2 = "bounded_decoded.obj"
+methods = [{ method = "Ssim", min = 0.98, color_by = "Geometry" }]

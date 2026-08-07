@@ -2,16 +2,8 @@ use crate::bit_coder::ReaderErr;
 use crate::bit_coder::{ByteWriter, Reader};
 
 pub mod geom;
-pub mod portabilization;
 pub mod prediction_scheme;
 pub mod sequence;
-
-#[derive(thiserror::Error, Debug)]
-#[allow(unused)]
-pub enum Err {
-    #[error("Reader Error: {0}")]
-    ReaderError(#[from] ReaderErr),
-}
 
 pub trait Portable: Sized {
     fn to_bytes(self) -> Vec<u8>;

@@ -8,23 +8,36 @@ use std::fmt::Debug;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+/// Errors from OBJ I/O.
 #[derive(Debug, thiserror::Error)]
 pub enum Err {
+    /// Building the internal mesh from the loaded data failed.
     #[error("Mesh Builder Error: {0}")]
     MeshBuilderError(#[from] draco_oxide_core::mesh::builder::Err),
 
+    /// Reading or writing the file failed.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// The mesh to write has no position attribute.
     #[error("mesh has no position attribute")]
     MissingPosition,
 
+    /// Decoding the Draco stream failed.
     #[cfg(feature = "decoder")]
     #[error("Draco decode error: {0}")]
     Decode(#[from] crate::decode::Err),
 }
 
+/// Loads a Wavefront OBJ file into the internal [`Mesh`] representation.
+/// Faces are triangulated on load; positions, normals, and texture
+/// coordinates are imported when present.
 pub fn load_obj<P: AsRef<Path> + Debug>(path: P) -> Result<Mesh, Err> {
+    // Non-generic body: keeps the parse compiled in this crate, not in callers.
+    load_obj_impl(path.as_ref())
+}
+
+fn load_obj_impl(path: &Path) -> Result<Mesh, Err> {
     let op = tobj::LoadOptions {
         triangulate: true,
         single_index: true,
@@ -138,7 +151,7 @@ pub fn write_obj<P: AsRef<Path>>(mesh: &Mesh, path: P) -> Result<(), Err> {
 #[cfg(feature = "decoder")]
 pub fn decode_drc_to_obj<P: AsRef<Path>, Q: AsRef<Path>>(drc: P, obj: Q) -> Result<(), Err> {
     let bytes = std::fs::read(drc)?;
-    let mesh = crate::decode::decode(&bytes)?;
+    let mesh = crate::decode::decode_mesh(&bytes)?;
     write_obj(&mesh, obj)
 }
 

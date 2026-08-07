@@ -4,7 +4,7 @@
 //! Usage: dump-drc <out_dir> <mesh.obj> [<mesh.obj> ...]
 
 use draco_oxide::core::types::ConfigType;
-use draco_oxide::encode::{encode, Config};
+use draco_oxide::encode::{encode_mesh, Config};
 use draco_oxide::io::obj::load_obj;
 
 fn main() {
@@ -14,7 +14,7 @@ fn main() {
     for path in args {
         let mesh = load_obj(&path).expect("load obj");
         let mut buffer = Vec::new();
-        encode(mesh, &mut buffer, Config::default()).expect("encode");
+        encode_mesh(mesh, &mut buffer, Config::default()).expect("encode");
         let stem = std::path::Path::new(&path)
             .file_stem()
             .unwrap()

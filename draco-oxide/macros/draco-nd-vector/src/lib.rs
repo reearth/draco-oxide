@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use std::env;
-use syn::{LitInt, parse_macro_input};
+use syn::{parse_macro_input, LitInt};
 
 #[proc_macro]
 pub fn impl_ndvector_ops_for_dim(input: TokenStream) -> TokenStream {
