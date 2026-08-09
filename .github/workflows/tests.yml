@@ -33,14 +33,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       # Mirror the `tests` job scope: the draco-oxide crates + integration
-      # `tests` crate, excluding the cli/analyzer apps. `--all-targets` also
-      # covers test/example/bench code; the second pass adds the `evaluation`
-      # feature so its `#[cfg(...)]` code is checked too.
+      # `tests` crate, excluding the cli app. `--all-targets` also
+      # covers test/example/bench code.
       - name: check (default features)
-        run: cargo check --workspace --exclude cli --exclude analyzer --all-targets
-
-      - name: check (evaluation feature)
-        run: cargo check -p draco-oxide --features evaluation --all-targets
+        run: cargo check --workspace --exclude cli --all-targets
 
   clippy:
     runs-on: ubuntu-latest
@@ -57,10 +53,7 @@ jobs:
       # Same scope and two-pass structure as the `warnings` job. `-D warnings`
       # is passed to clippy-driver so any clippy lint fails the build.
       - name: clippy (default features)
-        run: cargo clippy --workspace --exclude cli --exclude analyzer --all-targets -- -D warnings
-
-      - name: clippy (evaluation feature)
-        run: cargo clippy -p draco-oxide --features evaluation --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude cli --all-targets -- -D warnings
 
   wasm:
     runs-on: ubuntu-latest
@@ -88,6 +81,12 @@ jobs:
       - name: decoder on wasm32 (portable tier)
         run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release --no-default-features
 
+      - name: decoder on wasm32 (point-cloud tier)
+        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release --features point-cloud
+
+      - name: decoder on wasm32 (portable + point-cloud tier)
+        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release --no-default-features --features point-cloud
+
       - name: size probe (full)
         run: |
           cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown
@@ -98,10 +97,39 @@ jobs:
           cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --no-default-features
           cp target/wasm32-unknown-unknown/wasm-size/wasm_size_probe.wasm probe-portable.wasm
 
+      - name: size probe (full + point cloud)
+        run: |
+          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --features point-cloud
+          cp target/wasm32-unknown-unknown/wasm-size/wasm_size_probe.wasm probe-point-cloud.wasm
+
+      - name: size probe (portable + point cloud)
+        run: |
+          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --no-default-features --features point-cloud
+          cp target/wasm32-unknown-unknown/wasm-size/wasm_size_probe.wasm probe-portable-point-cloud.wasm
+
+      - name: size probe (full, common component types only)
+        run: |
+          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --no-default-features --features dequantize
+          cp target/wasm32-unknown-unknown/wasm-size/wasm_size_probe.wasm probe-common-types.wasm
+
+      # A deployment runs binaryen over the module (Emscripten does the same
+      # for the reference decoder), so the deliverable size is the
+      # post-wasm-opt one; the raw cargo output is reported alongside it.
+      - name: install binaryen
+        run: |
+          curl -sL https://github.com/WebAssembly/binaryen/releases/download/version_119/binaryen-version_119-x86_64-linux.tar.gz | tar -xz
+          echo "$PWD/binaryen-version_119/bin" >> "$GITHUB_PATH"
+
       - name: report module sizes
         run: |
-          gzip -k -9 probe-full.wasm probe-portable.wasm
-          ls -la probe-*.wasm probe-*.wasm.gz
+          for f in probe-*.wasm; do
+            wasm-opt -Oz --strip-debug \
+              --enable-bulk-memory --enable-sign-ext \
+              --enable-mutable-globals --enable-nontrapping-float-to-int \
+              "$f" -o "opt-$f"
+          done
+          gzip -k -9 probe-*.wasm opt-*.wasm
+          ls -la probe-*.wasm probe-*.wasm.gz opt-*.wasm opt-*.wasm.gz
 
   tests:
     runs-on: ubuntu-latest
@@ -128,12 +156,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       # Test the draco-oxide crates (draco-oxide, -core, -decoder, draco-nd-vector)
-      # and the integration `tests` crate. The cli/analyzer apps are excluded.
+      # and the integration `tests` crate. The cli app is excluded.
       - name: tests
-        run: cargo test --workspace --exclude cli --exclude analyzer -- --nocapture
-
-      # The above run never enables `evaluation`, so the encoder's
-      # `#[cfg(feature = "evaluation")]` tests are compiled out. Cover them
-      # explicitly rather than relying on analyzer's feature unification.
-      - name: evaluation tests
-        run: cargo test -p draco-oxide --features evaluation -- --nocapture
+        run: cargo test --workspace --exclude cli -- --nocapture
