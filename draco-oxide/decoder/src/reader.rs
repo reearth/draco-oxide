@@ -61,8 +61,10 @@ impl<'a> RevReader<'a> {
             let l_bits = l_base.trailing_zeros() as usize;
             // `state | 1` guards the (malformed-stream-only) state == 0 case;
             // it never changes the bit length of a live state, which is >= 4
-            // whenever bytes remain.
-            let msb = 63 - (state | 1).leading_zeros() as usize;
+            // whenever bytes remain. usize::BITS, not 63: on wasm32 usize is
+            // 32 bits, and a 64-based msb overshoots by 32 so k saturates to 0
+            // and the state is never refilled.
+            let msb = (usize::BITS - 1 - (state | 1).leading_zeros()) as usize;
             // Smallest k with the refilled bit length reaching l_bits; k <= 3
             // because states stay below l_base << 8 = 2^(l_bits + 8).
             let k = (l_bits.saturating_sub(msb) + 7) >> 3;
@@ -117,6 +119,29 @@ mod tests {
         assert_eq!(reader.read_u8().unwrap(), 4);
         assert_eq!(reader.read_u8().unwrap(), 5);
         assert!(reader.is_empty());
+    }
+
+    /// The branchless refill must match the byte-loop it replaces for every
+    /// state below l_base, at every draco precision. Runs the widths that
+    /// need 1, 2 and 3 refill bytes; on a 32-bit usize the fast path is the
+    /// same arithmetic, so this pins the width-portable msb computation.
+    #[test]
+    fn rans_refill_fast_path_matches_byte_loop() {
+        let buffer = vec![0x11_u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        for precision in [12_usize, 16, 20] {
+            let l_base = 4_usize << precision;
+            for state in [1_usize, 0x3F, 0x1FFF, l_base >> 9, l_base - 1] {
+                let mut fast = RevReader::new(&buffer);
+                let refilled = fast.rans_refill(state, l_base);
+                let mut slow = RevReader::new(&buffer);
+                let mut expected = state;
+                while expected < l_base {
+                    expected = (expected << 8) | slow.read_u8_back().unwrap() as usize;
+                }
+                assert_eq!(refilled, expected, "state {state:#x} precision {precision}");
+                assert_eq!(fast.read_u8_back(), slow.read_u8_back());
+            }
+        }
     }
 
     #[test]
