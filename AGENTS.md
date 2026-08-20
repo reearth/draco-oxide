@@ -165,9 +165,8 @@ workspace version is pushed (requires the `CARGO_REGISTRY_TOKEN` secret).
 
 ## Conventions
 
-- Doc comments state what an item does, concisely; no development narrative.
+- Doc comments state what an item does, concisely. No development narrative should be written.
 - Inline comments only for safety contracts or invariants.
-- No em-dashes in comments or docs.
 - Encoder configuration changes must keep `Config::validate` exhaustive:
   every selectable combination either works end-to-end (with a profile test)
   or is rejected before anything is written.

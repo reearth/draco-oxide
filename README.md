@@ -3,18 +3,9 @@
 [![Crates.io](https://img.shields.io/crates/v/draco-oxide?include_prereleases)](https://crates.io/crates/draco-oxide)
 [![Documentation](https://docs.rs/draco-oxide/badge.svg)](https://docs.rs/draco-oxide)
 
-`draco-oxide` is a high-performance [Draco](https://github.com/google/draco) codec written in pure Rust. It encodes and decodes triangular meshes (bitstream 2.2) and point clouds (bitstream 2.3, kd-tree method); legacy bitstream versions are not supported and are rejected with clear errors. Interoperability is continuously tested against the reference C++ implementation: streams encoded here decode in Google Draco, and vice versa.
+`draco-oxide` is a high-performance [Draco](https://github.com/google/draco) codec written in pure Rust. It encodes and decodes triangular meshes (bitstream 2.2) and point clouds (bitstream 2.3, kd-tree method). Any older bitstream versions are not supported and are rejected with clear errors. Streams encoded here decode in Google Draco, and vice versa.
 
-The crates are published as `0.1.0-alpha` pre-releases; APIs may still move between alphas.
-
-The workspace ships four crates:
-
-| Crate | What it is |
-| --- | --- |
-| [`draco-oxide`](https://crates.io/crates/draco-oxide) | The main crate: encoder, OBJ and glTF/GLB I/O, and (by default) a re-export of the decoder as `draco_oxide::decode`. |
-| [`draco-oxide-decoder`](https://crates.io/crates/draco-oxide-decoder) | The decoder alone. Depend on this directly for decode-only consumers such as WASM viewers. |
-| [`draco-oxide-core`](https://crates.io/crates/draco-oxide-core) | The shared data model and codec primitives both sides build on. |
-| [`draco-nd-vector`](https://crates.io/crates/draco-nd-vector) | Proc macros used by the core crate. |
+The crates are published as `0.1.0-alpha` pre-releases. APIs may still move between alphas.
 
 ## Encoder
 
@@ -147,7 +138,7 @@ As in the reference implementation, the kd-tree algorithm does not preserve poin
 ## Not supported
 
 - The sequential point-cloud method (`-cl 0` in the reference encoder); kd-tree covers every other level.
-- Legacy Draco bitstreams (before 2.2). This is likely fine, as the 2.2 bitstream was released in 2018.
+- Legacy Draco bitstreams (before 2.2). 2.2 has been the mesh bitstream since Draco 1.2.0 in October 2017, and each of the versions before it was superseded within weeks, so hardly any assets live today would use it.
 
 ## Acknowledgements
 
