@@ -50,6 +50,9 @@ under `draco-oxide/`:
 - **bench/**: unpublished benchmark against Google Draco (see below).
 - **wasm-size-probe/**: minimal C-ABI surface over the decoder used to
   measure linked WASM module size per feature tier.
+- **wasi-codec/**: unpublished file-in/file-out encode/decode binary over
+  `draco-oxide`, built for `wasm32-wasip1` so the profile tests can run the
+  codec under wasmtime (see Testing).
 
 ## The encoder's cascading index model
 
@@ -134,6 +137,26 @@ a list of operations run in order in a scratch dir:
 `tests/build.rs` generates one `#[test]` per profile; the test name is the
 file stem. Test data lives in `tests/data/`; derived data must carry the
 citation its license requires in the file header (see existing headers).
+
+### Profile tests on WASM
+
+The same profiles run with draco-oxide on a 32-bit WASM target, which is
+where `usize`-width bugs surface:
+
+```bash
+rustup target add wasm32-wasip1     # once; also install wasmtime
+cargo build -p wasi-codec --target wasm32-wasip1 --release
+DRACO_OXIDE_WASM=target/wasm32-wasip1/release/wasi-codec.wasm \
+  cargo test -p tests --test integrated_tests
+```
+
+`DRACO_OXIDE_WASM` reroutes every `DracoOxideEncode` / `DracoOxideDecode`
+through the module under `wasmtime` (`WASMTIME=<path>` if it is not on
+PATH; a relative module path is taken from the workspace root); the
+reference-binary operations and comparisons are unchanged.
+`cargo test -p draco-oxide-core -p draco-oxide-decoder --target wasm32-wasip1`
+runs the unit tests on the same target via the runner in
+`.cargo/config.toml`. CI runs both.
 
 ## Bench
 

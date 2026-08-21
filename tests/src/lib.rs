@@ -12,6 +12,10 @@
 //! those binaries aren't available — the same auto-skip behavior used by the
 //! existing `draco_decode` smoke test, so `cargo test` keeps passing on
 //! machines without Google Draco built.
+//!
+//! `DRACO_OXIDE_WASM=<path to wasi-codec.wasm>` reroutes the draco-oxide
+//! operations through that module under `wasmtime`, so the same profiles
+//! exercise the codec on a 32-bit WASM target (see [`WasmCodec`]).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -37,9 +41,30 @@ pub struct Profile {
     pub operations: Vec<Operation>,
 }
 
-/// serde default for `DracoOxideEncode::cfg` — the plain encoder default.
-fn default_oxide_cfg() -> oxide_encode::Config {
-    <oxide_encode::Config as ConfigType>::default()
+/// `DracoOxideEncode::cfg`: the encoder [`Config`](oxide_encode::Config)
+/// together with the TOML table it was parsed from, so the WASM codec path
+/// can hand the same configuration to the `wasi-codec` subprocess.
+#[derive(Debug, Clone)]
+pub struct OxideCfg {
+    pub table: toml::Table,
+    pub parsed: oxide_encode::Config,
+}
+
+impl Default for OxideCfg {
+    fn default() -> Self {
+        Self {
+            table: toml::Table::new(),
+            parsed: <oxide_encode::Config as ConfigType>::default(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for OxideCfg {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let table = toml::Table::deserialize(d)?;
+        let parsed = table.clone().try_into().map_err(serde::de::Error::custom)?;
+        Ok(Self { table, parsed })
+    }
 }
 
 /// One step in a test profile.
@@ -79,8 +104,8 @@ pub enum Operation {
         output: String,
         #[serde(default)]
         timeout_secs: Option<f64>,
-        #[serde(default = "default_oxide_cfg")]
-        cfg: oxide_encode::Config,
+        #[serde(default)]
+        cfg: OxideCfg,
     },
     /// Decode a `.drc` with draco-oxide's own decoder, writing Wavefront OBJ.
     DracoOxideDecode { input: String, output: String },
@@ -275,6 +300,8 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
         return;
     }
 
+    let wasm_codec = WasmCodec::from_env(name, &out_dir, data_dir);
+
     std::fs::create_dir_all(&out_dir).unwrap_or_else(|e| {
         panic!(
             "[{name}] failed to create output dir {}: {e}",
@@ -303,25 +330,37 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
                 cfg,
             } => {
                 let in_path = resolve_input(input);
-                let buf = match timeout_secs {
-                    Some(secs) => encode_oxide_with_timeout(
+                let out_path = resolve_output(output);
+                let timeout = timeout_secs.map(Duration::from_secs_f64);
+                if let Some(wasm) = &wasm_codec {
+                    let cfg_path = (!cfg.table.is_empty()).then(|| {
+                        let path = out_dir.join(format!("op{idx}.cfg.toml"));
+                        std::fs::write(&path, cfg.table.to_string()).unwrap_or_else(|e| {
+                            panic!("{label}: writing {} failed: {e}", path.display())
+                        });
+                        path
+                    });
+                    wasm.encode(&label, &in_path, &out_path, cfg_path.as_deref(), timeout);
+                    continue;
+                }
+                let buf = match timeout {
+                    Some(timeout) => encode_oxide_with_timeout(
                         &label,
                         in_path.clone(),
-                        Duration::from_secs_f64(*secs),
-                        cfg.clone(),
+                        timeout,
+                        cfg.parsed.clone(),
                     ),
                     None => {
                         let mesh = load_mesh_for_oxide(&in_path).unwrap_or_else(|e| {
                             panic!("{label}: failed to load {}: {e}", in_path.display())
                         });
                         let mut buf = Vec::new();
-                        oxide_encode_fn(mesh, &mut buf, cfg.clone()).unwrap_or_else(|e| {
+                        oxide_encode_fn(mesh, &mut buf, cfg.parsed.clone()).unwrap_or_else(|e| {
                             panic!("{label}: draco-oxide encode failed: {e:?}")
                         });
                         buf
                     }
                 };
-                let out_path = resolve_output(output);
                 std::fs::write(&out_path, &buf).unwrap_or_else(|e| {
                     panic!("{label}: writing {} failed: {e}", out_path.display())
                 });
@@ -329,6 +368,10 @@ pub fn run_profile(name: &str, profile_path: &str, data_dir: &str, outputs_dir: 
             Operation::DracoOxideDecode { input, output } => {
                 let in_path = resolve_input(input);
                 let out_path = resolve_output(output);
+                if let Some(wasm) = &wasm_codec {
+                    wasm.decode(&label, &in_path, &out_path);
+                    continue;
+                }
                 draco_oxide::io::obj::decode_drc_to_obj(&in_path, &out_path).unwrap_or_else(|e| {
                     panic!(
                         "{label}: draco-oxide decode of {} failed: {e}",
@@ -752,6 +795,145 @@ fn triangle_area(
     v2: parry3d::math::Vector,
 ) -> f64 {
     0.5 * (v1 - v0).cross(v2 - v0).length() as f64
+}
+
+// ---------------------------------------------------------------------------
+// draco-oxide under a WASM runtime
+// ---------------------------------------------------------------------------
+
+/// Runs `DracoOxideEncode` / `DracoOxideDecode` through the `wasi-codec`
+/// module under `wasmtime` instead of in-process, so every profile exercises
+/// the codec on a 32-bit target. Enabled by `DRACO_OXIDE_WASM=<path to
+/// wasi-codec.wasm>` (build it with `cargo build -p wasi-codec --target
+/// wasm32-wasip1 --release`); `WASMTIME` overrides the runtime binary.
+///
+/// The guest sees the profile's output dir as `/out` and the data dir as
+/// `/data`; host paths are translated on the way in.
+struct WasmCodec {
+    runtime: PathBuf,
+    module: PathBuf,
+    out_dir: PathBuf,
+    data_dir: PathBuf,
+}
+
+impl WasmCodec {
+    /// Guest mount point of the profile's output dir.
+    const GUEST_OUT: &'static str = "/out";
+    /// Guest mount point of the shared test data dir.
+    const GUEST_DATA: &'static str = "/data";
+
+    /// The opt-in is explicit, so a missing module or runtime is a failure,
+    /// never a silent fallback to the native codec. A relative module path is
+    /// resolved against the workspace root (cargo runs this crate's tests
+    /// with the `tests/` package dir as the working directory).
+    fn from_env(name: &str, out_dir: &Path, data_dir: &Path) -> Option<Self> {
+        let module = PathBuf::from(std::env::var_os("DRACO_OXIDE_WASM")?);
+        let module = if module.is_relative() {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join(module)
+        } else {
+            module
+        };
+        assert!(
+            module.is_file(),
+            "[{name}] DRACO_OXIDE_WASM={} is not a file (build it with \
+             `cargo build -p wasi-codec --target wasm32-wasip1 --release`)",
+            module.display()
+        );
+        let runtime = PathBuf::from(std::env::var_os("WASMTIME").unwrap_or("wasmtime".into()));
+        Some(Self {
+            runtime,
+            module,
+            out_dir: out_dir.to_path_buf(),
+            data_dir: data_dir.to_path_buf(),
+        })
+    }
+
+    fn encode(
+        &self,
+        label: &str,
+        input: &Path,
+        output: &Path,
+        cfg: Option<&Path>,
+        timeout: Option<Duration>,
+    ) {
+        let mut cmd = self.command();
+        cmd.arg("encode")
+            .arg(self.guest_path(label, input))
+            .arg(self.guest_path(label, output));
+        if let Some(cfg) = cfg {
+            cmd.arg(self.guest_path(label, cfg));
+        }
+        let stdout = self.run(label, cmd);
+        let secs: f64 = stdout
+            .lines()
+            .find_map(|l| l.strip_prefix("encode_secs="))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or_else(|| panic!("{label}: wasi-codec did not report encode_secs"));
+        if let Some(timeout) = timeout {
+            assert!(
+                secs <= timeout.as_secs_f64(),
+                "{label}: draco-oxide (wasm) encode took {secs:.3}s, exceeding timeout of {timeout:?}"
+            );
+        }
+    }
+
+    fn decode(&self, label: &str, input: &Path, output: &Path) {
+        let mut cmd = self.command();
+        cmd.arg("decode")
+            .arg(self.guest_path(label, input))
+            .arg(self.guest_path(label, output));
+        self.run(label, cmd);
+    }
+
+    fn command(&self) -> Command {
+        let mut cmd = Command::new(&self.runtime);
+        cmd.arg("run")
+            .arg("--dir")
+            .arg(format!("{}::{}", self.out_dir.display(), Self::GUEST_OUT))
+            .arg("--dir")
+            .arg(format!("{}::{}", self.data_dir.display(), Self::GUEST_DATA))
+            .arg(&self.module);
+        cmd
+    }
+
+    fn run(&self, label: &str, mut cmd: Command) -> String {
+        let output = cmd.output().unwrap_or_else(|e| {
+            panic!(
+                "{label}: failed to spawn {} (set WASMTIME=<path> if it is not on PATH): {e}",
+                self.runtime.display()
+            )
+        });
+        if !output.status.success() {
+            panic!(
+                "{label}: wasi-codec failed with {}\n    stdout: {}\n    stderr: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout).trim(),
+                String::from_utf8_lossy(&output.stderr).trim(),
+            );
+        }
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    fn guest_path(&self, label: &str, host: &Path) -> String {
+        let (root, guest) = if let Ok(rel) = host.strip_prefix(&self.out_dir) {
+            (rel, Self::GUEST_OUT)
+        } else if let Ok(rel) = host.strip_prefix(&self.data_dir) {
+            (rel, Self::GUEST_DATA)
+        } else {
+            panic!(
+                "{label}: {} is outside the output and data dirs",
+                host.display()
+            )
+        };
+        let mut path = guest.to_string();
+        for component in root.components() {
+            path.push('/');
+            path.push_str(&component.as_os_str().to_string_lossy());
+        }
+        path
+    }
 }
 
 // ---------------------------------------------------------------------------
