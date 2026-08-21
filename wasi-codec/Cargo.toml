@@ -1,0 +1,14 @@
+[package]
+name = "wasi-codec"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Internal test harness binary: a file-in/file-out encode/decode front end over
+# `draco-oxide`, built for `wasm32-wasip1` so the profile tests can run the
+# codec under a WASM runtime (`DRACO_OXIDE_WASM=<module> cargo test -p tests`)
+# and catch target-width bugs that 64-bit hosts hide. Not a shipping artifact.
+
+[dependencies]
+draco-oxide = { path = "../draco-oxide" }
+toml = "0.8"

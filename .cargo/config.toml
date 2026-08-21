@@ -1,0 +1,4 @@
+# Runs wasm32-wasip1 test binaries under wasmtime (`cargo test --target
+# wasm32-wasip1`), with the working directory preopened for fixture access.
+[target.wasm32-wasip1]
+runner = ["wasmtime", "run", "--dir", "."]

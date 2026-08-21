@@ -115,6 +115,49 @@ jobs:
           gzip -k -9 probe-*.wasm opt-*.wasm
           ls -la probe-*.wasm probe-*.wasm.gz opt-*.wasm opt-*.wasm.gz
 
+  wasi-tests:
+    runs-on: ubuntu-latest
+    env:
+      DRACO_TAG: "1.5.7"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add wasm32-wasip1 target
+        run: rustup target add wasm32-wasip1
+
+      - name: Cache Google Draco
+        uses: actions/cache@v4
+        with:
+          path: third_party/draco
+          key: draco-${{ runner.os }}-${{ env.DRACO_TAG }}-${{ hashFiles('scripts/build-draco.sh') }}
+
+      - name: Build Google Draco reference decoder
+        run: ./scripts/build-draco.sh
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: install wasmtime
+        run: |
+          curl -sSf https://wasmtime.dev/install.sh | bash
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+
+      # The codec crates' own unit tests on a 32-bit target, run under the
+      # wasmtime runner from .cargo/config.toml.
+      - name: unit tests on wasm32-wasip1
+        run: cargo test -p draco-oxide-core -p draco-oxide-decoder --target wasm32-wasip1
+
+      # Every profile test with the draco-oxide operations rerouted through the
+      # wasi-codec module, so the encoder and decoder run on wasm32 against
+      # the same fixtures and the same Google Draco round trips as natively.
+      - name: build wasi-codec
+        run: cargo build -p wasi-codec --target wasm32-wasip1 --release
+
+      - name: profile tests on wasm32-wasip1
+        env:
+          DRACO_OXIDE_WASM: target/wasm32-wasip1/release/wasi-codec.wasm
+        run: cargo test -p tests --test integrated_tests -- --nocapture
+
   tests:
     runs-on: ubuntu-latest
     env:
