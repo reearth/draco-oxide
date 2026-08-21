@@ -6,7 +6,7 @@ members = ["draco-oxide", "draco-oxide/core", "draco-oxide/decoder", "cli", "tes
 # (draco-oxide, draco-oxide-core, draco-oxide-decoder). Bump `version` in one
 # place; the cli/tests crates keep their own versions.
 [workspace.package]
-version = "0.1.0-alpha.9"
+version = "0.1.0-alpha.10"
 edition = "2021"
 rust-version = "1.84"
 license = "MIT OR Apache-2.0"
@@ -16,9 +16,9 @@ repository = "https://github.com/reearth/draco-oxide"
 
 # Internal path dependencies declared once so member versions stay in lockstep.
 [workspace.dependencies]
-draco-oxide-core = { path = "draco-oxide/core", version = "0.1.0-alpha.9" }
-draco-oxide-decoder = { path = "draco-oxide/decoder", version = "0.1.0-alpha.9" }
-draco-nd-vector = { path = "draco-oxide/macros/draco-nd-vector", version = "0.1.0-alpha.9" }
+draco-oxide-core = { path = "draco-oxide/core", version = "0.1.0-alpha.10" }
+draco-oxide-decoder = { path = "draco-oxide/decoder", version = "0.1.0-alpha.10" }
+draco-nd-vector = { path = "draco-oxide/macros/draco-nd-vector", version = "0.1.0-alpha.10" }
 
 # Size-oriented profile for measuring (and shipping) the decoder's WASM
 # bundle: optimize for size, single codegen unit, fat LTO, no unwinding.
