@@ -823,9 +823,18 @@ impl WasmCodec {
     const GUEST_DATA: &'static str = "/data";
 
     /// The opt-in is explicit, so a missing module or runtime is a failure,
-    /// never a silent fallback to the native codec.
+    /// never a silent fallback to the native codec. A relative module path is
+    /// resolved against the workspace root (cargo runs this crate's tests
+    /// with the `tests/` package dir as the working directory).
     fn from_env(name: &str, out_dir: &Path, data_dir: &Path) -> Option<Self> {
         let module = PathBuf::from(std::env::var_os("DRACO_OXIDE_WASM")?);
+        let module = if module.is_relative() {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join(module)
+        } else {
+            module
+        };
         assert!(
             module.is_file(),
             "[{name}] DRACO_OXIDE_WASM={} is not a file (build it with \

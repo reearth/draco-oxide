@@ -152,7 +152,8 @@ DRACO_OXIDE_WASM=target/wasm32-wasip1/release/wasi-codec.wasm \
 
 `DRACO_OXIDE_WASM` reroutes every `DracoOxideEncode` / `DracoOxideDecode`
 through the module under `wasmtime` (`WASMTIME=<path>` if it is not on
-PATH); the reference-binary operations and comparisons are unchanged.
+PATH; a relative module path is taken from the workspace root); the
+reference-binary operations and comparisons are unchanged.
 `cargo test -p draco-oxide-core -p draco-oxide-decoder --target wasm32-wasip1`
 runs the unit tests on the same target via the runner in
 `.cargo/config.toml`. CI runs both.
