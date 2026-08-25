@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["draco-oxide", "draco-oxide/core", "draco-oxide/decoder", "cli", "tests", "bench", "wasm-size-probe", "wasi-codec"]
 
 # Shared metadata for the version-locked draco-oxide library crates
@@ -8,7 +8,7 @@ members = ["draco-oxide", "draco-oxide/core", "draco-oxide/decoder", "cli", "tes
 [workspace.package]
 version = "0.1.0-alpha.10"
 edition = "2021"
-rust-version = "1.84"
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["Re:Earth Contributors"]
 homepage = "https://github.com/reearth/draco-oxide"

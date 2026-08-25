@@ -7,7 +7,6 @@ target/
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
-Cargo.lock
 
 # analyzer outputs
 analyzer/outputs
