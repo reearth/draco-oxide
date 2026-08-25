@@ -176,15 +176,18 @@ produced, so the decoders are compared on identical input. Helper binaries:
 
 ```bash
 cargo fmt
-cargo clippy    # MSRV 1.84
+cargo clippy    # MSRV 1.85
 cargo deny check
 ```
 
 CI (`.github/workflows/tests.yml`) enforces fmt, warnings-as-errors, clippy,
-wasm32 builds of both decoder tiers with module-size reporting, and the full
-test suite against a cached Google Draco build. `release.yml` publishes the
-four crates to crates.io in dependency order when a `v*` tag matching the
-workspace version is pushed (requires the `CARGO_REGISTRY_TOKEN` secret).
+the MSRV against the four published crates, `cargo deny`, wasm32 builds of
+both decoder tiers with module-size reporting, and the full test suite against
+a cached Google Draco build. `Cargo.lock` is committed and every cargo
+invocation passes `--locked`, so a stale lockfile fails CI instead of being
+silently rewritten. `release.yml` publishes the four crates to crates.io in
+dependency order when a `v*` tag matching the workspace version is pushed
+(requires the `CARGO_REGISTRY_TOKEN` secret).
 
 ## Conventions
 
