@@ -36,7 +36,7 @@ jobs:
       # `tests` crate, excluding the cli app. `--all-targets` also
       # covers test/example/bench code.
       - name: check (default features)
-        run: cargo check --workspace --exclude cli --all-targets
+        run: cargo check --workspace --exclude cli --all-targets --locked
 
   clippy:
     runs-on: ubuntu-latest
@@ -53,7 +53,47 @@ jobs:
       # Same scope and two-pass structure as the `warnings` job. `-D warnings`
       # is passed to clippy-driver so any clippy lint fails the build.
       - name: clippy (default features)
-        run: cargo clippy --workspace --exclude cli --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude cli --all-targets --locked -- -D warnings
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+
+      - name: Install the MSRV toolchain
+        run: rustup toolchain install 1.85.0 --profile minimal
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      # `rust-version` is a promise to crates.io consumers, so the check is
+      # scoped to the four published crates. The unpublished `tests` crate
+      # pulls parry3d -> simba -> wide, which needs a newer compiler.
+      - name: check on the MSRV toolchain
+        run: >
+          cargo +1.85.0 check --locked
+          -p draco-nd-vector -p draco-oxide-core -p draco-oxide-decoder -p draco-oxide
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+
+      # Licenses, advisories, bans and sources per deny.toml. `--locked` makes
+      # the audited dependency set exactly the committed one.
+      - name: cargo deny check
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features --locked
 
   wasm:
     runs-on: ubuntu-latest
@@ -76,40 +116,40 @@ jobs:
       # green on wasm32. The size probe builds the linked cdylib per tier and
       # prints the module sizes for the job log.
       - name: decoder on wasm32 (default tier)
-        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release
+        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release --locked
 
       - name: decoder on wasm32 (portable tier)
-        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release --no-default-features
+        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release --no-default-features --locked
 
       - name: decoder on wasm32 (point-cloud tier)
-        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release --features point-cloud
+        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release --features point-cloud --locked
 
       - name: decoder on wasm32 (portable + point-cloud tier)
-        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release --no-default-features --features point-cloud
+        run: cargo build -p draco-oxide-decoder --target wasm32-unknown-unknown --release --no-default-features --features point-cloud --locked
 
       - name: size probe (full)
         run: |
-          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown
+          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --locked
           cp target/wasm32-unknown-unknown/wasm-size/wasm_size_probe.wasm probe-full.wasm
 
       - name: size probe (portable)
         run: |
-          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --no-default-features
+          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --no-default-features --locked
           cp target/wasm32-unknown-unknown/wasm-size/wasm_size_probe.wasm probe-portable.wasm
 
       - name: size probe (full + point cloud)
         run: |
-          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --features point-cloud
+          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --features point-cloud --locked
           cp target/wasm32-unknown-unknown/wasm-size/wasm_size_probe.wasm probe-point-cloud.wasm
 
       - name: size probe (portable + point cloud)
         run: |
-          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --no-default-features --features point-cloud
+          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --no-default-features --features point-cloud --locked
           cp target/wasm32-unknown-unknown/wasm-size/wasm_size_probe.wasm probe-portable-point-cloud.wasm
 
       - name: size probe (full, common component types only)
         run: |
-          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --no-default-features --features dequantize
+          cargo build -p wasm-size-probe --profile wasm-size --target wasm32-unknown-unknown --no-default-features --features dequantize --locked
           cp target/wasm32-unknown-unknown/wasm-size/wasm_size_probe.wasm probe-common-types.wasm
 
       # A deployment runs binaryen over the module (Emscripten does the same
@@ -165,18 +205,18 @@ jobs:
       # The codec crates' own unit tests on a 32-bit target, run under the
       # wasmtime runner from .cargo/config.toml.
       - name: unit tests on wasm32-wasip1
-        run: cargo test -p draco-oxide-core -p draco-oxide-decoder --target wasm32-wasip1
+        run: cargo test -p draco-oxide-core -p draco-oxide-decoder --target wasm32-wasip1 --locked
 
       # Every profile test with the draco-oxide operations rerouted through the
       # wasi-codec module, so the encoder and decoder run on wasm32 against
       # the same fixtures and the same Google Draco round trips as natively.
       - name: build wasi-codec
-        run: cargo build -p wasi-codec --target wasm32-wasip1 --release
+        run: cargo build -p wasi-codec --target wasm32-wasip1 --release --locked
 
       - name: profile tests on wasm32-wasip1
         env:
           DRACO_OXIDE_WASM: target/wasm32-wasip1/release/wasi-codec.wasm
-        run: cargo test -p tests --test integrated_tests -- --nocapture
+        run: cargo test -p tests --test integrated_tests --locked -- --nocapture
 
   tests:
     runs-on: ubuntu-latest
@@ -205,4 +245,4 @@ jobs:
       # Test the draco-oxide crates (draco-oxide, -core, -decoder, draco-nd-vector)
       # and the integration `tests` crate. The cli app is excluded.
       - name: tests
-        run: cargo test --workspace --exclude cli -- --nocapture
+        run: cargo test --workspace --exclude cli --locked -- --nocapture
