@@ -478,7 +478,7 @@ checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 
 [[package]]
 name = "draco-nd-vector"
-version = "0.1.0-alpha.10"
+version = "0.1.0-alpha.11"
 dependencies = [
  "quote",
  "seq-macro",
@@ -487,7 +487,7 @@ dependencies = [
 
 [[package]]
 name = "draco-oxide"
-version = "0.1.0-alpha.10"
+version = "0.1.0-alpha.11"
 dependencies = [
  "draco-oxide-core",
  "draco-oxide-decoder",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "draco-oxide-core"
-version = "0.1.0-alpha.10"
+version = "0.1.0-alpha.11"
 dependencies = [
  "draco-nd-vector",
  "faer",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "draco-oxide-decoder"
-version = "0.1.0-alpha.10"
+version = "0.1.0-alpha.11"
 dependencies = [
  "draco-oxide-core",
  "remain",
