@@ -203,8 +203,8 @@ impl AttributeBuffer {
     /// without validating the element type.
     /// # Safety
     /// The buffer's allocation must be compatible with a `Vec<Data>` (global
-    /// allocator, capacity in bytes equal to `self.len * size_of::<Data>()`),
-    /// `Data` must match the buffer's component type, and `N` its component
+    /// allocator, capacity a multiple of `size_of::<Data>()`, alignment of
+    /// `Data`), `Data` must match the buffer's component type, and `N` its component
     /// count; the latter two are only checked under `safety_assert`.
     pub unsafe fn into_vec_unchecked<Data, const N: usize>(self) -> Vec<Data>
     where
@@ -223,10 +223,13 @@ impl AttributeBuffer {
             N, self.num_components
         );
 
-        unsafe {
-            let slice = self.as_slice::<Data>();
-            Vec::from_raw_parts(slice.as_ptr() as *mut Data, self.len, self.len)
+        if self.data.cap == 0 {
+            return Vec::new();
         }
+        let len = self.len;
+        let cap = self.data.cap / mem::size_of::<Data>();
+        let ptr = self.data.into_raw() as *mut Data;
+        unsafe { Vec::from_raw_parts(ptr, len, cap) }
     }
 
     #[inline]
