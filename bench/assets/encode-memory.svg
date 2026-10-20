@@ -10,27 +10,26 @@
 <text x="602.0" y="25" fill="#e6edf3">draco-oxide</text>
 <rect x="687.0" y="16" width="10" height="10" rx="2" fill="#3fb950"/>
 <text x="701.0" y="25" fill="#e6edf3">Draco</text>
-<line x1="399.1" y1="58.0" x2="399.1" y2="496.0" stroke="#21262d" stroke-width="1"/>
-<text x="399.1" y="511.0" text-anchor="middle" fill="#9198a1">5</text>
-<line x1="620.3" y1="58.0" x2="620.3" y2="496.0" stroke="#21262d" stroke-width="1"/>
-<text x="620.3" y="511.0" text-anchor="middle" fill="#9198a1">10</text>
+<line x1="403.4" y1="58.0" x2="403.4" y2="496.0" stroke="#21262d" stroke-width="1"/>
+<text x="403.4" y="511.0" text-anchor="middle" fill="#9198a1">5</text>
+<line x1="628.8" y1="58.0" x2="628.8" y2="496.0" stroke="#21262d" stroke-width="1"/>
+<text x="628.8" y="511.0" text-anchor="middle" fill="#9198a1">10</text>
 <line x1="178" y1="58.0" x2="178" y2="496.0" stroke="#3d444d" stroke-width="1"/>
 <text x="170.0" y="83.0" text-anchor="end" fill="#e6edf3">DragonAttenuation (P, N, T)</text>
 <text x="184.0" y="75.0" fill="#9198a1">n/a</text>
-<path d="M178.0 80.0 h173.3 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-173.3 Z" fill="url(#bar1)"/>
-<text x="361.3" y="91.0" fill="#9198a1">4.01</text>
+<path d="M178.0 80.0 h195.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-195.2 Z" fill="url(#bar1)"/>
+<text x="383.2" y="91.0" fill="#9198a1">4.42</text>
 <text x="170.0" y="127.0" text-anchor="end" fill="#e6edf3">FlightHelmet (P, N, T)</text>
 <text x="184.0" y="119.0" fill="#9198a1">n/a</text>
-<path d="M178.0 124.0 h160.1 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-160.1 Z" fill="url(#bar1)"/>
-<text x="348.1" y="135.0" fill="#9198a1">3.71</text>
+<path d="M178.0 124.0 h176.5 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-176.5 Z" fill="url(#bar1)"/>
+<text x="364.5" y="135.0" fill="#9198a1">4.00</text>
 <text x="170.0" y="171.0" text-anchor="end" fill="#e6edf3">bldg_chiyoda_lod2 (P, N)</text>
 <text x="184.0" y="163.0" fill="#9198a1">n/a</text>
 <path d="M178.0 168.0 h498.0 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-498.0 Z" fill="url(#bar1)"/>
-<text x="686.0" y="179.0" fill="#9198a1">11.4</text>
+<text x="686.0" y="179.0" fill="#9198a1">11.1</text>
 <text x="170.0" y="215.0" text-anchor="end" fill="#e6edf3">bunny (P, N)</text>
 <text x="184.0" y="207.0" fill="#9198a1">n/a</text>
-<path d="M178.0 212.0 h145.2 a4.0 4.0 0 0 1 4.0 4.0 v6.0 a4.0 4.0 0 0 1 -4.0 4.0 h-145.2 Z" fill="url(#bar1)"/>
-<text x="333.2" y="223.0" fill="#9198a1">3.37</text>
+<text x="184.0" y="223.0" fill="#9198a1">n/a</text>
 <text x="170.0" y="259.0" text-anchor="end" fill="#e6edf3">Corset (P, N, T)</text>
 <text x="184.0" y="251.0" fill="#9198a1">n/a</text>
 <text x="184.0" y="267.0" fill="#9198a1">n/a</text>

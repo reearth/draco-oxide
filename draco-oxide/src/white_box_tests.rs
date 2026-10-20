@@ -290,9 +290,9 @@ mod symbol_coding {
         freq
     }
 
-    /// Codes `symbols` with [`RansSymbolEncoder`] at `precision` and decodes the
-    /// result back with [`RansSymbolDecoder`].
-    fn rans_symbol_round_trip(symbols: &[usize], precision: usize) {
+    /// Codes `symbols` with [`RansSymbolEncoder`] at `precision`, decodes the
+    /// result back with [`RansSymbolDecoder`], and returns the encoded bytes.
+    fn rans_symbol_round_trip(symbols: &[usize], precision: usize) -> Vec<u8> {
         let mut buf: Vec<u8> = Vec::new();
         let mut enc =
             RansSymbolEncoder::new(&mut buf, histogram(symbols), None, precision).unwrap();
@@ -305,6 +305,7 @@ mod symbol_coding {
         let mut dec = RansSymbolDecoder::new(&mut reader, symbols.len(), precision).unwrap();
         let decoded: Vec<usize> = (0..symbols.len()).map(|_| dec.decode()).collect();
         assert_eq!(decoded, symbols);
+        buf
     }
 
     #[test]
@@ -316,6 +317,25 @@ mod symbol_coding {
     fn rans_symbol_decoder_handles_zero_runs() {
         // A sparse alphabet exercises the zero-run flag in the frequency table.
         rans_symbol_round_trip(&[0, 9, 9, 0, 0, 9, 3, 3, 9, 0, 9, 9, 0, 3, 9], 12);
+    }
+
+    #[test]
+    fn rans_zero_runs_pack_64_symbols_per_byte() {
+        for gap in [1, 63, 64, 65, 127, 128, 129, 999] {
+            let last = gap + 1;
+            let buf = rans_symbol_round_trip(&[0, last, 0, last], 12);
+
+            let mut expected = vec![0xFFu8; gap / 64];
+            if gap % 64 != 0 {
+                expected.push((((gap % 64) - 1) << 2) as u8 | 3);
+            }
+            // Layout: leb128 alphabet size, symbol 0's 2-byte frequency, the zero
+            // runs, then the last symbol's identical 2-byte frequency.
+            let start = if last + 1 < 128 { 1 } else { 2 } + 2;
+            let end = start + expected.len();
+            assert_eq!(&buf[start..end], &expected[..], "gap {gap}");
+            assert_eq!(&buf[end..end + 2], &buf[start - 2..start], "gap {gap}");
+        }
     }
 
     #[test]
