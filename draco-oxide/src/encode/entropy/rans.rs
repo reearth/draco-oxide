@@ -292,18 +292,16 @@ where
         while i < num_symbols {
             let freq = distribution[i];
             if freq == 0 {
-                // when we find a symbol with zero frequency, we encode the flag (1-bit) and the
-                // 6-bit offset to the next symbol with non-zero frequency.
+                // The 6-bit offset caps a run at 64 symbols: this one plus `offset` more.
                 let mut offset = 0;
-                while offset < (1 << 6) && i + offset + 1 < num_symbols {
-                    let next_prob = distribution[i + offset + 1];
-                    if next_prob > 0 {
-                        i += offset;
-                        break;
-                    }
+                while offset < (1 << 6) - 1
+                    && i + offset + 1 < num_symbols
+                    && distribution[i + offset + 1] == 0
+                {
                     offset += 1;
                 }
                 writer.write_u8(((offset as u8) << 2) | 3);
+                i += offset;
             } else {
                 let mut num_extra_bytes = 0;
                 if freq >= (1 << 6) {

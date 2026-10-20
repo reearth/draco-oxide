@@ -11,5 +11,5 @@ output = "oxide.drc"
 [[operations]]
 op = "Fingerprint"
 input = "oxide.drc"
-len = 3238
-fnv1a = "0x2debee0bce95e119"
+len = 2490
+fnv1a = "0x929d904d03dbcf45"
